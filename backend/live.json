@@ -1,0 +1,7 @@
+{
+  "channelInstance": "dutyboard-live",
+  "collections": {
+    "duties": { "keyBy": "city_slug" },
+    "comments": { "keyBy": "duty_key" }
+  }
+}
