@@ -42,13 +42,23 @@ this app** — only public instance names and the API URL.
 `author_uid` / `author_name` are never sent by the client — the rules' `stamp` sets them from
 the verified token (see [`backend/access.json`](backend/access.json)).
 
-## Run it
+## Run it locally
 
 ```bash
+alt install altlimit/altengine && altengine dev   # the emulator, on :9191
 npm install
-cp .env.example .env      # point VITE_ALTENGINE_URL at your altengine (dev emulator or prod)
-npm run dev               # http://localhost:5173
-npm run build             # static bundle in dist/ — host it anywhere
+npm run setup:dev        # provision the 3 instances from backend/ (one time)
+npm run dev              # http://localhost:5173
+```
+
+`npm run setup:dev` is not optional. Instances *auto-create* on first use, but their
+**config** does not: a fresh auth instance collects only an email and grants no access, so
+the app would sign a user up and then get `403` on every datastore call. The script applies
+[`backend/`](backend/) for you. (Against hosted altengine you do the same thing once in the
+console — see [Backend setup](#backend-setup-one-time).)
+
+```bash
+npm run build            # static bundle in dist/ — host it anywhere
 ```
 
 All `VITE_*` values are public. You can also override the target at runtime without rebuilding:
@@ -57,8 +67,9 @@ All `VITE_*` values are public. You can also override the target at runtime with
 
 ## Backend setup (one time)
 
-Create the three instances in the altengine admin console (same org), then paste the configs
-from [`backend/`](backend/):
+Locally, `npm run setup:dev` does all of this for you. Against hosted altengine, create the
+three instances in the admin console (same org) and paste the configs from
+[`backend/`](backend/):
 
 1. **Auth instance `dutyboard-auth`**
    - **Sign-up form**: paste [`backend/signup.json`](backend/signup.json) (collects `email` +
