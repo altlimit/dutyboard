@@ -42,6 +42,11 @@ this app** — only public instance names and the API URL.
 `author_uid` / `author_name` are never sent by the client — the rules' `stamp` sets them from
 the verified token (see [`backend/access.json`](backend/access.json)).
 
+> **`level` is a ceiling, not the permission.** The access entry grants `full` because document
+> **delete is gated at `full`** and DutyBoard lets an author delete their own duty. It does *not*
+> mean users can delete anything: `delete.match` still limits every row to its own author. Grant
+> `write` instead and deletes fail with `insufficient grant for datastore`.
+
 ## Run it locally
 
 ```bash

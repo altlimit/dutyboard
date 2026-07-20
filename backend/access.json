@@ -1,6 +1,6 @@
 {
   "datastore:dutyboard": {
-    "level": "write",
+    "level": "full",
     "rules": {
       "cities": {
         "read": "authenticated",
