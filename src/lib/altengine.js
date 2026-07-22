@@ -248,10 +248,19 @@ export function subscribeLive(channels, onEvent, onState) {
       scheduleReconnect();
       return;
     }
-    const wsBase = config.baseUrl.replace(/^http/, "ws");
-    const url = (tok.ws_url || `${wsBase}/v1/channel/${seg(config.channel)}/subscribe`) + "?token=" + encodeURIComponent(tok.token);
+    // The mint's `ws_url` ALREADY carries `?token=...`, so parse and only add the token if
+    // it's missing (the fallback URL has none). Blindly appending `?token=` would produce
+    // `...subscribe?token=A?token=B`, corrupting the token → a 401 handshake and no live
+    // updates. Mirrors how @altengine/sdk's ChannelSocket builds the URL.
+    let raw = tok.ws_url;
+    if (!raw) {
+      const wsBase = config.baseUrl.replace(/^http/, "ws");
+      raw = `${wsBase}/v1/channel/${seg(config.channel)}/subscribe`;
+    }
+    const u = new URL(raw);
+    if (!u.searchParams.has("token")) u.searchParams.set("token", tok.token);
     try {
-      ws = new WebSocket(url);
+      ws = new WebSocket(u.toString());
     } catch {
       scheduleReconnect();
       return;
