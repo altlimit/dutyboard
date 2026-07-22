@@ -120,8 +120,12 @@ onMounted(async () => {
   await reloadAll();
   loading.value = false;
   if (config.channel) {
+    // Two channels: new comments arrive on comments.<dutyKey>, but a change to the DUTY
+    // itself (resolve/reopen/edit) publishes on duties.<city_slug> — its live keyBy is the
+    // city. Without the second subscription, other clients viewing this duty never see it
+    // flip resolved. scheduleReload() re-fetches both the duty and its comments either way.
     sub = subscribeLive(
-      ["comments." + props.dutyKey],
+      ["comments." + props.dutyKey, "duties." + props.slug],
       () => scheduleReload(),
       (s) => (liveState.value = s)
     );
