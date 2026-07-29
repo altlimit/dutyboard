@@ -20,7 +20,10 @@ export const session = {
   displayName: computed(() => {
     const u = state.user;
     if (!u) return "";
-    return (u.claims && (u.claims.name || u.claims.username)) || u.identifier || "there";
+    // The display name is a sign-up field, so it lives in `profile` (not `claims`,
+    // which is admin-set/authoritative).
+    const p = u.profile || {};
+    return p.name || p.username || u.identifier || "there";
   }),
 
   async signIn(identifier, password) {
