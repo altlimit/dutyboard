@@ -2,30 +2,32 @@
   "datastore:dutyboard": {
     "level": "full",
     "rules": {
-      "cities": {
-        "read": "authenticated",
-        "create": { "stamp": { "author_uid": "$auth.uid" } }
-      },
-      "duties": {
-        "read": "authenticated",
-        "create": {
-          "stamp": { "author_uid": "$auth.uid", "author_name": "$auth.profile.name" }
+      "_default": {
+        "cities": {
+          "read": "authenticated",
+          "create": { "stamp": { "author_uid": "$auth.uid" } }
         },
-        "update": {
-          "match": [{ "field": "author_uid", "op": "=", "value": "$auth.uid" }],
-          "immutable": ["author_uid", "city_slug"]
+        "duties": {
+          "read": "authenticated",
+          "create": {
+            "stamp": { "author_uid": "$auth.uid", "author_name": "$auth.profile.name" }
+          },
+          "update": {
+            "match": [{ "field": "author_uid", "op": "=", "value": "$auth.uid" }],
+            "immutable": ["author_uid", "city_slug"]
+          },
+          "delete": {
+            "match": [{ "field": "author_uid", "op": "=", "value": "$auth.uid" }]
+          }
         },
-        "delete": {
-          "match": [{ "field": "author_uid", "op": "=", "value": "$auth.uid" }]
-        }
-      },
-      "comments": {
-        "read": "authenticated",
-        "create": {
-          "stamp": { "author_uid": "$auth.uid", "author_name": "$auth.profile.name" }
-        },
-        "delete": {
-          "match": [{ "field": "author_uid", "op": "=", "value": "$auth.uid" }]
+        "comments": {
+          "read": "authenticated",
+          "create": {
+            "stamp": { "author_uid": "$auth.uid", "author_name": "$auth.profile.name" }
+          },
+          "delete": {
+            "match": [{ "field": "author_uid", "op": "=", "value": "$auth.uid" }]
+          }
         }
       }
     }
