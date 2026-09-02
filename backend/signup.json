@@ -2,6 +2,6 @@
   "identityField": "email",
   "fields": [
     { "key": "email", "type": "email", "required": true, "label": "Email" },
-    { "key": "name", "type": "string", "required": true, "label": "Display name" }
+    { "key": "name", "type": "string", "required": true, "label": "Your name" }
   ]
 }

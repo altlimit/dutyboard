@@ -1,51 +1,16 @@
-// A tiny reactive wrapper over the altengine client's session so views react to
-// sign-in/out. The client owns token storage; this just mirrors the current user
-// into Vue reactivity and exposes sign-in/out helpers that keep both in sync.
+// The signed-in person, as reactive state.
+//
+// `altengine.js` deliberately knows nothing about Vue — it is the plain description of
+// how to talk to the services. This is the two-line bridge: it mirrors that module's
+// session into refs, so a view that renders `signedIn` re-renders when it changes.
 
-import { reactive, computed } from "vue";
-import * as ae from "./altengine.js";
+import { ref } from "vue";
+import { currentUser, isSignedIn, onSessionChange } from "./altengine.js";
 
-const state = reactive({
-  user: ae.currentUser(),
+export const user = ref(currentUser());
+export const signedIn = ref(isSignedIn());
+
+onSessionChange(() => {
+  user.value = currentUser();
+  signedIn.value = isSignedIn();
 });
-
-function sync() {
-  state.user = ae.currentUser();
-}
-
-export const session = {
-  state,
-  isSignedIn: computed(() => !!state.user),
-  uid: computed(() => state.user && state.user.uid),
-  displayName: computed(() => {
-    const u = state.user;
-    if (!u) return "";
-    // The display name is a sign-up field, so it lives in `profile` (not `claims`,
-    // which is admin-set/authoritative).
-    const p = u.profile || {};
-    return p.name || p.username || u.identifier || "there";
-  }),
-
-  async signIn(identifier, password) {
-    const res = await ae.signIn(identifier, password);
-    sync();
-    return res; // { user } or { mfaRequired, mfaToken }
-  },
-  async verifyMfa(mfaToken, code) {
-    await ae.verifyMfa(mfaToken, code);
-    sync();
-  },
-  async signUp(fields) {
-    await ae.signUp(fields);
-    sync();
-  },
-  async passwordlessVerify(identifier, code) {
-    const res = await ae.passwordlessVerify(identifier, code);
-    sync();
-    return res;
-  },
-  async signOut() {
-    await ae.signOut();
-    sync();
-  },
-};

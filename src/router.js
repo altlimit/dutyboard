@@ -1,40 +1,29 @@
 import { createRouter, createWebHashHistory } from "vue-router";
-import { session } from "./lib/session.js";
+import { isSignedIn } from "./lib/altengine.js";
 
-// Hash history keeps this a truly static site — deep links work from any static
-// host (or `file://`) with no server rewrite rules.
 const routes = [
-  { path: "/", name: "cities", component: () => import("./views/Cities.vue") },
-  { path: "/signin", name: "signin", component: () => import("./views/SignIn.vue"), meta: { public: true } },
-  { path: "/city/:slug", name: "city", component: () => import("./views/CityDetail.vue"), props: true },
-  { path: "/city/:slug/duty/:dutyKey", name: "duty", component: () => import("./views/DutyDetail.vue"), props: true },
-  { path: "/:pathMatch(.*)*", redirect: "/" },
+  { path: "/", name: "boards", component: () => import("./views/Boards.vue"), meta: { title: "Your boards" } },
+  { path: "/signin", name: "signin", component: () => import("./views/SignIn.vue"), meta: { title: "Sign in", public: true } },
+  { path: "/b/:projectId", name: "board", component: () => import("./views/Board.vue"), props: true, meta: { title: "Board" } },
+  { path: "/b/:projectId/settings", name: "settings", component: () => import("./views/Settings.vue"), props: true, meta: { title: "Board settings" } },
+  { path: "/b/:projectId/d/:dutyId", name: "duty", component: () => import("./views/Duty.vue"), props: true, meta: { title: "Duty" } },
+  { path: "/:pathMatch(.*)*", name: "notfound", component: () => import("./views/NotFound.vue"), meta: { title: "Not found", public: true } },
 ];
 
 export const router = createRouter({
+  // Hash history so the static bundle can be hosted anywhere with no rewrite rules.
   history: createWebHashHistory(),
   routes,
-  scrollBehavior() {
-    return { top: 0 };
-  },
 });
 
-// Everything except the sign-in page requires a session.
 router.beforeEach((to) => {
-  if (!to.meta.public && !session.isSignedIn.value) {
-    return { name: "signin", query: to.fullPath !== "/" ? { next: to.fullPath } : undefined };
-  }
-  if (to.name === "signin" && session.isSignedIn.value) return { name: "cities" };
+  if (!to.meta.public && !isSignedIn()) return { name: "signin", query: { next: to.fullPath } };
+  if (to.name === "signin" && isSignedIn()) return { name: "boards" };
   return true;
 });
 
-// Set a meaningful, per-view document title (accessibility: users know where they are).
+// A route change in a single-page app is a navigation to a screen reader only if the
+// title changes and focus moves — App.vue moves focus; this is the other half.
 router.afterEach((to) => {
-  const titles = {
-    cities: "Cities",
-    signin: "Sign in",
-    city: "City",
-    duty: "Duty",
-  };
-  document.title = "DutyBoard — " + (titles[to.name] || "");
+  document.title = `${to.meta.title || "DutyBoard"} · DutyBoard`;
 });

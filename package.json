@@ -1,11 +1,14 @@
 {
   "name": "dutyboard",
   "private": true,
-  "version": "0.1.0",
+  "version": "2.0.0",
   "type": "module",
-  "description": "DutyBoard — a live civic-duty board built as a backend-less Vue 3 static site on altengine (auth + datastore + channel).",
+  "description": "DutyBoard — a coordination bus, external working memory and human-in-the-loop decision engine for autonomous agents, built on altengine functions + datastore + auth + channel.",
   "scripts": {
-    "setup:dev": "node scripts/setup-emulator.mjs",
+    "build:fn": "node functions/build.mjs",
+    "deploy": "npm run build:fn && node scripts/deploy.mjs",
+    "setup": "node scripts/setup.mjs",
+    "smoke": "node scripts/smoke.mjs",
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview"
@@ -16,6 +19,7 @@
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^5.2.1",
+    "esbuild": "^0.25.0",
     "vite": "^6.0.7"
   }
 }

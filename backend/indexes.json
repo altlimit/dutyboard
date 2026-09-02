@@ -1,0 +1,34 @@
+{
+  "_comment": [
+    "Composite indexes, in the order the planner needs them: equality-filtered fields first,",
+    "then the field the query sorts on. Field order is not interchangeable — an index built",
+    "the other way round will not serve the query it was built for.",
+    "",
+    "Auto-indexing is left ON, so a query we did not anticipate still runs (and says so in",
+    "auto_indexed) rather than failing. These are declared anyway because the first call of",
+    "each one is the one a person is waiting on, and because writing them down is the only",
+    "record of what this app actually asks the datastore for.",
+    "",
+    "Every console query carries an extra `owner_uid = $auth.uid` filter that the row rules",
+    "AND in server-side — which is why the console indexes lead with owner_uid and the",
+    "function's own (organization-level, no rules) do not."
+  ],
+  "duties": [
+    { "fields": ["project_id", "status", "prio_rank", "created_at"], "for": "the scheduler: the runnable queue, highest priority then oldest first" },
+    { "fields": ["owner_uid", "project_id", "status", "updated_at:desc"], "for": "console: one board column, most recently touched first" },
+    { "fields": ["owner_uid", "project_id", "updated_at:desc"], "for": "console: whole-board activity" }
+  ],
+  "threads": [
+    { "fields": ["duty_id", "created_at"], "for": "the function: a duty's decision log" },
+    { "fields": ["owner_uid", "duty_id", "created_at"], "for": "console: the same log, read directly" }
+  ],
+  "projects": [
+    { "fields": ["owner_uid", "created_at:desc"], "for": "both: a person's boards" }
+  ],
+  "tokens": [
+    { "fields": ["project_id", "created_at:desc"], "for": "the function: a board's agent tokens" }
+  ],
+  "agents": [
+    { "fields": ["owner_uid", "project_id", "last_seen_at:desc"], "for": "console: which agents are working this board" }
+  ]
+}

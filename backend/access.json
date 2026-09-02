@@ -1,39 +1,38 @@
 {
+  "_comment": [
+    "Row-level access for the CONSOLE (a signed-in person in a browser). Read-only, and",
+    "scoped to rows the caller owns.",
+    "",
+    "Read-only is the design, not a limitation: every write in DutyBoard is a state-machine",
+    "transition that touches more than one collection at once — claiming a duty writes the",
+    "duty and the agent row together — and a row rule can only scope one collection per",
+    "request. So the console reads directly (fast, and live over a channel) and posts every",
+    "change through the function, which runs at organization level and can do the whole",
+    "transition atomically.",
+    "",
+    "`level` is READ for the same reason: it is a ceiling on which endpoints an identity",
+    "token may call at all, and this app deliberately gives the browser none that write.",
+    "",
+    "`tokens` is absent on purpose. Agent credentials are default-denied to browsers; the",
+    "console lists and revokes them through the function instead."
+  ],
   "datastore:dutyboard": {
-    "level": "full",
+    "level": "read",
     "rules": {
       "_default": {
-        "cities": {
-          "read": "authenticated",
-          "create": { "stamp": { "author_uid": "$auth.uid" } }
+        "projects": {
+          "read": [{ "field": "owner_uid", "op": "=", "value": "$auth.uid" }]
         },
         "duties": {
-          "read": "authenticated",
-          "create": {
-            "stamp": { "author_uid": "$auth.uid", "author_name": "$auth.profile.name" }
-          },
-          "update": {
-            "match": [{ "field": "author_uid", "op": "=", "value": "$auth.uid" }],
-            "immutable": ["author_uid", "city_slug"]
-          },
-          "delete": {
-            "match": [{ "field": "author_uid", "op": "=", "value": "$auth.uid" }]
-          }
+          "read": [{ "field": "owner_uid", "op": "=", "value": "$auth.uid" }]
         },
-        "comments": {
-          "read": "authenticated",
-          "create": {
-            "stamp": { "author_uid": "$auth.uid", "author_name": "$auth.profile.name" }
-          },
-          "delete": {
-            "match": [{ "field": "author_uid", "op": "=", "value": "$auth.uid" }]
-          }
+        "threads": {
+          "read": [{ "field": "owner_uid", "op": "=", "value": "$auth.uid" }]
+        },
+        "agents": {
+          "read": [{ "field": "owner_uid", "op": "=", "value": "$auth.uid" }]
         }
       }
     }
-  },
-  "channel:dutyboard-live": {
-    "level": "read",
-    "channels": ["duties.*", "comments.*"]
   }
 }

@@ -1,25 +1,46 @@
 <script setup>
-import { useRouter } from "vue-router";
-import { session } from "../lib/session.js";
+import { computed } from "vue";
+import { useRoute, useRouter } from "vue-router";
+import { signOut } from "../lib/altengine.js";
+import { signedIn, user } from "../lib/session.js";
 
+const route = useRoute();
 const router = useRouter();
 
-async function signOut() {
-  await session.signOut();
+const who = computed(() => {
+  const u = user.value;
+  return (u && (u.profile?.name || u.name || u.identifier)) || "";
+});
+const projectId = computed(() => route.params.projectId || "");
+
+async function leave() {
+  await signOut();
   router.push({ name: "signin" });
 }
 </script>
 
 <template>
-  <header class="nav">
-    <nav class="nav__inner" aria-label="Primary">
-      <RouterLink class="nav__brand" :to="{ name: 'cities' }">🏙️ DutyBoard</RouterLink>
-      <span class="nav__spacer" aria-hidden="true"></span>
-      <template v-if="session.isSignedIn.value">
-        <span class="nav__user">Signed in as <strong>{{ session.displayName.value }}</strong></span>
-        <button type="button" class="btn btn--ghost btn--sm" @click="signOut">Sign out</button>
+  <header class="topbar">
+    <div class="topbar__inner">
+      <router-link class="brand" :to="{ name: 'boards' }">
+        <span class="brand__mark" aria-hidden="true">D</span>
+        DutyBoard
+      </router-link>
+
+      <nav v-if="signedIn" aria-label="Main">
+        <router-link class="navlink" :to="{ name: 'boards' }">Boards</router-link>
+        <router-link v-if="projectId" class="navlink" :to="{ name: 'board', params: { projectId } }">Board</router-link>
+        <router-link v-if="projectId" class="navlink" :to="{ name: 'settings', params: { projectId } }">
+          Agents &amp; tokens
+        </router-link>
+      </nav>
+
+      <span class="spacer"></span>
+
+      <template v-if="signedIn">
+        <span class="muted small">{{ who }}</span>
+        <button type="button" @click="leave">Sign out</button>
       </template>
-      <RouterLink v-else class="btn btn--ghost btn--sm" :to="{ name: 'signin' }">Sign in</RouterLink>
-    </nav>
+    </div>
   </header>
 </template>
