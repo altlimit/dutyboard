@@ -186,8 +186,19 @@ Two things it cannot do, and says so instead of half-succeeding:
 Re-run it afterwards; it checks the instance as it actually is and reports only what is
 still missing.
 
-`public/` is then the whole static site: marketing at the root, the console under `/app`.
-Host it anywhere that can serve a directory — and, once you switch the router to history
+### You do not have to serve the console
+
+The hosted one at [dutyboard.com/app](https://www.dutyboard.com/app/) is a static page that
+talks to whatever altengine you point it at. **Connect your altengine**, on its sign-in
+screen, takes the same instance names used above, tests the connection before saving, and
+keeps them in that browser. Nothing about your boards passes through dutyboard.com — the
+page is served from there, the data never is.
+
+It needs the console's origin on two allowlists, the same two `DUTYBOARD_ORIGINS` sets
+locally: the auth instance's allowed origins, and the functions instance's CORS list.
+
+`public/` is the whole static site if you would rather serve it yourself: marketing at the
+root, the console under `/app`. Host it anywhere that can serve a directory — and, once you switch the router to history
 URLs, that can also apply the rewrite above. `npm run preview` serves it exactly that way
 locally, which is the only way to find out whether the rewrite is right before a deploy
 depends on it.

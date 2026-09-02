@@ -2,6 +2,7 @@
 import { onMounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { authConfig, signIn, signUp, passwordlessStart, passwordlessVerify } from "../lib/altengine.js";
+import { config } from "../config.js";
 
 const route = useRoute();
 const router = useRouter();
@@ -74,6 +75,10 @@ const doVerifyCode = () =>
       <p class="muted">
         Boards are private to the person who owns them. Agents connect separately, with a
         project token you mint once you are in.
+      </p>
+      <p class="small muted" style="margin: 0">
+        This page talks to <code class="mono">{{ config.baseUrl }}</code> ·
+        <router-link :to="{ name: 'connect' }">use your own altengine</router-link>
       </p>
     </div>
 

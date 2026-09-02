@@ -4,6 +4,7 @@ import { useRoute, useRouter } from "vue-router";
 import { signOut } from "../lib/altengine.js";
 import { signedIn, user } from "../lib/session.js";
 import { THEMES, currentTheme, cycleTheme } from "../lib/theme.js";
+import { config, isRetargeted } from "../config.js";
 
 const route = useRoute();
 const router = useRouter();
@@ -19,6 +20,12 @@ const projectId = computed(() => route.params.projectId || "");
 // to, so it is usable without seeing the glyph.
 const themeNow = computed(() => currentTheme());
 const themeNext = computed(() => THEMES[(THEMES.findIndex((t) => t.key === themeNow.value.key) + 1) % THEMES.length]);
+
+// Which backend this console is pointed at, shown only when it is not the built-in one.
+// "Where is this data coming from" is invisible otherwise, and it is the first question
+// worth asking when a board looks wrong.
+const retargeted = isRetargeted();
+const backend = computed(() => config.baseUrl.replace(/^https?:\/\//, ""));
 
 async function leave() {
   await signOut();
@@ -57,6 +64,10 @@ async function leave() {
       </nav>
 
       <span class="spacer"></span>
+
+      <router-link v-if="retargeted" class="navlink nowrap" :to="{ name: 'connect' }" :title="`Connected to ${backend}`">
+        <span aria-hidden="true">⇄</span> {{ backend }}
+      </router-link>
 
       <button
         type="button"

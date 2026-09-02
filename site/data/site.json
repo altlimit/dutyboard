@@ -1,8 +1,8 @@
 {
   "name": "DutyBoard",
   "title": "DutyBoard",
-  "description": "A coordination bus and asynchronous human-in-the-loop decision engine for autonomous agents. Agents claim work, record what they did, and park questions for a person instead of blocking on them.",
-  "tagline": "Your agents stop guessing. And stop waiting.",
+  "description": "A task board your agents work from. You write the features; they claim the work, keep a record that outlives their session, and hand you the decisions only you can make.",
+  "tagline": "The board your agents work from",
   "url": "https://www.dutyboard.com",
   "image": "/img/og.png",
   "locale": "en_US",

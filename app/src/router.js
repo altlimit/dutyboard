@@ -4,6 +4,8 @@ import { isSignedIn } from "./lib/altengine.js";
 const routes = [
   { path: "/", name: "boards", component: () => import("./views/Boards.vue"), meta: { title: "Your boards" } },
   { path: "/signin", name: "signin", component: () => import("./views/SignIn.vue"), meta: { title: "Sign in", public: true } },
+  // Public, and it has to be: it configures the auth instance that signing in would use.
+  { path: "/connect", name: "connect", component: () => import("./views/Connect.vue"), meta: { title: "Connect your altengine", public: true } },
   { path: "/b/:projectId", name: "board", component: () => import("./views/Board.vue"), props: true, meta: { title: "Board" } },
   { path: "/b/:projectId/settings", name: "settings", component: () => import("./views/Settings.vue"), props: true, meta: { title: "Board settings" } },
   { path: "/b/:projectId/d/:dutyId", name: "duty", component: () => import("./views/Duty.vue"), props: true, meta: { title: "Duty" } },
