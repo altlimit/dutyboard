@@ -11,18 +11,31 @@ const props = defineProps({ projectId: { type: String, required: true } });
  *  than revealing rows that were already here, which is a control that pretends to do
  *  something. */
 const PAGE = 12;
+
 /**
- * One page of the WHOLE board, read in a single query and sorted into columns here.
+ * A board is read in two halves, because it has two halves.
  *
- * Opening a board used to cost six queries — one per status, including `failed`, which has
- * to be asked about even when it is empty, because "is it empty" is the question. Almost
- * every board fits in one page, and one page read once is the same rows.
+ * Everything that is not done is the WORKING SET: what agents are holding, what is queued
+ * behind it, what is waiting on you. It is bounded by how much work is actually in flight,
+ * so it is read whole, in one query, and sorted into columns here — the counts are then
+ * exact and no live column needs a cursor.
  *
- * Over this many duties there is no honest way to do it in one request: a mixed page would
- * let a busy column starve the others, so each column goes back to its own top-N and its
- * own cursor. The cost of being wrong about which case you are in is one extra query.
+ * `done` is the other half, and it is the only column that grows without end. It gets its
+ * own query, newest first, and pages backwards on demand. Reading it with the working set
+ * is what made a month-old board expensive: it is nearly all `done`, and it was dragging
+ * five other columns through a fallback that only existed because of it.
+ *
+ * `in` is what makes the first half one request. The datastore treats it as an equality
+ * for index selection, so `project_id = X AND status in (…) ORDER BY updated_at desc` is
+ * served by the (owner_uid, project_id, status, updated_at:desc) index already declared in
+ * backend/indexes.json. `status != "done"` would be a range, which cannot lead an order on
+ * a different field.
  */
-const BOARD_PAGE = 60;
+const LIVE_STATUSES = STATUS_COLUMNS.map((c) => c.key).filter((k) => k !== "done");
+/** The point past which the working set stops being read whole. Reaching it means over two
+ *  hundred unfinished duties on one board, at which point a mixed page could let one column
+ *  starve another and each goes back to its own top-N. */
+const WORKING_SET = 200;
 /** How deep a refresh will re-read a column that someone has paged into. Bounded, because
  *  this runs on every event an agent produces. */
 const MAX_DEPTH = 120;
@@ -34,6 +47,13 @@ const WIDE = "(min-width: 1080px)";
 
 const board = ref(null);
 const columns = ref({});
+/** Set once the working set outgrows a single page, and never unset for the life of the
+ *  view: a board that big does not become small again while you are looking at it, and
+ *  flapping between the two shapes would make the counts jump.
+ *
+ *  Declared here rather than beside the function that reads it, because `resetColumns()`
+ *  runs at setup time and would hit the temporal dead zone. */
+const paged = ref(false);
 const agents = ref([]);
 const error = ref("");
 const liveState = ref("connecting");
@@ -54,6 +74,7 @@ let socket = null;
 let refreshTimer = null;
 
 const resetColumns = () => {
+  paged.value = false;
   columns.value = Object.fromEntries(
     STATUS_COLUMNS.map((c) => [c.key, { rows: [], cursor: null, loading: true }]),
   );
@@ -104,49 +125,70 @@ async function loadAgents() {
   }
 }
 
-/** Sort one page of the whole board into columns. Rows arrive newest-first, so each
- *  column comes out newest-first without sorting again. A status not in STATUS_COLUMNS
- *  cannot occur — those six are the whole enum — and would be dropped if it did. */
-function bucket(rows) {
-  const next = Object.fromEntries(
-    STATUS_COLUMNS.map((c) => [c.key, { rows: [], cursor: null, loading: false }]),
-  );
-  for (const duty of rows) if (next[duty.status]) next[duty.status].rows.push(duty);
-  columns.value = next;
+/** Sort the working set into its columns. Rows arrive newest-first, so each column comes
+ *  out newest-first without sorting again, and every one of them is complete — hence no
+ *  cursor. `done` is not touched: it is loaded separately. */
+function bucketLive(rows) {
+  for (const key of LIVE_STATUSES) columns.value[key] = { rows: [], cursor: null, loading: false };
+  for (const duty of rows) {
+    const col = columns.value[duty.status];
+    if (col && duty.status !== "done") col.rows.push(duty);
+  }
 }
 
-/** Reload some columns, or all of them when `keys` is empty.
+/** The working set — one query, or one per column once it no longer fits in one.
  *
- *  `agents` is separate because only a transition touches an agent row — claiming, or
- *  parking a duty releases whoever held it — and enqueueing never does. */
+ *  Once it is paged, `keys` matters: refreshing every live column on every event would put
+ *  the six-query cost back, on exactly the boards that could least afford it. */
+async function loadLive(keys) {
+  if (paged.value) {
+    const cols = keys && keys.size ? LIVE_STATUSES.filter((k) => keys.has(k)) : LIVE_STATUSES;
+    await Promise.all(cols.map((k) => loadColumn(k)));
+    return;
+  }
+  const res = await query("duties", {
+    where: [
+      { field: "project_id", op: "=", value: props.projectId },
+      { field: "status", op: "in", value: LIVE_STATUSES },
+    ],
+    order: [{ field: "updated_at", dir: "desc" }],
+    limit: WORKING_SET,
+  });
+  const rows = (res.documents || []).map(flat);
+  if (rows.length >= WORKING_SET) {
+    paged.value = true;
+    await Promise.all(LIVE_STATUSES.map((k) => loadColumn(k)));
+    return;
+  }
+  bucketLive(rows);
+}
+
+/**
+ * Reload the halves an event touched, or both when it named nothing.
+ *
+ * The working set is refreshed as a whole even when one status changed, because it is one
+ * query either way — and a duty that moved between two live columns changed both.
+ *
+ * `agents` is separate because only a transition touches an agent row — claiming, or
+ * parking a duty releases whoever held it — and enqueueing never does.
+ */
 async function refresh(keys, { agents = true } = {}) {
   error.value = "";
-  const cols = keys && keys.size ? [...keys] : STATUS_COLUMNS.map((c) => c.key);
-  await Promise.all([...cols.map((k) => loadColumn(k)), ...(agents ? [loadAgents()] : [])]);
+  const all = !keys || !keys.size;
+  const jobs = [];
+  if (all || [...keys].some((k) => k !== "done")) jobs.push(loadLive(all ? null : keys));
+  if (all || keys.has("done")) jobs.push(loadColumn("done"));
+  if (agents) jobs.push(loadAgents());
+  await Promise.all(jobs);
 }
 
-/** The whole board: one query if it fits, six if it does not. */
+/** The whole board: the working set, and the top of `done`. */
 async function loadAll() {
-  error.value = "";
-  let rows;
   try {
-    const res = await query("duties", {
-      where: [{ field: "project_id", op: "=", value: props.projectId }],
-      order: [{ field: "updated_at", dir: "desc" }],
-      limit: BOARD_PAGE,
-    });
-    rows = (res.documents || []).map(flat);
+    await refresh(null);
   } catch (err) {
-    // Falling back to six more queries here would just fail six more times.
     error.value = err.message;
-    return;
   }
-  if (rows.length < BOARD_PAGE) {
-    bucket(rows);
-    await loadAgents();
-    return;
-  }
-  await refresh(null);
 }
 
 async function loadBoard() {
