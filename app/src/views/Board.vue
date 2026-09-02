@@ -1,15 +1,27 @@
 <script setup>
-import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+import { computed, onUnmounted, ref, watch } from "vue";
 import { api, query, subscribeLive } from "../lib/altengine.js";
 import { STATUS_COLUMNS, PRIORITIES, ago } from "../lib/duties.js";
-import DutyCard from "../components/DutyCard.vue";
+import BoardColumn from "../components/BoardColumn.vue";
 
 const props = defineProps({ projectId: { type: String, required: true } });
 
+/** How much of a column is fetched at once, and how much of that is rendered before you
+ *  ask for more. They are different numbers on purpose: the query is cheap and paging it
+ *  costs a round trip, but a column that renders forty cards buries the four columns next
+ *  to it — on a phone it buries the whole board. */
 const PAGE = 50;
+const FIRST = 8;
+const STEP = 12;
+
+/** Below this the board stops being columns and becomes one column behind chips. Wide
+ *  enough that six columns still get ~170px each, which is the point where a title stops
+ *  fitting on two lines. */
+const WIDE = "(min-width: 1080px)";
 
 const board = ref(null);
-const columns = ref(Object.fromEntries(STATUS_COLUMNS.map((c) => [c.key, { rows: [], cursor: null, loading: true }])));
+const columns = ref({});
+const shown = ref({});
 const agents = ref([]);
 const error = ref("");
 const liveState = ref("connecting");
@@ -17,8 +29,24 @@ const showForm = ref(false);
 const draft = ref({ title: "", brief: "", priority: "next" });
 const adding = ref(false);
 
+// The phone layout's current column. `picked` stays null until someone chooses, so the
+// default can follow the board (see `focusColumn`) without overriding a real choice.
+const picked = ref(null);
+
+const wideQuery = window.matchMedia(WIDE);
+const wide = ref(wideQuery.matches);
+const onWidth = (e) => (wide.value = e.matches);
+wideQuery.addEventListener("change", onWidth);
+
 let socket = null;
 let refreshTimer = null;
+
+const blank = () => Object.fromEntries(STATUS_COLUMNS.map((c) => [c.key, { rows: [], cursor: null, loading: true }]));
+const resetColumns = () => {
+  columns.value = blank();
+  shown.value = Object.fromEntries(STATUS_COLUMNS.map((c) => [c.key, FIRST]));
+};
+resetColumns();
 
 /** `{key, data, created, updated}` from the wire, flattened into one object. */
 const flat = (doc) => ({ ...doc.data, key: String(doc.key) });
@@ -75,6 +103,13 @@ async function loadBoard() {
   }
 }
 
+/** Show more of one column, fetching another page only when the loaded rows run out. */
+function showMore(key) {
+  shown.value[key] += STEP;
+  const col = columns.value[key];
+  if (shown.value[key] > col.rows.length && col.cursor) loadColumn(key, { append: true });
+}
+
 /** Live events name a duty and a status, but a move is two columns changing at once and
  *  several can land together. Coalescing into one refresh is both simpler and cheaper
  *  than trying to patch rows in place from a payload that deliberately carries no data. */
@@ -115,11 +150,27 @@ async function addDuty() {
   }
 }
 
-const needsYou = computed(() => columns.value.needs_decision.rows.length);
+const count = (key) => columns.value[key].rows.length;
+const needsYou = computed(() => count("needs_decision"));
+
+/** Which columns to render at all.
+ *
+ *  `failed` is hidden while it is empty. It is a real state an agent can reach and it
+ *  needs somewhere to appear — but on most boards it never happens, and a permanently
+ *  empty sixth column costs every other column a fifth of its width. */
+const shownColumns = computed(() => STATUS_COLUMNS.filter((c) => !c.whenUsed || count(c.key) > 0));
+
+/** The phone layout's column: whatever was chosen, else the one that wants a person. */
+const focusColumn = computed(() => {
+  if (picked.value && shownColumns.value.some((c) => c.key === picked.value)) return picked.value;
+  return needsYou.value ? "needs_decision" : "queued";
+});
 
 watch(
   () => props.projectId,
   () => {
+    resetColumns();
+    picked.value = null;
     loadBoard();
     loadAll();
     connect();
@@ -127,29 +178,31 @@ watch(
   { immediate: true },
 );
 
-onMounted(() => {});
 onUnmounted(() => {
+  wideQuery.removeEventListener("change", onWidth);
   if (socket) socket.close();
   if (refreshTimer) clearTimeout(refreshTimer);
 });
 </script>
 
 <template>
-  <div class="wrap stack">
+  <div class="wrap wrap--board stack">
     <div class="row row--between">
       <div>
         <h1>{{ board ? board.name : projectId }}</h1>
-        <p class="muted small mono" style="margin: 0">{{ projectId }}</p>
+        <p class="row small muted" style="margin: 0; gap: 0.6rem">
+          <span class="mono">{{ projectId }}</span>
+          <span
+            class="livedot"
+            :class="`livedot--${liveState}`"
+            role="status"
+            :aria-label="liveState === 'live' ? 'Live updates connected' : `Live updates ${liveState}`"
+          >
+            {{ liveState === "live" ? "Live" : liveState }}
+          </span>
+        </p>
       </div>
-      <div class="row">
-        <span
-          class="livedot"
-          :class="`livedot--${liveState}`"
-          role="status"
-          :aria-label="liveState === 'live' ? 'Live updates connected' : `Live updates ${liveState}`"
-        >
-          {{ liveState === "live" ? "Live" : liveState }}
-        </span>
+      <div class="row board-actions">
         <button type="button" @click="loadAll">Refresh</button>
         <button class="primary" type="button" @click="showForm = !showForm" :aria-expanded="showForm">
           {{ showForm ? "Cancel" : "Add duty" }}
@@ -196,39 +249,51 @@ onUnmounted(() => {
 
     <section v-if="agents.length" aria-labelledby="agents-h">
       <h2 id="agents-h" class="sr-only">Agents on this board</h2>
-      <p class="row small muted">
+      <p class="row small muted" style="margin: 0">
         <span v-for="a in agents" :key="a.key" class="badge">
           {{ a.agent_id }} · {{ a.active_duty_id ? "working" : "idle" }} · seen {{ ago(a.last_seen_at) }}
         </span>
       </p>
     </section>
 
-    <div class="board">
-      <section v-for="col in STATUS_COLUMNS" :key="col.key" class="column" :aria-labelledby="`col-${col.key}`">
-        <div class="column__head">
-          <h2 :id="`col-${col.key}`" style="margin: 0; font-size: 0.95rem">{{ col.label }}</h2>
-          <span class="column__count">{{ columns[col.key].rows.length }}{{ columns[col.key].cursor ? "+" : "" }}</span>
-        </div>
-        <p class="sr-only">{{ col.hint }}</p>
-
-        <ul class="column__list">
-          <li v-for="duty in columns[col.key].rows" :key="duty.key">
-            <DutyCard :duty="duty" :project-id="projectId" />
-          </li>
-        </ul>
-
-        <p v-if="columns[col.key].loading" class="muted small" style="margin-top: 0.5rem">Loading…</p>
-        <p v-else-if="!columns[col.key].rows.length" class="muted small" style="margin-top: 0.5rem">Nothing here.</p>
-
-        <button
-          v-if="columns[col.key].cursor"
-          type="button"
-          style="margin-top: 0.5rem; width: 100%"
-          @click="loadColumn(col.key, { append: true })"
-        >
-          Load more
-        </button>
-      </section>
+    <!-- Wide: every column at once, sharing the window. -->
+    <div v-if="wide" class="board" :style="{ '--cols': shownColumns.length }">
+      <BoardColumn
+        v-for="col in shownColumns"
+        :key="col.key"
+        :col="col"
+        :state="columns[col.key]"
+        :shown="shown[col.key]"
+        :project-id="projectId"
+        @more="showMore"
+      />
     </div>
+
+    <!-- Narrow: one column, chosen. -->
+    <template v-else>
+      <div class="chips" role="group" aria-label="Show a status">
+        <button
+          v-for="col in shownColumns"
+          :key="col.key"
+          type="button"
+          class="chip"
+          :class="{ 'chip--attention': col.key === 'needs_decision' && needsYou }"
+          :aria-pressed="focusColumn === col.key"
+          @click="picked = col.key"
+        >
+          {{ col.label }}
+          <span class="chip__n">{{ count(col.key) }}{{ columns[col.key].cursor ? "+" : "" }}</span>
+        </button>
+      </div>
+
+      <BoardColumn
+        :col="STATUS_COLUMNS.find((c) => c.key === focusColumn)"
+        :state="columns[focusColumn]"
+        :shown="shown[focusColumn]"
+        :project-id="projectId"
+        standalone
+        @more="showMore"
+      />
+    </template>
   </div>
 </template>

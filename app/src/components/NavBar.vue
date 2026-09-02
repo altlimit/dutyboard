@@ -3,6 +3,7 @@ import { computed } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { signOut } from "../lib/altengine.js";
 import { signedIn, user } from "../lib/session.js";
+import { THEMES, currentTheme, cycleTheme } from "../lib/theme.js";
 
 const route = useRoute();
 const router = useRouter();
@@ -12,6 +13,12 @@ const who = computed(() => {
   return (u && (u.profile?.name || u.name || u.identifier)) || "";
 });
 const projectId = computed(() => route.params.projectId || "");
+
+// One button rather than three, because this is a rarely-used control that should cost
+// nothing on a phone's top bar. The label names the state it is IN and the one it moves
+// to, so it is usable without seeing the glyph.
+const themeNow = computed(() => currentTheme());
+const themeNext = computed(() => THEMES[(THEMES.findIndex((t) => t.key === themeNow.value.key) + 1) % THEMES.length]);
 
 async function leave() {
   await signOut();
@@ -27,7 +34,7 @@ async function leave() {
         DutyBoard
       </router-link>
 
-      <nav v-if="signedIn" aria-label="Main">
+      <nav v-if="signedIn" class="topbar__nav" aria-label="Main">
         <router-link class="navlink" :to="{ name: 'boards' }">Boards</router-link>
         <router-link v-if="projectId" class="navlink" :to="{ name: 'board', params: { projectId } }">Board</router-link>
         <router-link v-if="projectId" class="navlink" :to="{ name: 'settings', params: { projectId } }">
@@ -37,8 +44,18 @@ async function leave() {
 
       <span class="spacer"></span>
 
+      <button
+        type="button"
+        class="iconbtn"
+        :aria-label="`Theme: ${themeNow.label}. Switch to ${themeNext.label}.`"
+        :title="`Theme: ${themeNow.label} — switch to ${themeNext.label}`"
+        @click="cycleTheme"
+      >
+        <span aria-hidden="true">{{ themeNow.glyph }}</span>
+      </button>
+
       <template v-if="signedIn">
-        <span class="muted small">{{ who }}</span>
+        <span class="muted small nowrap topbar__who">{{ who }}</span>
         <button type="button" @click="leave">Sign out</button>
       </template>
     </div>

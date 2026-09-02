@@ -7,14 +7,20 @@ import { ALL_STATUSES, PRIORITIES, THREAD_KIND_LABELS, ago, exactTime, priorityL
 const props = defineProps({ projectId: { type: String, required: true }, dutyId: { type: String, required: true } });
 const router = useRouter();
 
+/** How much of the thread is on screen before you ask for the rest. A duty that ran for a
+ *  week has a long log, and almost every visit is about the last thing that happened. */
+const RECENT = 5;
+
 const duty = ref(null);
 const entries = ref([]);
 const error = ref("");
 const notice = ref("");
 const loading = ref(true);
 const answer = ref("");
+const note = ref("");
 const posting = ref(false);
 const editing = ref(false);
+const showAll = ref(false);
 const edit = ref({ title: "", brief: "", priority: "next", status: "queued" });
 
 let socket = null;
@@ -23,8 +29,12 @@ let refreshTimer = null;
 const flat = (doc) => ({ ...doc.data, key: String(doc.key) });
 
 const needsAnswer = computed(() => duty.value && duty.value.status === "needs_decision");
+
 /** The options an agent offered, if it offered any — answering with one click is the
- *  difference between a question answered in seconds and one answered tomorrow. */
+ *  difference between a question answered in seconds and one answered tomorrow.
+ *
+ *  `entries` stays oldest-first, which is what this scan needs; the reversal for display
+ *  happens below. Reversing the source array instead would quietly invert this. */
 const options = computed(() => {
   for (let i = entries.value.length - 1; i >= 0; i--) {
     const e = entries.value[i];
@@ -33,6 +43,11 @@ const options = computed(() => {
   }
   return [];
 });
+
+/** Newest first. What happened last is what you came to read. */
+const ordered = computed(() => [...entries.value].reverse());
+const visibleEntries = computed(() => (showAll.value ? ordered.value : ordered.value.slice(0, RECENT)));
+const earlier = computed(() => Math.max(0, ordered.value.length - visibleEntries.value.length));
 
 async function load() {
   error.value = "";
@@ -47,19 +62,28 @@ async function load() {
     ]);
     duty.value = (dutyRes.documents || []).map(flat)[0] || null;
     entries.value = (threadRes.documents || []).map(flat);
-    if (duty.value) {
-      edit.value = {
-        title: duty.value.title,
-        brief: duty.value.brief,
-        priority: duty.value.priority,
-        status: duty.value.status,
-      };
-    }
+    // Only reset the edit form when it is not open: a live refresh landing mid-sentence
+    // must not overwrite what someone is typing.
+    if (duty.value && !editing.value) resetEdit();
   } catch (err) {
     error.value = err.message;
   } finally {
     loading.value = false;
   }
+}
+
+function resetEdit() {
+  edit.value = {
+    title: duty.value.title,
+    brief: duty.value.brief,
+    priority: duty.value.priority,
+    status: duty.value.status,
+  };
+}
+
+function startEdit() {
+  resetEdit();
+  editing.value = true;
 }
 
 function scheduleRefresh() {
@@ -99,6 +123,14 @@ const resolve = (text) =>
     "Answered. The duty is back at the front of the queue with your answer attached.",
   );
 
+/** A person's own entry on the record. Not an answer to anything — a note goes on a duty
+ *  in any state, and does not move it. */
+const addNote = () =>
+  act(async () => {
+    await api("/duty/checkpoint", { duty_id: props.dutyId, kind: "note", message: note.value });
+    note.value = "";
+  }, "Added to the log. The next agent to pick this up will read it.");
+
 const saveEdits = () =>
   act(async () => {
     await api("/duty/update", { duty_id: props.dutyId, ...edit.value });
@@ -117,6 +149,8 @@ watch(
   () => props.dutyId,
   () => {
     loading.value = true;
+    editing.value = false;
+    showAll.value = false;
     load();
     connect();
   },
@@ -131,7 +165,7 @@ onUnmounted(() => {
 
 <template>
   <div class="wrap wrap--narrow stack">
-    <p>
+    <p style="margin: 0">
       <router-link :to="{ name: 'board', params: { projectId } }">← Back to the board</router-link>
     </p>
 
@@ -142,105 +176,37 @@ onUnmounted(() => {
     <p v-else-if="!duty" class="empty">That duty does not exist, or is not on a board you own.</p>
 
     <template v-else>
-      <div class="stack">
-        <div>
-          <h1>{{ duty.title }}</h1>
-          <p class="row small muted">
-            <span class="badge" :class="`badge--${duty.status}`">{{ statusLabel(duty.status) }}</span>
-            <span class="badge" :class="`badge--${duty.priority}`">{{ priorityLabel(duty.priority) }}</span>
-            <span class="badge">{{ duty.origin === "agent" ? "raised by an agent" : "raised by you" }}</span>
-            <span v-if="duty.assigned_agent_id">
-              {{ duty.status === "active" ? "held by" : "last worked by" }} {{ duty.assigned_agent_id }}
-            </span>
-            <span :title="exactTime(duty.updated_at)">updated {{ ago(duty.updated_at) }}</span>
-          </p>
-        </div>
-
-        <div class="panel">
-          <h2>Brief</h2>
-          <p style="white-space: pre-wrap; margin: 0">{{ duty.brief }}</p>
-        </div>
-
-        <div v-if="duty.outcome_summary" class="panel" style="border-left: 3px solid var(--ok)">
-          <h2>Outcome</h2>
-          <p style="white-space: pre-wrap; margin: 0">{{ duty.outcome_summary }}</p>
-        </div>
-
-        <p v-if="duty.parent_id" class="small muted">
-          Spawned from
-          <router-link :to="{ name: 'duty', params: { projectId, dutyId: duty.parent_id } }">the parent duty</router-link
-          >.
-        </p>
-        <p v-if="duty.blocked_by" class="small muted">
-          Blocked behind
-          <router-link :to="{ name: 'duty', params: { projectId, dutyId: duty.blocked_by } }">a child duty</router-link
-          >. Finishing that one puts this back in the queue automatically.
+      <div>
+        <h1>{{ duty.title }}</h1>
+        <p class="row small muted" style="margin: 0">
+          <span class="badge" :class="`badge--${duty.status}`">{{ statusLabel(duty.status) }}</span>
+          <span class="badge" :class="`badge--${duty.priority}`">{{ priorityLabel(duty.priority) }}</span>
+          <span class="badge">{{ duty.origin === "agent" ? "raised by an agent" : "raised by you" }}</span>
+          <span v-if="duty.assigned_agent_id">
+            {{ duty.status === "active" ? "held by" : "last worked by" }} {{ duty.assigned_agent_id }}
+          </span>
+          <span :title="exactTime(duty.updated_at)">updated {{ ago(duty.updated_at) }}</span>
         </p>
       </div>
 
-      <!-- The human half of the loop. -->
-      <form v-if="needsAnswer" class="panel stack" @submit.prevent="resolve()">
-        <h2>Answer this</h2>
-        <p class="muted small" style="margin: 0">
-          An agent parked this and moved on to other work. Your answer goes on the record and
-          rides along the next time any agent picks the duty up.
-        </p>
-        <div v-if="options.length" class="options">
-          <button
-            v-for="opt in options"
-            :key="opt"
-            type="button"
-            :disabled="posting"
-            @click="resolve(opt)"
-          >
-            {{ opt }}
-          </button>
-        </div>
-        <div class="field">
-          <label for="answer">Your answer</label>
-          <textarea id="answer" v-model="answer" maxlength="4000" required></textarea>
-        </div>
-        <div>
-          <button class="primary" type="submit" :disabled="posting || !answer">
-            {{ posting ? "Sending…" : "Send answer" }}
-          </button>
-        </div>
-      </form>
-
-      <section aria-labelledby="thread-h" class="stack">
-        <h2 id="thread-h">Decision log</h2>
-        <p v-if="!entries.length" class="empty">Nothing on the record yet.</p>
-        <ul v-else class="thread">
-          <li v-for="e in entries" :key="e.key" class="entry" :class="`entry--${e.kind}`">
-            <div class="entry__head">
-              <span class="entry__who">{{ e.author_type === "human" ? e.author_name || "You" : e.author_id }}</span>
-              <span class="badge">{{ THREAD_KIND_LABELS[e.kind] || e.kind }}</span>
-              <span class="muted small" :title="exactTime(e.created_at)">{{ ago(e.created_at) }}</span>
-            </div>
-            <p class="entry__body" style="margin: 0">{{ e.message }}</p>
-            <div v-if="e.metadata && e.metadata.suggested_options" class="options">
-              <span v-for="o in e.metadata.suggested_options" :key="o" class="badge">{{ o }}</span>
-            </div>
-          </li>
-        </ul>
-      </section>
-
-      <section aria-labelledby="edit-h" class="panel stack">
-        <div class="row row--between">
-          <h2 id="edit-h" style="margin: 0">Edit</h2>
-          <button type="button" @click="editing = !editing" :aria-expanded="editing">
-            {{ editing ? "Cancel" : "Change this duty" }}
-          </button>
+      <!-- The brief, and the same panel in edit mode. Editing a duty happens where the
+           duty is written, not in a disclosure below the thread. -->
+      <div class="panel">
+        <div class="panel__head">
+          <h2>Brief</h2>
+          <button v-if="!editing" type="button" class="btn" @click="startEdit">Edit</button>
         </div>
 
-        <form v-if="editing" class="stack" @submit.prevent="saveEdits">
+        <p v-if="!editing" class="prose">{{ duty.brief }}</p>
+
+        <form v-else class="stack" @submit.prevent="saveEdits">
           <div class="field">
             <label for="e-title">Title</label>
             <input id="e-title" v-model="edit.title" required maxlength="200" />
           </div>
           <div class="field">
             <label for="e-brief">Brief</label>
-            <textarea id="e-brief" v-model="edit.brief" required maxlength="4000"></textarea>
+            <textarea id="e-brief" v-model="edit.brief" required maxlength="4000" rows="7"></textarea>
           </div>
           <div class="field">
             <label for="e-priority">Priority</label>
@@ -257,9 +223,93 @@ onUnmounted(() => {
           </div>
           <div class="row">
             <button class="primary" type="submit" :disabled="posting">Save</button>
-            <button class="danger" type="button" :disabled="posting" @click="remove">Delete duty</button>
+            <button type="button" :disabled="posting" @click="editing = false">Cancel</button>
+            <span class="spacer"></span>
+            <button class="danger" type="button" :disabled="posting" @click="remove">Delete</button>
           </div>
         </form>
+      </div>
+
+      <div v-if="duty.outcome_summary" class="panel" style="border-left: 3px solid var(--ok)">
+        <div class="panel__head"><h2>Outcome</h2></div>
+        <p class="prose">{{ duty.outcome_summary }}</p>
+      </div>
+
+      <p v-if="duty.parent_id" class="small muted" style="margin: 0">
+        Spawned from
+        <router-link :to="{ name: 'duty', params: { projectId, dutyId: duty.parent_id } }">the parent duty</router-link>.
+      </p>
+      <p v-if="duty.blocked_by" class="small muted" style="margin: 0">
+        Blocked behind
+        <router-link :to="{ name: 'duty', params: { projectId, dutyId: duty.blocked_by } }">a child duty</router-link>.
+        Finishing that one puts this back in the queue automatically.
+      </p>
+
+      <!-- The human half of the loop. -->
+      <form v-if="needsAnswer" class="panel stack" @submit.prevent="resolve()">
+        <h2 style="margin: 0">Answer this</h2>
+        <p class="muted small" style="margin: 0">
+          An agent parked this and moved on to other work. Your answer goes on the record and
+          rides along the next time any agent picks the duty up.
+        </p>
+        <div v-if="options.length" class="options">
+          <button v-for="opt in options" :key="opt" type="button" :disabled="posting" @click="resolve(opt)">
+            {{ opt }}
+          </button>
+        </div>
+        <div class="field">
+          <label for="answer">Your answer</label>
+          <textarea id="answer" v-model="answer" maxlength="4000" required></textarea>
+        </div>
+        <div>
+          <button class="primary" type="submit" :disabled="posting || !answer">
+            {{ posting ? "Sending…" : "Send answer" }}
+          </button>
+        </div>
+      </form>
+
+      <section aria-labelledby="thread-h" class="stack">
+        <h2 id="thread-h" style="margin: 0">Decision log</h2>
+
+        <!-- Newest first, so the composer and the last thing that happened are next to
+             each other rather than a scroll apart. -->
+        <form class="panel composer" @submit.prevent="addNote">
+          <label for="note">Add a note</label>
+          <textarea
+            id="note"
+            v-model="note"
+            maxlength="4000"
+            placeholder="Anything an agent picking this up should know."
+          ></textarea>
+          <div class="composer__row">
+            <button type="submit" :disabled="posting || !note.trim()">
+              {{ posting ? "Posting…" : "Add note" }}
+            </button>
+            <span class="muted small">Goes on the record. It does not change the duty's status.</span>
+          </div>
+        </form>
+
+        <p v-if="!entries.length" class="empty">Nothing on the record yet.</p>
+        <ul v-else class="thread">
+          <li v-for="e in visibleEntries" :key="e.key" class="entry" :class="`entry--${e.kind}`">
+            <div class="entry__head">
+              <span class="entry__who">{{ e.author_type === "human" ? e.author_name || "You" : e.author_id }}</span>
+              <span class="badge">{{ THREAD_KIND_LABELS[e.kind] || e.kind }}</span>
+              <span class="muted small" :title="exactTime(e.created_at)">{{ ago(e.created_at) }}</span>
+            </div>
+            <p class="entry__body prose">{{ e.message }}</p>
+            <div v-if="e.metadata && e.metadata.suggested_options" class="options">
+              <span v-for="o in e.metadata.suggested_options" :key="o" class="badge">{{ o }}</span>
+            </div>
+          </li>
+        </ul>
+
+        <button v-if="earlier" type="button" style="width: 100%" @click="showAll = true">
+          Show {{ earlier }} earlier {{ earlier === 1 ? "entry" : "entries" }}
+        </button>
+        <button v-else-if="showAll && ordered.length > RECENT" type="button" style="width: 100%" @click="showAll = false">
+          Show only the latest
+        </button>
       </section>
     </template>
   </div>

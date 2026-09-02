@@ -13,6 +13,15 @@ export const STATUS_COLUMNS = [
   { key: "active", label: "In progress", hint: "Claimed by an agent right now." },
   { key: "blocked", label: "Blocked", hint: "Waiting on a child duty an agent spawned." },
   { key: "done", label: "Done", hint: "Finished, with a permanent outcome summary." },
+  // `whenUsed`: rendered only while it has something in it. Failure is a real state an
+  // agent can reach and it must be visible when it happens — but on most boards it never
+  // does, and a permanently empty column costs every other column a share of the width.
+  {
+    key: "failed",
+    label: "Failed",
+    hint: "Ended without finishing. The agent's reason is on the duty's thread.",
+    whenUsed: true,
+  },
 ];
 
 export const PRIORITIES = [

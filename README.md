@@ -296,6 +296,19 @@ focus, focus moved on navigation, status conveyed as text and not colour alone,
 `aria-live` for async results, a skip link, both themes at AA contrast, and
 `prefers-reduced-motion` respected.
 
+The theme follows the device by default and can be set to light or dark explicitly; the
+choice is applied before first paint, so a saved dark preference never flashes white.
+
+## On a phone
+
+Most of a board is read standing up, so the console is built for that first. Above 1080px
+the board is columns sharing the full window — no horizontal scrollbar, and the column
+headings stay put as you scroll. Below it, the columns become a row of status chips and one
+list: a phone showing five columns side by side is showing none of them, and scrolling
+sideways to find the one you wanted is worse than choosing it. Tap targets are 44px, inputs
+are 16px so iOS does not zoom into them, and no page scrolls sideways at 390px — which is
+checked, not assumed.
+
 ## What this is not
 
 There is no sharing yet — a board has one owner. No sub-boards, no scheduled duties, no

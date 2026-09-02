@@ -13,6 +13,20 @@
       name="description"
       content="A coordination bus and human-in-the-loop decision engine for autonomous agents."
     />
+    <meta name="theme-color" content="#f6f7f9" />
+    <script>
+      // Before the stylesheet, before the bundle. A saved dark preference applied after
+      // the app boots is a white flash on every single load, and no amount of speed in
+      // the bundle removes it — the paint has already happened.
+      try {
+        var t = localStorage.getItem("dutyboard.theme");
+        if (t === "dark" || t === "light") document.documentElement.setAttribute("data-theme", t);
+        var dark = t === "dark" || (t !== "light" && matchMedia("(prefers-color-scheme: dark)").matches);
+        if (dark) document.querySelector('meta[name="theme-color"]').setAttribute("content", "#0f1216");
+      } catch (e) {
+        /* storage refused; the default theme is correct anyway */
+      }
+    </script>
   </head>
   <body>
     <div id="app"></div>

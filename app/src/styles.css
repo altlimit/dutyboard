@@ -1,7 +1,13 @@
 /* Design tokens. Both themes are defined here and meet WCAG AA contrast; nothing below
-   ever states a raw colour. */
+   ever states a raw colour.
+
+   Three selectors, not two. `:root` is light. The media query is the system preference,
+   but scoped `:not([data-theme="light"])` so an explicit light choice survives a dark
+   device. `[data-theme="dark"]` then wins in the other direction. Miss either guard and
+   the toggle works in one direction only — which is the usual way a theme switch ships
+   half-broken. */
 :root {
-  color-scheme: light dark;
+  color-scheme: light;
 
   --bg: #f6f7f9;
   --surface: #ffffff;
@@ -24,10 +30,19 @@
   --radius: 10px;
   --shadow: 0 1px 2px rgba(16, 20, 28, 0.06), 0 4px 14px rgba(16, 20, 28, 0.06);
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+
+  /* Board geometry, in one place. */
+  --gutter: clamp(0.75rem, 2vw, 1.5rem);
+  /* The top bar's height, stated rather than measured, because a sticky column head has
+     to know it: guess low and the head hides under the bar, guess high and cards scroll
+     through the gap. The bar is held to this with a min-height so the number stays true. */
+  --topbar-h: 3.6rem;
 }
 
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+
     --bg: #0f1216;
     --surface: #171b21;
     --surface-2: #1e232b;
@@ -47,6 +62,29 @@
     --focus: #7ea6ff;
     --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 4px 14px rgba(0, 0, 0, 0.3);
   }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --bg: #0f1216;
+  --surface: #171b21;
+  --surface-2: #1e232b;
+  --border: #2c333d;
+  --border-strong: #454e5b;
+  --text: #e9edf3;
+  --text-dim: #a3adbb;
+  --accent: #7ea6ff;
+  --accent-text: #0f1216;
+  --accent-soft: #1b2740;
+  --danger: #ff9a9a;
+  --danger-soft: #351a1c;
+  --warn: #f0c07a;
+  --warn-soft: #342814;
+  --ok: #7fd6a5;
+  --ok-soft: #14291f;
+  --focus: #7ea6ff;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 4px 14px rgba(0, 0, 0, 0.3);
 }
 
 * { box-sizing: border-box; }
@@ -84,8 +122,11 @@ a { color: var(--accent); }
 .skip:focus { left: 0.5rem; top: 0.5rem; }
 
 /* --- layout ------------------------------------------------------------ */
-.wrap { max-width: 1200px; margin: 0 auto; padding: 1.25rem 1rem 4rem; }
-.wrap--narrow { max-width: 620px; }
+.wrap { max-width: 1200px; margin: 0 auto; padding: 1.25rem var(--gutter) 4rem; }
+.wrap--narrow { max-width: 640px; }
+/* The board, and only the board, takes the whole window: six columns that fit are worth
+   more than a tidy measure, and everything else here is prose or a form, which is not. */
+.wrap--board { max-width: none; }
 .stack > * + * { margin-top: 1rem; }
 .row { display: flex; gap: 0.6rem; align-items: center; flex-wrap: wrap; }
 .row--between { justify-content: space-between; }
@@ -104,14 +145,16 @@ a { color: var(--accent); }
   z-index: 20;
 }
 .topbar__inner {
-  max-width: 1200px;
+  max-width: 1400px;
   margin: 0 auto;
-  padding: 0.6rem 1rem;
+  padding: 0.55rem var(--gutter);
   display: flex;
-  gap: 1rem;
+  gap: 0.75rem;
   align-items: center;
   flex-wrap: wrap;
+  min-height: calc(var(--topbar-h) - 1.1rem);
 }
+.topbar__nav { display: flex; gap: 0.15rem; flex-wrap: wrap; }
 .brand {
   font-weight: 650;
   letter-spacing: -0.02em;
@@ -140,6 +183,17 @@ a { color: var(--accent); }
   font-size: 0.92rem;
 }
 .navlink:hover { background: var(--surface-2); color: var(--text); }
+/* An icon-sized control that reads as part of the bar rather than as a button on it. */
+.iconbtn {
+  border: 1px solid transparent;
+  background: none;
+  color: var(--text-dim);
+  padding: 0.35rem 0.5rem;
+  font-size: 1rem;
+  line-height: 1;
+  border-radius: 6px;
+}
+.iconbtn:hover:not(:disabled) { background: var(--surface-2); color: var(--text); border-color: var(--border); }
 .navlink.router-link-active { color: var(--text); background: var(--surface-2); }
 
 /* --- controls ----------------------------------------------------------- */
@@ -241,15 +295,25 @@ input[aria-invalid="true"], textarea[aria-invalid="true"] { border-color: var(--
 .badge--failed { background: var(--danger-soft); color: var(--danger); border-color: currentColor; }
 
 /* --- board -------------------------------------------------------------- */
+/*
+   Two layouts, one board, and the switch is at 1080px.
+
+   Above it, columns: `minmax(0, 1fr)` rather than a fixed minimum, so they SHARE the
+   window instead of overflowing it. That is the whole difference between a board that
+   fits and one with a horizontal scrollbar under it — a min-width of 230px on six columns
+   needs 1400px of window before it stops scrolling, and most windows are narrower.
+
+   Below it, one column at a time behind a row of status chips. A phone showing five
+   columns side by side is showing none of them; sideways scrolling to find the one you
+   wanted is worse than choosing it. */
 .board {
   display: grid;
-  grid-template-columns: repeat(5, minmax(230px, 1fr));
+  grid-template-columns: repeat(var(--cols, 5), minmax(0, 1fr));
   gap: 0.75rem;
-  overflow-x: auto;
-  padding-bottom: 0.5rem;
-}
-@media (max-width: 1000px) {
-  .board { grid-template-columns: repeat(5, minmax(240px, 260px)); }
+  /* Stretch, not start: a sticky heading can only stick inside its own column, so columns
+     of different heights would peel their headings off one by one as you scroll. Equal
+     heights mean all five stay put together. */
+  align-items: stretch;
 }
 .column { min-width: 0; }
 .column__head {
@@ -259,9 +323,42 @@ input[aria-invalid="true"], textarea[aria-invalid="true"] { border-color: var(--
   padding: 0 0.15rem 0.4rem;
   border-bottom: 1px solid var(--border);
   margin-bottom: 0.6rem;
+  /* The heading stays put while a long column scrolls past it — on a board with a hundred
+     duties, knowing which column you are in is the thing you lose first. */
+  position: sticky;
+  top: var(--topbar-h);
+  background: var(--bg);
+  z-index: 1;
 }
+.column__title { margin: 0; font-size: 0.95rem; }
 .column__count { color: var(--text-dim); font-size: 0.85rem; font-variant-numeric: tabular-nums; }
 .column__list { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.5rem; }
+.column__more { margin-top: 0.5rem; width: 100%; justify-content: center; font-size: 0.85rem; }
+.column__note { margin: 0.5rem 0 0; }
+
+/* The status chips: the mobile board's navigation. */
+.chips {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+.chip {
+  border-radius: 999px;
+  padding: 0.4rem 0.75rem;
+  font-size: 0.9rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  gap: 0.35rem;
+}
+.chip[aria-pressed="true"] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-text);
+  font-weight: 560;
+}
+.chip[aria-pressed="true"]:hover { background: var(--accent); filter: brightness(1.08); }
+.chip__n { font-variant-numeric: tabular-nums; opacity: 0.75; }
+.chip--attention:not([aria-pressed="true"]) { border-color: var(--warn); color: var(--warn); }
 
 .duty {
   display: block;
@@ -275,8 +372,8 @@ input[aria-invalid="true"], textarea[aria-invalid="true"] { border-color: var(--
   color: inherit;
   box-shadow: var(--shadow);
 }
-.duty:hover { border-color: var(--border-strong); background: var(--surface); }
-.duty__title { font-weight: 560; line-height: 1.35; margin-bottom: 0.3rem; }
+.duty:hover { border-color: var(--border-strong); }
+.duty__title { font-weight: 560; line-height: 1.35; margin-bottom: 0.3rem; display: block; }
 .duty__meta { display: flex; gap: 0.35rem; align-items: center; flex-wrap: wrap; font-size: 0.8rem; color: var(--text-dim); }
 .duty__ask {
   margin-top: 0.45rem;
@@ -284,6 +381,12 @@ input[aria-invalid="true"], textarea[aria-invalid="true"] { border-color: var(--
   border-left: 2px solid var(--warn);
   padding-left: 0.5rem;
   color: var(--text);
+  /* Three lines of the question, then it stops. A card that grows to 300px pushes the
+     rest of the column off the screen, and the whole point of a card is the glance. */
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 /* --- thread ------------------------------------------------------------- */
@@ -296,6 +399,18 @@ input[aria-invalid="true"], textarea[aria-invalid="true"] { border-color: var(--
 .entry__who { font-weight: 600; font-size: 0.9rem; }
 .entry__body { white-space: pre-wrap; }
 .options { display: flex; gap: 0.4rem; flex-wrap: wrap; margin-top: 0.5rem; }
+.entry--note { border-left: 3px solid var(--border-strong); }
+/* The newest entry first, and the composer above the list — so writing a note and reading
+   the last thing that happened are the same place on the screen, not opposite ends of it. */
+.composer textarea { min-height: 3.2rem; }
+.composer__row { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; margin-top: 0.5rem; }
+
+/* --- inline edit --------------------------------------------------------- */
+/* The brief is edited where the brief IS. The old version put a disclosure at the bottom
+   of the page, which meant scrolling past the thread to change a title. */
+.panel__head { display: flex; gap: 0.5rem; align-items: baseline; justify-content: space-between; margin-bottom: 0.5rem; }
+.panel__head h2 { margin: 0; }
+.prose { white-space: pre-wrap; margin: 0; overflow-wrap: anywhere; }
 
 /* --- misc --------------------------------------------------------------- */
 .livedot {
@@ -341,3 +456,47 @@ th { font-size: 0.85rem; color: var(--text-dim); font-weight: 600; }
 @media (prefers-reduced-motion: reduce) {
   * { animation: none !important; transition: none !important; }
 }
+
+/* --- phones -------------------------------------------------------------- */
+/*
+   Most of this board is read on a phone, standing up, between other things. Everything
+   below is about that: thumbs instead of a pointer, one column instead of five, and no
+   sideways scroll anywhere.
+*/
+@media (max-width: 1079px) {
+  /* The sticky column head belongs to the multi-column layout; with one column and chips
+     above it, it just eats vertical space. */
+  .column__head { position: static; }
+}
+
+@media (max-width: 700px) {
+  body { font-size: 15.5px; }
+  .wrap { padding-top: 1rem; }
+
+  /* 44px of tappable height, which is the number every platform guideline lands on and
+     the one a 0.45rem button misses by half. */
+  button, .btn, .chip { min-height: 2.75rem; padding-block: 0.55rem; }
+  input, textarea, select { min-height: 2.75rem; font-size: 16px; } /* 16px: iOS zooms into anything smaller */
+
+  /* Board controls become full-width rows rather than a cramped huddle in the corner. */
+  .board-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; width: 100%; }
+  .board-actions > * { width: 100%; justify-content: center; }
+
+  /* Two rows, not three: brand, theme and sign-out on one; the nav on its own. The
+     signed-in name goes — it is the one thing here that tells you nothing you did not
+     already know, and it was costing a whole row. */
+  .topbar__inner { gap: 0.4rem 0.5rem; padding-block: 0.4rem; }
+  .topbar__nav { order: 3; width: 100%; }
+  .topbar__who { display: none; }
+  .navlink { padding: 0.45rem 0.6rem; }
+  .topbar button { min-height: 2.4rem; }
+
+  h1 { font-size: 1.3rem; }
+  .panel, .card { padding: 0.85rem; }
+  .duty { padding: 0.8rem 0.85rem; }
+}
+
+/* Deliberately NOT `html { overflow-x: hidden }`. It would paper over a sideways scroll
+   rather than fix one, and it turns the root into a scroll container, which silently
+   kills every `position: sticky` on the page — the top bar and the column heads included.
+   The layout above has to fit on its own, and there is a test that checks it does. */
