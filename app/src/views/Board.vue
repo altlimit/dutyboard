@@ -11,6 +11,18 @@ const props = defineProps({ projectId: { type: String, required: true } });
  *  than revealing rows that were already here, which is a control that pretends to do
  *  something. */
 const PAGE = 12;
+/**
+ * One page of the WHOLE board, read in a single query and sorted into columns here.
+ *
+ * Opening a board used to cost six queries — one per status, including `failed`, which has
+ * to be asked about even when it is empty, because "is it empty" is the question. Almost
+ * every board fits in one page, and one page read once is the same rows.
+ *
+ * Over this many duties there is no honest way to do it in one request: a mixed page would
+ * let a busy column starve the others, so each column goes back to its own top-N and its
+ * own cursor. The cost of being wrong about which case you are in is one extra query.
+ */
+const BOARD_PAGE = 60;
 /** How deep a refresh will re-read a column that someone has paged into. Bounded, because
  *  this runs on every event an agent produces. */
 const MAX_DEPTH = 120;
@@ -92,6 +104,17 @@ async function loadAgents() {
   }
 }
 
+/** Sort one page of the whole board into columns. Rows arrive newest-first, so each
+ *  column comes out newest-first without sorting again. A status not in STATUS_COLUMNS
+ *  cannot occur — those six are the whole enum — and would be dropped if it did. */
+function bucket(rows) {
+  const next = Object.fromEntries(
+    STATUS_COLUMNS.map((c) => [c.key, { rows: [], cursor: null, loading: false }]),
+  );
+  for (const duty of rows) if (next[duty.status]) next[duty.status].rows.push(duty);
+  columns.value = next;
+}
+
 /** Reload some columns, or all of them when `keys` is empty.
  *
  *  `agents` is separate because only a transition touches an agent row — claiming, or
@@ -102,7 +125,29 @@ async function refresh(keys, { agents = true } = {}) {
   await Promise.all([...cols.map((k) => loadColumn(k)), ...(agents ? [loadAgents()] : [])]);
 }
 
-const loadAll = () => refresh(null);
+/** The whole board: one query if it fits, six if it does not. */
+async function loadAll() {
+  error.value = "";
+  let rows;
+  try {
+    const res = await query("duties", {
+      where: [{ field: "project_id", op: "=", value: props.projectId }],
+      order: [{ field: "updated_at", dir: "desc" }],
+      limit: BOARD_PAGE,
+    });
+    rows = (res.documents || []).map(flat);
+  } catch (err) {
+    // Falling back to six more queries here would just fail six more times.
+    error.value = err.message;
+    return;
+  }
+  if (rows.length < BOARD_PAGE) {
+    bucket(rows);
+    await loadAgents();
+    return;
+  }
+  await refresh(null);
+}
 
 async function loadBoard() {
   try {
