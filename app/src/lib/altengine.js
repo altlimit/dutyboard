@@ -191,8 +191,20 @@ export const getDocs = (collection, keys) =>
 
 // --- the function ---------------------------------------------------------
 
+/**
+ * This tab's id, for one page load.
+ *
+ * It rides along on every write and comes back on the live event that write produces, so
+ * the tab can tell its own echo from someone else's change. Without it, doing anything
+ * costs two rounds of reads: one to see the result, and another when the event arrives to
+ * say what you already know. It identifies a tab, never a person, and nothing but this
+ * tab ever compares it.
+ */
+export const ORIGIN_ID = Math.random().toString(36).slice(2) + Date.now().toString(36);
+
 /** Call a DutyBoard endpoint as the signed-in person. Every write goes through here. */
-export const api = (path, body = {}) => authed("POST", `${config.api}${path}`, { body });
+export const api = (path, body = {}) =>
+  authed("POST", `${config.api}${path}`, { body, headers: { "x-dutyboard-origin": ORIGIN_ID } });
 
 // --- live -----------------------------------------------------------------
 
@@ -266,7 +278,12 @@ export function subscribeLive({ projectId, dutyIds = [] }, onEvent, onState) {
         return;
       }
       // A delivery is a plain `{channel, data, ts}` frame; control acks carry a `type`.
-      if (frame && typeof frame.channel === "string" && frame.type === undefined) onEvent(frame);
+      if (frame && typeof frame.channel === "string" && frame.type === undefined) {
+        // The echo of this tab's own write. It already reloaded when the call returned;
+        // refreshing again would read the same rows a second time to no effect.
+        if (frame.data && frame.data.o === ORIGIN_ID) return;
+        onEvent(frame);
+      }
     };
     ws.onclose = () => {
       if (!closed) scheduleReconnect();

@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 272 64" width="272" height="64" role="img" aria-label="DutyBoard">
+  <title>DutyBoard</title>
+  <!-- The horizontal lockup: mark, one mark-corner of air (16), wordmark. The wordmark is
+       live text in a system stack rather than outlines, which is right for the web and
+       wrong for print — outline it before it goes anywhere a font cannot follow.
+       textLength pins the word to 176 units so the lockup keeps its proportions on a
+       machine whose first available font is not the one this was spaced against. -->
+  <style>
+    .db-tile { fill: #1b4fd8 }
+    .db-face { fill: #ffffff }
+    .db-word { fill: #16191f }
+    @media (prefers-color-scheme: dark) {
+      .db-tile { fill: #7ea6ff }
+      .db-face { fill: #0f1216 }
+      .db-word { fill: #e9edf3 }
+    }
+  </style>
+
+  <rect class="db-tile" width="64" height="64" rx="14"/>
+  <g class="db-face">
+    <circle cx="32" cy="9" r="4"/>
+    <rect x="30.5" y="11" width="3" height="8" rx="1.5"/>
+    <rect x="11" y="18" width="42" height="32" rx="8"/>
+  </g>
+  <g class="db-tile">
+    <rect x="16" y="24" width="8" height="10" rx="3"/>
+    <rect x="40" y="24" width="8" height="10" rx="3"/>
+    <rect x="16" y="38" width="8" height="6" rx="2"/>
+    <rect x="28" y="38" width="8" height="6" rx="2"/>
+    <rect x="40" y="38" width="8" height="6" rx="2"/>
+  </g>
+
+  <text class="db-word" x="80" y="43" textLength="176" lengthAdjust="spacing"
+        font-family="system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif"
+        font-size="32" font-weight="650">DutyBoard</text>
+</svg>

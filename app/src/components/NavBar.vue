@@ -30,7 +30,21 @@ async function leave() {
   <header class="topbar">
     <div class="topbar__inner">
       <router-link class="brand" :to="{ name: 'boards' }">
-        <span class="brand__mark" aria-hidden="true">D</span>
+        <svg class="brand__mark" viewBox="0 0 64 64" aria-hidden="true" focusable="false">
+          <rect width="64" height="64" rx="14" fill="var(--accent)"/>
+          <g fill="var(--accent-text)">
+            <circle cx="32" cy="9" r="4"/>
+            <rect x="30.5" y="11" width="3" height="8" rx="1.5"/>
+            <rect x="11" y="18" width="42" height="32" rx="8"/>
+          </g>
+          <g fill="var(--accent)">
+            <rect x="16" y="24" width="8" height="10" rx="3"/>
+            <rect x="40" y="24" width="8" height="10" rx="3"/>
+            <rect x="16" y="38" width="8" height="6" rx="2"/>
+            <rect x="28" y="38" width="8" height="6" rx="2"/>
+            <rect x="40" y="38" width="8" height="6" rx="2"/>
+          </g>
+        </svg>
         DutyBoard
       </router-link>
 

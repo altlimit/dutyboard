@@ -133,7 +133,7 @@ export default {
         caller,
         requestId,
         defaultAgentId: defaultAgentId(url, request, caller),
-        publish: makePublisher(env, cfg),
+        publish: makePublisher(env, cfg, request.headers.get("x-dutyboard-origin") || ""),
       };
       // Fire-and-forget in spirit; awaited because a function has no waitUntil. It
       // writes at most once a minute per token, so it is not on the hot path.

@@ -31,7 +31,7 @@
 import { badRequest, conflict, forbidden, notFound, str, oneOf, intIn, clip } from "./http.js";
 import { dutyId, threadId } from "./ids.js";
 import { putOp } from "./store.js";
-import { resolveProject, requireHuman, authorOf } from "./identity.js";
+import { resolveProject, projectOfDuty, requireHuman, authorOf } from "./identity.js";
 
 export const STATUSES = ["queued", "active", "needs_decision", "blocked", "done", "failed"];
 export const PRIORITIES = ["immediate_blocker", "next", "backlog"];
@@ -105,6 +105,11 @@ export async function pollDuties(ctx, body) {
 /** `POST /duty/thread` — the decision log for one duty, oldest first. */
 export async function listThread(ctx, body) {
   const duty = await loadDuty(ctx, body.duty_id);
+  // This endpoint used to be the one duty-scoped route with no ownership check on it:
+  // `loadDuty` trusted its callers to check, and this caller did not. Any signed-in
+  // person, or any agent token for any board, could read any decision log by naming a
+  // duty id. Ids are ULIDs and not guessable, which is not an access control.
+  projectOfDuty(ctx.caller, duty);
   const limit = intIn(body.limit, "limit", 1, 100, 20);
   const { rows } = await ctx.store.query("threads", {
     where: [{ field: "duty_id", op: "=", value: duty.key }],
@@ -131,7 +136,7 @@ export async function listThread(ctx, body) {
 export async function claimDuty(ctx, body) {
   const agentId = agentIdFrom(ctx, body, { required: true });
   const duty = await loadDuty(ctx, body.duty_id);
-  const project = await resolveProject(ctx.caller, duty.project_id, ctx.store);
+  const project = projectOfDuty(ctx.caller, duty);
   const now = Date.now();
 
   if (duty.status !== "queued") {
@@ -232,7 +237,7 @@ export async function enqueueDuty(ctx, body) {
  */
 export async function checkpointDuty(ctx, body) {
   const duty = await loadDuty(ctx, body.duty_id);
-  const project = await resolveProject(ctx.caller, duty.project_id, ctx.store);
+  const project = projectOfDuty(ctx.caller, duty);
   const agentId = agentIdFrom(ctx, body, { required: false });
   const now = Date.now();
 
@@ -248,18 +253,21 @@ export async function checkpointDuty(ctx, body) {
     ? oneOf(body.set_status, "set_status", ["needs_decision", "blocked", "active"])
     : null;
 
-  const ops = [
-    putOp("threads", threadId(), {
-      duty_id: duty.key,
-      project_id: project.key,
-      owner_uid: project.owner_uid,
-      ...authorOf(ctx.caller, agentId),
-      kind,
-      message,
-      metadata: options.length ? { suggested_options: options } : null,
-      created_at: now,
-    }),
-  ];
+  // Built once and returned below. A caller that has just written an entry should not
+  // have to re-read the thread to find out what it wrote — that read is the single most
+  // common one this API serves, and it is entirely avoidable.
+  const entryKey = threadId();
+  const entry = {
+    duty_id: duty.key,
+    project_id: project.key,
+    owner_uid: project.owner_uid,
+    ...authorOf(ctx.caller, agentId),
+    kind,
+    message,
+    metadata: options.length ? { suggested_options: options } : null,
+    created_at: now,
+  };
+  const ops = [putOp("threads", entryKey, entry)];
 
   let state = duty.status;
   if (setStatus && setStatus !== duty.status) {
@@ -281,7 +289,7 @@ export async function checkpointDuty(ctx, body) {
 
   await ctx.store.transaction(ops);
   await ctx.publish(project.key, duty.key, { t: "thread", id: duty.key, status: state });
-  return { ok: true, state, duty_id: duty.key };
+  return { ok: true, state, duty_id: duty.key, entry: { id: entryKey, ...entry } };
 }
 
 /** `POST /duty/complete` — active → done, with the summary that outlives the run. */
@@ -297,7 +305,7 @@ export async function failDuty(ctx, body) {
 
 async function finishDuty(ctx, body, terminal) {
   const duty = await loadDuty(ctx, body.duty_id);
-  const project = await resolveProject(ctx.caller, duty.project_id, ctx.store);
+  const project = projectOfDuty(ctx.caller, duty);
   const agentId = agentIdFrom(ctx, body, { required: false });
   const now = Date.now();
 
@@ -355,7 +363,7 @@ async function finishDuty(ctx, body, terminal) {
 export async function resolveDuty(ctx, body) {
   requireHuman(ctx.caller);
   const duty = await loadDuty(ctx, body.duty_id);
-  const project = await resolveProject(ctx.caller, duty.project_id, ctx.store);
+  const project = projectOfDuty(ctx.caller, duty);
   const now = Date.now();
   const text = str(body.resolution_text ?? body.message, "resolution_text", { required: true, max: 4000 });
 
@@ -394,7 +402,7 @@ export async function resolveDuty(ctx, body) {
 export async function updateDuty(ctx, body) {
   requireHuman(ctx.caller);
   const duty = await loadDuty(ctx, body.duty_id);
-  const project = await resolveProject(ctx.caller, duty.project_id, ctx.store);
+  const project = projectOfDuty(ctx.caller, duty);
   const now = Date.now();
   const next = { ...stripMeta(duty), updated_at: now };
 
@@ -429,7 +437,7 @@ export async function updateDuty(ctx, body) {
 export async function deleteDuty(ctx, body) {
   requireHuman(ctx.caller);
   const duty = await loadDuty(ctx, body.duty_id);
-  const project = await resolveProject(ctx.caller, duty.project_id, ctx.store);
+  const project = projectOfDuty(ctx.caller, duty);
 
   // Threads are keyed independently of the duty, so they have to be swept explicitly.
   // Bounded per call and repeated until empty rather than assuming one page is all there is.
@@ -455,8 +463,10 @@ async function loadDuty(ctx, id) {
   const key = str(id, "duty_id", { required: true, max: 64 });
   const duty = await ctx.store.get("duties", key);
   if (!duty) throw notFound(`duty '${key}' not found`);
-  // Ownership is checked by the caller's own `resolveProject`, which every caller of
-  // this does — the duty's project_id is what that check runs against.
+  // This does NOT check ownership. Every caller must follow it with `projectOfDuty`,
+  // which does — and which is free, so there is no reason not to. The previous version of
+  // this comment asserted that every caller already did; one of them did not, and reading
+  // any board's decision log was a matter of naming a duty id.
   return duty;
 }
 

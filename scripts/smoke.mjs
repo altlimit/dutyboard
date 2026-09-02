@@ -168,6 +168,12 @@ async function main() {
   const noSummary = await call("/duty/complete", { duty_id: later.duty_id, agent_id: "alpha" }, agent, { expectStatus: true });
   check("completing without a summary is refused", noSummary.status === 400, noSummary);
 
+  // The write answers with what it wrote, so a caller never has to re-read the thread to
+  // find out what it just said.
+  const noted = await call("/duty/checkpoint", { duty_id: later.duty_id, agent_id: "alpha", kind: "note", message: "a note" }, agent);
+  check("a checkpoint returns the entry it created", noted.entry && noted.entry.id && noted.entry.message === "a note", noted);
+  check("attributed to its author", noted.entry.author_type === "agent" && noted.entry.author_id === "alpha", noted.entry);
+
   // --- the human answers --------------------------------------------------
   const resolved = await call(
     "/duty/resolve",
@@ -277,6 +283,18 @@ async function main() {
 
   const theirApi = await call("/duty/poll", { project_id: projectId }, other.id_token, { expectStatus: true });
   check("and cannot reach it through the function either", theirApi.status === 403, theirApi);
+
+  // Naming a duty directly, with no project id to check against. `/duty/thread` used to
+  // answer this: it loaded the duty and read its log without ever asking whose it was.
+  const theirThread = await call("/duty/thread", { duty_id: soon.duty_id }, other.id_token, { expectStatus: true });
+  check("nor read a duty's log by naming its id", theirThread.status === 404, theirThread);
+  const theirCheckpoint = await call(
+    "/duty/checkpoint",
+    { duty_id: soon.duty_id, kind: "note", message: "should not land" },
+    other.id_token,
+    { expectStatus: true },
+  );
+  check("nor write to its thread", theirCheckpoint.status === 404, theirCheckpoint);
 
   // --- revocation ---------------------------------------------------------
   const tokenList = await call("/tokens/list", { project_id: projectId }, human);

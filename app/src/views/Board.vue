@@ -11,6 +11,9 @@ const props = defineProps({ projectId: { type: String, required: true } });
  *  than revealing rows that were already here, which is a control that pretends to do
  *  something. */
 const PAGE = 12;
+/** How deep a refresh will re-read a column that someone has paged into. Bounded, because
+ *  this runs on every event an agent produces. */
+const MAX_DEPTH = 120;
 
 /** Below this the board stops being columns and becomes one column behind chips. Wide
  *  enough that six columns still get ~170px each, which is the point where a title stops
@@ -50,6 +53,9 @@ const flat = (doc) => ({ ...doc.data, key: String(doc.key) });
 
 async function loadColumn(status, { append = false } = {}) {
   const col = columns.value[status];
+  // A refresh re-reads as deep as the column already goes. Re-reading one page instead
+  // would collapse a column someone had expanded, every time any agent did anything.
+  const limit = append ? PAGE : Math.min(Math.max(PAGE, col.rows.length), MAX_DEPTH);
   col.loading = true;
   try {
     const res = await query("duties", {
@@ -58,14 +64,14 @@ async function loadColumn(status, { append = false } = {}) {
         { field: "status", op: "=", value: status },
       ],
       order: [{ field: "updated_at", dir: "desc" }],
-      limit: PAGE,
+      limit,
       cursor: append ? col.cursor || undefined : undefined,
     });
     const rows = (res.documents || []).map(flat);
     col.rows = append ? [...col.rows, ...rows] : rows;
-    // A cursor means there is more. Saying so is the point: a column silently capped at
-    // 50 looks exactly like a column with 50 things in it.
-    col.cursor = rows.length === PAGE ? res.cursor : null;
+    // A full page means there may be another. Saying so is the point: a column silently
+    // capped looks exactly like a column with that many things in it.
+    col.cursor = rows.length === limit ? res.cursor : null;
   } catch (err) {
     error.value = err.message;
   } finally {
@@ -86,10 +92,17 @@ async function loadAgents() {
   }
 }
 
-async function loadAll() {
+/** Reload some columns, or all of them when `keys` is empty.
+ *
+ *  `agents` is separate because only a transition touches an agent row — claiming, or
+ *  parking a duty releases whoever held it — and enqueueing never does. */
+async function refresh(keys, { agents = true } = {}) {
   error.value = "";
-  await Promise.all([...STATUS_COLUMNS.map((c) => loadColumn(c.key)), loadAgents()]);
+  const cols = keys && keys.size ? [...keys] : STATUS_COLUMNS.map((c) => c.key);
+  await Promise.all([...cols.map((k) => loadColumn(k)), ...(agents ? [loadAgents()] : [])]);
 }
+
+const loadAll = () => refresh(null);
 
 async function loadBoard() {
   try {
@@ -100,14 +113,38 @@ async function loadBoard() {
   }
 }
 
-/** Live events name a duty and a status, but a move is two columns changing at once and
- *  several can land together. Coalescing into one refresh is both simpler and cheaper
- *  than trying to patch rows in place from a payload that deliberately carries no data. */
-function scheduleRefresh() {
+/** Which column currently shows this duty, if any. A move is two columns changing — the
+ *  one it went to, which the event names, and the one it came from, which only we know. */
+function columnHolding(dutyKey) {
+  for (const c of STATUS_COLUMNS) {
+    if (columns.value[c.key].rows.some((d) => d.key === dutyKey)) return c.key;
+  }
+  return null;
+}
+
+/**
+ * Coalesce events into one refresh of only the columns they touch.
+ *
+ * Several events land together — an interrupt moves a parent and creates a child — so
+ * they are collected for a moment and then read once. Refreshing the whole board instead
+ * meant six queries for every single thing any agent did, on every open tab.
+ */
+let touched = new Set();
+function scheduleRefresh(frame) {
+  const ev = frame && frame.data;
+  if (!ev || !ev.id) {
+    touched = null; // an event we do not understand: re-read everything rather than guess
+  } else if (touched) {
+    const from = columnHolding(ev.id);
+    if (from) touched.add(from);
+    if (ev.status && columns.value[ev.status]) touched.add(ev.status);
+  }
   if (refreshTimer) return;
   refreshTimer = setTimeout(() => {
     refreshTimer = null;
-    loadAll();
+    const keys = touched;
+    touched = new Set();
+    refresh(keys);
   }, 400);
 }
 
@@ -115,7 +152,7 @@ function connect() {
   if (socket) socket.close();
   socket = subscribeLive(
     { projectId: props.projectId },
-    () => scheduleRefresh(),
+    (frame) => scheduleRefresh(frame),
     (s) => (liveState.value = s),
   );
 }
@@ -132,7 +169,9 @@ async function addDuty() {
     });
     draft.value = { title: "", brief: "", priority: "next" };
     showForm.value = false;
-    await loadAll();
+    // A new duty is queued, by definition — no other column can have changed, so no other
+    // column needs re-reading.
+    await refresh(new Set(["queued"]), { agents: false });
   } catch (err) {
     error.value = err.message;
   } finally {

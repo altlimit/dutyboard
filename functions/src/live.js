@@ -27,13 +27,21 @@ export const dutyChannel = (id) => `duty.${id}`;
  * enhancement, and a channel instance that is missing or briefly unreachable must never
  * turn a successful state transition into an error the agent has to retry.
  */
-export function makePublisher(env, cfg) {
+export function makePublisher(env, cfg, origin) {
   if (!env.channel || !cfg.channelInstance) {
     return async () => {};
   }
   const target = { instance: cfg.channelInstance };
   return async function publish(projectId, dutyIdOrNull, payload) {
-    const body = { ...payload, ts: Date.now() };
+    // `o` is the caller's own origin id, echoed back to it.
+    //
+    // A page that writes something already reloads to see the result, and then its own
+    // event arrives and it reloads again — every action costing two round trips of reads
+    // instead of one. With this the page can recognise the echo of its own write and
+    // ignore it, while everyone else's tab still refreshes. It is an opaque string chosen
+    // by the client: it identifies a tab, not a person, and it is only ever compared for
+    // equality by the tab that sent it.
+    const body = { ...payload, ts: Date.now(), ...(origin ? { o: origin } : {}) };
     const sends = [env.channel.publish(target, boardChannel(projectId), body)];
     if (dutyIdOrNull) sends.push(env.channel.publish(target, dutyChannel(dutyIdOrNull), body));
     try {

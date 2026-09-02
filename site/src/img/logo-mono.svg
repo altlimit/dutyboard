@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="8 2 48 51" width="48" height="51" role="img" aria-label="DutyBoard">
+  <title>DutyBoard</title>
+  <!-- One colour, no tile, cropped to the glyph: for stamping on a surface that already
+       has a colour — a README, a sticker, an embroidered shirt. The cards are cut out of
+       the head with a mask rather than painted over it, so whatever is behind the logo
+       shows through them and the mark survives on any background. -->
+  <mask id="db-face-cutouts">
+    <rect x="11" y="18" width="42" height="32" rx="8" fill="#fff"/>
+    <rect x="16" y="24" width="8" height="10" rx="3" fill="#000"/>
+    <rect x="40" y="24" width="8" height="10" rx="3" fill="#000"/>
+    <rect x="16" y="38" width="8" height="6" rx="2" fill="#000"/>
+    <rect x="28" y="38" width="8" height="6" rx="2" fill="#000"/>
+    <rect x="40" y="38" width="8" height="6" rx="2" fill="#000"/>
+  </mask>
+  <g fill="currentColor">
+    <circle cx="32" cy="9" r="4"/>
+    <rect x="30.5" y="11" width="3" height="8" rx="1.5"/>
+    <rect x="11" y="18" width="42" height="32" rx="8" mask="url(#db-face-cutouts)"/>
+  </g>
+</svg>

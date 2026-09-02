@@ -164,16 +164,12 @@ a { color: var(--accent); }
   gap: 0.5rem;
   align-items: center;
 }
+/* The tile is inside the SVG now, so this only has to size it. */
 .brand__mark {
-  width: 1.4rem;
-  height: 1.4rem;
-  border-radius: 5px;
-  background: var(--accent);
-  color: var(--accent-text);
-  display: grid;
-  place-items: center;
-  font-size: 0.8rem;
-  font-weight: 700;
+  width: 1.5rem;
+  height: 1.5rem;
+  display: block;
+  flex: none;
 }
 .navlink {
   color: var(--text-dim);

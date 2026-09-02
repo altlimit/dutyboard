@@ -90,6 +90,31 @@ export async function resolveProject(caller, requestedId, store) {
   return project;
 }
 
+/**
+ * The same check as `resolveProject`, for a call that already holds the duty — and with
+ * no second read.
+ *
+ * A duty row carries `project_id` and `owner_uid`, which are the only two facts
+ * `resolveProject` goes to the projects collection to find out. Every duty-scoped
+ * endpoint was paying a point read to learn something it already had in its hand.
+ *
+ * It does not check that the project still exists, and does not need to: deleting a board
+ * sweeps its duties in the same request, so a duty whose project is gone is not a state
+ * this can observe. If that ever stops being true, this is the comment that is wrong.
+ */
+export function projectOfDuty(caller, duty) {
+  if (caller.kind === "agent") {
+    if (duty.project_id !== caller.projectId) {
+      // Deliberately the same words as a missing duty. A token scoped to one board must
+      // not be able to learn that a duty id on another board exists.
+      throw notFound(`duty '${duty.key}' not found`);
+    }
+  } else if (duty.owner_uid !== caller.uid) {
+    throw notFound(`duty '${duty.key}' not found`);
+  }
+  return { key: duty.project_id, owner_uid: duty.owner_uid };
+}
+
 /** Only a human owns things; agents act inside a project a human already owns. */
 export function requireHuman(caller) {
   if (caller.kind !== "human") throw forbidden("this endpoint is for signed-in people, not agent tokens");

@@ -119,14 +119,16 @@ function connect() {
   socket = subscribeLive({ projectId: props.projectId, dutyIds: [props.dutyId] }, () => scheduleRefresh());
 }
 
-async function act(fn, message) {
+/** Run a write, then reload — unless the write already told us everything that changed,
+ *  in which case `reload: false` and the handler has updated what it needs to. */
+async function act(fn, message, { reload = true } = {}) {
   posting.value = true;
   error.value = "";
   notice.value = "";
   try {
     await fn();
     notice.value = message || "";
-    await load();
+    if (reload) await load();
   } catch (err) {
     error.value = err.message;
   } finally {
@@ -144,12 +146,21 @@ const resolve = (text) =>
   );
 
 /** A person's own entry on the record. Not an answer to anything — a note goes on a duty
- *  in any state, and does not move it. */
+ *  in any state, and does not move it.
+ *
+ *  Nothing is re-read afterwards. A note changes exactly one thing — the log gains an
+ *  entry — and the server hands that entry back, so the page has the truth already. The
+ *  duty row is untouched, which is why re-fetching it was the plainest waste here. */
 const addNote = () =>
-  act(async () => {
-    await api("/duty/checkpoint", { duty_id: props.dutyId, kind: "note", message: note.value });
-    note.value = "";
-  }, "Added to the log. The next agent to pick this up will read it.");
+  act(
+    async () => {
+      const res = await api("/duty/checkpoint", { duty_id: props.dutyId, kind: "note", message: note.value });
+      if (res.entry) entries.value = [{ ...res.entry, key: res.entry.id }, ...entries.value];
+      note.value = "";
+    },
+    "Added to the log. The next agent to pick this up will read it.",
+    { reload: false },
+  );
 
 const saveEdits = () =>
   act(async () => {
