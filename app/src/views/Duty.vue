@@ -181,7 +181,7 @@ onUnmounted(() => {
         <p class="row small muted" style="margin: 0">
           <span class="badge" :class="`badge--${duty.status}`">{{ statusLabel(duty.status) }}</span>
           <span class="badge" :class="`badge--${duty.priority}`">{{ priorityLabel(duty.priority) }}</span>
-          <span class="badge">{{ duty.origin === "agent" ? "raised by an agent" : "raised by you" }}</span>
+          <span>{{ duty.origin === "agent" ? "raised by an agent" : "raised by you" }}</span>
           <span v-if="duty.assigned_agent_id">
             {{ duty.status === "active" ? "held by" : "last worked by" }} {{ duty.assigned_agent_id }}
           </span>
@@ -235,11 +235,11 @@ onUnmounted(() => {
         <p class="prose">{{ duty.outcome_summary }}</p>
       </div>
 
-      <p v-if="duty.parent_id" class="small muted" style="margin: 0">
+      <p v-if="duty.parent_id" class="small muted rel">
         Spawned from
         <router-link :to="{ name: 'duty', params: { projectId, dutyId: duty.parent_id } }">the parent duty</router-link>.
       </p>
-      <p v-if="duty.blocked_by" class="small muted" style="margin: 0">
+      <p v-if="duty.blocked_by" class="small muted rel">
         Blocked behind
         <router-link :to="{ name: 'duty', params: { projectId, dutyId: duty.blocked_by } }">a child duty</router-link>.
         Finishing that one puts this back in the queue automatically.
@@ -247,7 +247,7 @@ onUnmounted(() => {
 
       <!-- The human half of the loop. -->
       <form v-if="needsAnswer" class="panel stack" @submit.prevent="resolve()">
-        <h2 style="margin: 0">Answer this</h2>
+        <h2 class="section-h">Answer this</h2>
         <p class="muted small" style="margin: 0">
           An agent parked this and moved on to other work. Your answer goes on the record and
           rides along the next time any agent picks the duty up.
@@ -269,7 +269,7 @@ onUnmounted(() => {
       </form>
 
       <section aria-labelledby="thread-h" class="stack">
-        <h2 id="thread-h" style="margin: 0">Decision log</h2>
+        <h2 id="thread-h" class="section-h">Decision log</h2>
 
         <!-- Newest first, so the composer and the last thing that happened are next to
              each other rather than a scroll apart. -->

@@ -285,7 +285,11 @@ input[aria-invalid="true"], textarea[aria-invalid="true"] { border-color: var(--
    list of six-word sentences stretched across 1200px. */
 .cards {
   list-style: none;
-  margin: 0;
+  /* NOT `margin: 0`. That has the same specificity as `.stack > * + *` and comes later in
+     this file, so it wins — and the list ends up flush against whatever is above it. Only
+     the sides and the bottom are zeroed; the top belongs to the stack. */
+  margin-inline: 0;
+  margin-bottom: 0;
   padding: 0;
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr));
@@ -422,7 +426,7 @@ input[aria-invalid="true"], textarea[aria-invalid="true"] { border-color: var(--
 }
 
 /* --- thread ------------------------------------------------------------- */
-.thread { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.75rem; }
+.thread { list-style: none; margin-inline: 0; margin-bottom: 0; padding: 0; display: grid; gap: 0.75rem; }
 .entry { border: 1px solid var(--border); border-radius: var(--radius); padding: 0.7rem 0.8rem; background: var(--surface); }
 .entry--resolution { border-left: 3px solid var(--ok); }
 .entry--question { border-left: 3px solid var(--warn); }
@@ -443,6 +447,11 @@ input[aria-invalid="true"], textarea[aria-invalid="true"] { border-color: var(--
 .panel__head { display: flex; gap: 0.5rem; align-items: baseline; justify-content: space-between; margin-bottom: 0.5rem; }
 .panel__head h2 { margin: 0; }
 .prose { white-space: pre-wrap; margin: 0; overflow-wrap: anywhere; }
+/* A heading that owns the spacing above it rather than borrowing the stack's. */
+.section-h { margin: 0.5rem 0 0; }
+/* "Spawned from…", "Blocked behind…" — a footnote to the panel above, so it is indented
+   to that panel's text rather than sitting flush against its edge. */
+.rel { margin: 0.6rem 0 0; padding-left: 0.85rem; border-left: 2px solid var(--border); }
 
 /* --- misc --------------------------------------------------------------- */
 .livedot {
