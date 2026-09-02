@@ -50,13 +50,33 @@ async function instanceId(service, name) {
   return found.id;
 }
 
-async function main() {
-  try {
-    await fetch(BASE + "/healthz");
-  } catch {
-    console.error(`✖ no altengine at ${BASE}\n  start it with:  altengine dev\n  (or set ALTENGINE_URL)`);
-    process.exit(1);
+/** Wait for the emulator to answer, up to `seconds`.
+ *
+ *  Bounded, not infinite, and it waits rather than failing fast because the usual way this
+ *  runs is as a task started at the same moment as the emulator itself — losing that race
+ *  by half a second should not mean an unprovisioned backend and a console that 403s. */
+async function waitForAltengine(seconds = 30) {
+  const deadline = Date.now() + seconds * 1000;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const res = await fetch(BASE + "/healthz");
+      if (res.ok) return;
+    } catch {
+      /* not up yet */
+    }
+    if (Date.now() > deadline) {
+      console.error(`✖ no altengine at ${BASE} after ${seconds}s`);
+      console.error(`  start it with:  altengine dev    (or set ALTENGINE_URL)`);
+      process.exit(1);
+    }
+    if (attempt === 0) process.stdout.write(`… waiting for altengine at ${BASE}`);
+    else process.stdout.write(".");
+    await new Promise((r) => setTimeout(r, 500));
   }
+}
+
+async function main() {
+  await waitForAltengine();
 
   const [signup, access, indexes] = await Promise.all([
     readConfig("signup.json"),

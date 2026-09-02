@@ -1,0 +1,82 @@
+{
+  // Run these with taskr (`taskr`, or `taskr "Start All"`), or from VS Code's task picker.
+  //
+  // "Start All" brings up everything DutyBoard needs: the altengine emulator, a one-shot
+  // provision-and-deploy, and the console. The three start together — "Provision & deploy"
+  // waits for the emulator itself rather than relying on start order, because taskr runs a
+  // parallel dependsOn concurrently and the emulator never exits, so it cannot be a
+  // dependency that "finishes" first.
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Start All",
+      "dependsOn": ["Emulator", "Provision & deploy", "Console"],
+      "dependsOrder": "parallel",
+      "group": { "kind": "build", "isDefault": true },
+      "problemMatcher": []
+    },
+    {
+      "label": "Emulator",
+      "type": "shell",
+      // There is no published altengine binary yet, so fall back to running the CLI from
+      // its source checkout next door. Whichever way it starts, `-data` keeps the emulator's
+      // state inside THIS project (gitignored) instead of wherever the command was run from
+      // — and keeping it means a restart does not throw away the board you were testing on.
+      "command": "if command -v altengine >/dev/null 2>&1; then exec altengine dev -data '${workspaceFolder}/.altengine'; else echo '(altengine not on PATH — running from ../altenginedev/cli)'; exec go run ./cmd/altengine dev -data '${workspaceFolder}/.altengine'; fi",
+      "options": { "cwd": "${workspaceFolder}/../altenginedev/cli" },
+      "isBackground": true,
+      "problemMatcher": []
+    },
+    {
+      "label": "Provision & deploy",
+      "type": "shell",
+      // Both, in order, every time: instance CONFIG does not auto-create, and the function
+      // has to be redeployed after a code change anyway. Cheap enough to be unconditional.
+      "command": "npm run setup && npm run deploy",
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "env": {
+          "ALTENGINE_URL": "http://127.0.0.1:9191",
+          "ALTENGINE_KEY": "dev",
+          "DUTYBOARD_ORIGINS": "http://localhost:5173,http://127.0.0.1:5173"
+        }
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Console",
+      "type": "shell",
+      // The port is PINNED. Left to itself vite takes the next free one when 5173 is busy,
+      // and the console then loads fine and fails every call to the function on CORS —
+      // whose origin allowlist was provisioned for 5173. A refusal to start naming the busy
+      // port is a much shorter debugging session than that.
+      "command": "npm run dev -- --port 5173 --strictPort",
+      "options": { "cwd": "${workspaceFolder}" },
+      "isBackground": true,
+      "problemMatcher": []
+    },
+    {
+      "label": "Redeploy function",
+      "type": "shell",
+      // The inner loop when you are changing functions/src: rebuild the bundle and push it,
+      // without restarting the emulator or losing the board's data.
+      "command": "npm run deploy",
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "env": { "ALTENGINE_URL": "http://127.0.0.1:9191", "ALTENGINE_KEY": "dev" }
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Smoke test",
+      "type": "shell",
+      "command": "npm run smoke",
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "env": { "ALTENGINE_URL": "http://127.0.0.1:9191" }
+      },
+      "group": { "kind": "test", "isDefault": true },
+      "problemMatcher": []
+    }
+  ]
+}

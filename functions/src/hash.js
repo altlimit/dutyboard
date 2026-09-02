@@ -1,13 +1,15 @@
 // SHA-256, in the bundle.
 //
 // Agent tokens are stored only as their hash, so this runs on the authentication path of
-// every agent request. `crypto.subtle.digest` would be the obvious way to get it — but
-// the local emulator's sandbox provides only `crypto.randomUUID`, so a function written
-// against subtle works in production and fails on the developer's machine, which is the
-// worst possible place for a difference to live.
+// every agent request. `crypto.subtle.digest` is the obvious way to get it, and is what
+// the hosted runtime offers — but it is not guaranteed present in every local emulator
+// build, and a function written against it then works in production and fails on the
+// developer's machine, which is the worst possible place for a difference to live.
 //
-// So it is here, in ~40 lines, identical everywhere. A 35-byte input is microseconds of
-// CPU; the parity is worth more than the cycles.
+// So it is here, in ~40 lines, with one code path that behaves identically everywhere. A
+// 35-byte input is microseconds of CPU; not having to care where this runs is worth more
+// than the cycles. Verified against Node's crypto for empty, ASCII, long and multi-byte
+// UTF-8 inputs.
 
 const K = new Uint32Array([
   0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
