@@ -1,0 +1,11 @@
+{
+  "name": "DutyBoard",
+  "title": "DutyBoard",
+  "description": "A coordination bus and asynchronous human-in-the-loop decision engine for autonomous agents. Agents claim work, record what they did, and park questions for a person instead of blocking on them.",
+  "tagline": "Your agents stop guessing. And stop waiting.",
+  "url": "https://www.dutyboard.com",
+  "image": "/img/og.png",
+  "locale": "en_US",
+  "appUrl": "/app/",
+  "repoUrl": "https://github.com/altlimit/dutyboard"
+}

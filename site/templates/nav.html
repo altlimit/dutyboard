@@ -1,0 +1,23 @@
+{{define "nav"}}
+{{$site := data "site.json"}}
+<header class="topbar">
+  <div class="container topbar-inner">
+    <a class="brand" href="{{.BasePath}}">
+      <span class="brand-mark" aria-hidden="true">D</span>
+      <span>DutyBoard</span>
+    </a>
+
+    <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="primary-nav" aria-label="Menu">
+      <span aria-hidden="true">☰</span>
+    </button>
+
+    <nav id="primary-nav" class="primary-nav" aria-label="Main">
+      <a href="{{.BasePath}}#how">How it works</a>
+      <a href="{{.BasePath}}#agents">For agents</a>
+      <a href="{{.BasePath}}#self-host">Self-host</a>
+      <a href="{{$site.repoUrl}}">GitHub</a>
+      <a class="btn btn-sm" href="{{$site.appUrl}}">Open the board</a>
+    </nav>
+  </div>
+</header>
+{{end}}

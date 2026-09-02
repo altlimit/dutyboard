@@ -31,6 +31,37 @@ blockers and outcomes only. A poll answers in a couple of hundred tokens.
   └─────────┘   finishing the child re-queues its blocked parent
 ```
 
+## Layout
+
+```
+site/        the marketing site at www.dutyboard.com  (sitegen)
+app/         the console at /app                      (Vue 3 + Vite)
+functions/   the state machine, one deployed module   (altengine functions)
+backend/     instance configuration to apply once
+scripts/     setup, deploy, and the end-to-end smoke test
+public/      build output — both halves, gitignored
+```
+
+`npm run build` runs the two builds in that order on purpose: the site build cleans
+`public/` first, so doing it the other way round deletes the app.
+
+The console is served from `/app` in development too, not from `/`. A path assumption that
+only holds on one of them is exactly the kind of thing that survives every local test.
+
+### The one rewrite it needs
+
+The console is a single-page app. Every path under `/app` has to serve
+`public/app/index.html` rather than 404 — one rule:
+
+```
+/app/*  →  /app/index.html   (200, not a redirect)
+```
+
+Until the static service that does this is available, the router uses hash URLs
+(`/app/#/b/my-board`), which need no rewrite and work on any static host. Switching is one
+line in [`app/src/router.js`](app/src/router.js): `createWebHashHistory()` →
+`createWebHistory("/app/")`.
+
 ## How it is built
 
 DutyBoard runs on [altengine](https://www.altengine.net) — no server of its own.
@@ -66,12 +97,23 @@ The `db_` prefix is what tells them apart. A token is shown once, at mint, and n
 
 ## Run it
 
+With [taskr](https://github.com/altlimit/taskr), one command starts everything —
+the emulator, provisioning, the console and the marketing site:
+
+```bash
+npm install
+taskr "Start All"
+```
+
+Or by hand:
+
 ```bash
 altengine dev                 # the emulator, on :9191
 npm install
 npm run setup                 # provision the instances from backend/
 ALTENGINE_URL=http://127.0.0.1:9191 ALTENGINE_KEY=dev npm run deploy
-npm run dev                   # the console, on :5173
+npm run dev                   # the console, on :5173/app/
+npm run dev:site              # the marketing site, on :8888
 npm run smoke                 # 55 assertions over the whole state machine
 ```
 
@@ -92,9 +134,13 @@ functions instance's CORS origins to wherever you serve the console. Then:
 
 ```bash
 export ALTENGINE_KEY=ak_…     # needs 'full' on the functions instance
-npm run deploy
-npm run build                 # static console in dist/ — host it anywhere
+npm run deploy                # the function
+npm run build                 # the site and the console, both into public/
 ```
+
+`public/` is the whole static site: marketing at the root, the console under `/app`. Host
+it anywhere that can serve a directory — and, once you switch the router to history URLs,
+that can also apply the rewrite above.
 
 If your instances are named differently, set `DUTYBOARD_DATASTORE`, `DUTYBOARD_AUTH`,
 `DUTYBOARD_CHANNEL` and `DUTYBOARD_FN_INSTANCE` for the deploy, the matching `VITE_*` vars

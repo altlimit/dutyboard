@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  {{ template "head" . }}
+</head>
+
+<body>
+  <a href="#main" class="skip-link">Skip to main content</a>
+  {{ template "nav" . }}
+
+  <main id="main">
+    {{ template "content" . }}
+  </main>
+
+  {{ template "siteFooter" . }}
+
+  <script>
+    // The one piece of script on the marketing site: the small-screen menu. Everything
+    // else here is static HTML, and a page that needs JavaScript to be readable is a page
+    // that fails for the reader whose JavaScript did not load.
+    (function () {
+      var btn = document.querySelector('.nav-toggle');
+      var nav = document.getElementById('primary-nav');
+      if (!btn || !nav) return;
+      function close() { btn.setAttribute('aria-expanded', 'false'); nav.classList.remove('is-open'); }
+      btn.addEventListener('click', function () {
+        var open = btn.getAttribute('aria-expanded') === 'true';
+        btn.setAttribute('aria-expanded', String(!open));
+        nav.classList.toggle('is-open', !open);
+      });
+      nav.addEventListener('click', function (e) { if (e.target.closest('a')) close(); });
+      document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape' && btn.getAttribute('aria-expanded') === 'true') { close(); btn.focus(); }
+      });
+    })();
+  </script>
+</body>
+
+</html>

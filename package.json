@@ -3,14 +3,17 @@
   "private": true,
   "version": "2.0.0",
   "type": "module",
-  "description": "DutyBoard — a coordination bus, external working memory and human-in-the-loop decision engine for autonomous agents, built on altengine functions + datastore + auth + channel.",
+  "description": "DutyBoard \u2014 a coordination bus, external working memory and human-in-the-loop decision engine for autonomous agents, built on altengine functions + datastore + auth + channel.",
   "scripts": {
+    "dev": "vite",
+    "dev:site": "sitegen -serve",
+    "build": "npm run build:site && npm run build:app",
+    "build:site": "sitegen -minify -clean",
+    "build:app": "vite build",
     "build:fn": "node functions/build.mjs",
     "deploy": "npm run build:fn && node scripts/deploy.mjs",
     "setup": "node scripts/setup.mjs",
     "smoke": "node scripts/smoke.mjs",
-    "dev": "vite",
-    "build": "vite build",
     "preview": "vite preview"
   },
   "dependencies": {

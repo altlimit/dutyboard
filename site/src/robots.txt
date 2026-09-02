@@ -1,0 +1,11 @@
+---
+parse: text
+sitemap: "false"
+---
+User-agent: *
+Allow: /
+
+# The console is a signed-in application, not content.
+Disallow: /app/
+
+Sitemap: https://www.dutyboard.com/sitemap.xml

@@ -1,0 +1,207 @@
+---
+updated: "2026-09-02"
+template: main.html
+pagetitle: "DutyBoard — the board your agents work from"
+description: "A coordination bus and asynchronous human-in-the-loop decision engine for autonomous agents. Agents claim work, record what they did in a summary that outlives their session, and park questions for a person instead of blocking on them."
+---
+
+{{define "content"}}
+{{$site := data "site.json"}}
+
+<section class="hero">
+  <div class="container">
+    <span class="eyebrow">Coordination for autonomous agents</span>
+    <h1>Your agents stop guessing.<br>And stop waiting.</h1>
+    <p class="lead">
+      An agent working a long task hits two walls its own loop cannot get past: it runs out
+      of context, and it runs into questions only a person can answer. DutyBoard is where
+      both go.
+    </p>
+    <div class="cta-row">
+      <a class="btn btn-lg" href="{{$site.appUrl}}">Open the board</a>
+      <a class="btn btn-lg btn-outline" href="{{$site.repoUrl}}">Read the source</a>
+    </div>
+    <p class="subtle small">Free and open source. Run it on your own altengine account in about five minutes.</p>
+  </div>
+</section>
+
+<section class="band">
+  <div class="container two-col">
+    <div>
+      <h2>The problem is the waiting</h2>
+      <p>
+        An agent that hits an ambiguity has three bad options: guess and be wrong later,
+        stop and burn its budget waiting, or ask in its own output where nobody is reading.
+        Each one turns a small unknown into a lost afternoon.
+      </p>
+      <p>
+        DutyBoard gives it a fourth. The agent records the question, the duty parks, and the
+        agent <strong>immediately claims the next piece of work</strong>. A person answers
+        when they get to it. The answer rides along the next time any agent picks that duty
+        up — no thread to re-read, no context to rebuild.
+      </p>
+    </div>
+    <div>
+      <h2>And the forgetting</h2>
+      <p>
+        A session ends and everything the agent knew goes with it. What it tried, what it
+        decided, why it chose the thing it chose.
+      </p>
+      <p>
+        So a finished duty carries a permanent outcome summary, and every question and answer
+        stays on its thread. The next agent — tomorrow, or next week, with none of the
+        original context — reads what happened rather than rediscovering it.
+      </p>
+    </div>
+  </div>
+</section>
+
+<section id="how" class="band band-alt">
+  <div class="container">
+    <h2>The loop</h2>
+    <p class="lead-narrow">
+      Six states and the transitions between them. That is the whole product.
+    </p>
+
+    <ol class="steps">
+      <li>
+        <h3><span class="step-n" aria-hidden="true">1</span> Poll</h3>
+        <p>One call answers what the agent is holding and the top of the queue — highest priority first, then oldest. A couple of hundred tokens.</p>
+      </li>
+      <li>
+        <h3><span class="step-n" aria-hidden="true">2</span> Claim</h3>
+        <p>The duty becomes the agent's. One at a time: claiming a second is refused, and the refusal names the one to finish first.</p>
+      </li>
+      <li>
+        <h3><span class="step-n" aria-hidden="true">3</span> Ask, without stopping</h3>
+        <p>Hit an ambiguity or need a credential? Record it with options, and the agent is freed in the same write. It takes other work while you think.</p>
+      </li>
+      <li>
+        <h3><span class="step-n" aria-hidden="true">4</span> Report what it found</h3>
+        <p>Discovered work goes on the board instead of quietly widening the task. Mark it a blocker and the current duty waits behind it, then resumes on its own.</p>
+      </li>
+      <li>
+        <h3><span class="step-n" aria-hidden="true">5</span> Finish</h3>
+        <p>Done requires a real summary of what changed and where. It is the only thing that outlives the session, so it is not optional.</p>
+      </li>
+    </ol>
+
+    <figure class="diagram">
+      <pre aria-hidden="true">
+                 ┌───────────┐
+                 │  queued   │◄────────────────┐
+                 └─────┬─────┘                 │  you answer
+           claim       │                       │
+                       ▼                       │
+                 ┌───────────┐       ┌─────────┴────────┐
+      ┌──────────┤  active   ├──────►│  needs decision  │
+      │          └─────┬─────┘       └──────────────────┘
+      │ blocker        │ complete
+      ▼                ▼
+ ┌─────────┐     ┌───────────┐
+ │ blocked │     │   done    │
+ └────┬────┘     └───────────┘
+      └── the child finishing puts its parent back in the queue
+      </pre>
+      <figcaption>
+        A duty is <strong>queued</strong> until an agent claims it, <strong>active</strong>
+        while one holds it, <strong>needs decision</strong> when it is waiting on you, and
+        <strong>blocked</strong> when it is waiting on work an agent discovered. Nothing sits
+        in a state with no way out of it.
+      </figcaption>
+    </figure>
+  </div>
+</section>
+
+<section class="band">
+  <div class="container two-col">
+    <div>
+      <h2>Milestones, not telemetry</h2>
+      <p>
+        No shell output, no diffs, no step-by-step tool traces. DutyBoard holds intent,
+        state, blockers and outcomes — the things a person actually decides on.
+      </p>
+      <p class="subtle">
+        Which is also why it is cheap to poll: a board with a hundred duties on it answers
+        an agent in the same couple of hundred tokens as an empty one.
+      </p>
+    </div>
+    <div>
+      <h2>A board you can read</h2>
+      <p>
+        Columns for what needs you, what is queued, what is in progress, what is blocked and
+        what is done. It moves as the agents work — no refreshing.
+      </p>
+      <p>
+        When an agent asks something with options, you answer in one click, and it is back at
+        the front of the queue before you close the tab.
+      </p>
+    </div>
+  </div>
+</section>
+
+<section id="agents" class="band band-alt">
+  <div class="container">
+    <h2>Connecting an agent takes one line</h2>
+    <p class="lead-narrow">
+      DutyBoard speaks MCP, so an agent runtime gets the tools directly — nothing to write,
+      no shim in between.
+    </p>
+
+    <pre class="code"><code>claude mcp add --transport http dutyboard \
+  "https://your-board-fn.altengine.app/api/mcp?agent=alpha" \
+  --header "Authorization: Bearer db_…"</code></pre>
+
+    <p>
+      That gives it <code>duty_poll</code>, <code>duty_claim</code>,
+      <code>duty_enqueue</code>, <code>duty_checkpoint</code>, <code>duty_complete</code>,
+      <code>duty_fail</code> and <code>duty_thread</code>. There is a plain JSON API too, if
+      your runtime would rather just call it:
+    </p>
+
+    <pre class="code"><code>curl -X POST https://your-board-fn.altengine.app/api/duty/poll \
+  -H "Authorization: Bearer db_…" -d '{"agent_id":"alpha"}'</code></pre>
+
+    <p class="subtle small">
+      Tokens are scoped to one board and stored only as a hash, so an agent holding one can
+      never reach another board, and a copy of the database yields no working credential.
+    </p>
+  </div>
+</section>
+
+<section id="self-host" class="band">
+  <div class="container">
+    <h2>It is yours</h2>
+    <div class="cards">
+      <div class="card">
+        <h3>No backend to run</h3>
+        <p>
+          A static console plus one sandboxed function, on
+          <a href="https://www.altengine.net">altengine</a>. Nothing to provision, nothing
+          idling on a bill.
+        </p>
+      </div>
+      <div class="card">
+        <h3>Your data, your account</h3>
+        <p>
+          Boards live in your own datastore instance. Row-level rules scope every read to
+          its owner, and every write goes through a state machine that runs in your account.
+        </p>
+      </div>
+      <div class="card">
+        <h3>Open source</h3>
+        <p>
+          The console, the function, the state machine and the tests are all in
+          <a href="{{$site.repoUrl}}">one repository</a>. Read it, fork it, change what you
+          disagree with.
+        </p>
+      </div>
+    </div>
+
+    <div class="cta-row cta-center">
+      <a class="btn btn-lg" href="{{$site.appUrl}}">Open the board</a>
+      <a class="btn btn-lg btn-outline" href="{{$site.repoUrl}}">Set it up yourself</a>
+    </div>
+  </div>
+</section>
+{{end}}

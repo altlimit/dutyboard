@@ -1,0 +1,47 @@
+{{define "head"}}
+{{$site := data "site.json"}}
+{{$title := $site.title}}
+{{if .Meta.pagetitle}}{{$title = .Meta.pagetitle}}{{else if .Meta.title}}{{$title = printf "%s · %s" .Meta.title $site.title}}{{end}}
+{{$desc := $site.description}}
+{{if .Meta.description}}{{$desc = .Meta.description}}{{end}}
+{{/* .Path is empty in head context — use .Source.Path so each page canonicalizes to
+     itself rather than every page pointing at the homepage. */}}
+{{$canon := printf "%s%s" $site.url .Source.Path}}
+<meta charset="utf-8">
+<title>{{$title}}</title>
+<meta name="description" content="{{$desc}}">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="canonical" href="{{$canon}}">
+<meta name="robots" content="{{if .Meta.robots}}{{.Meta.robots}}{{else}}index,follow,max-image-preview:large{{end}}">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#f6f7f9" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0f1216" media="(prefers-color-scheme: dark)">
+
+<meta property="og:type" content="{{if .Meta.ogtype}}{{.Meta.ogtype}}{{else}}website{{end}}">
+<meta property="og:site_name" content="{{$site.name}}">
+<meta property="og:title" content="{{$title}}">
+<meta property="og:description" content="{{$desc}}">
+<meta property="og:url" content="{{$canon}}">
+<meta property="og:locale" content="{{$site.locale}}">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="{{$title}}">
+<meta name="twitter:description" content="{{$desc}}">
+
+<link rel="icon" href="{{.BasePath}}favicon.svg" type="image/svg+xml">
+
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "{{$site.name}}",
+  "url": "{{$site.url}}/",
+  "applicationCategory": "DeveloperApplication",
+  "description": "{{$site.description}}"
+}
+</script>
+
+<link rel="stylesheet" href="{{.BasePath}}css/styles.css?v={{.BuildID}}">
+{{template "addHead" .}}
+{{end}}
+
+{{define "addHead"}}{{end}}

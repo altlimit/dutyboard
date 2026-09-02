@@ -10,7 +10,7 @@
   "tasks": [
     {
       "label": "Start All",
-      "dependsOn": ["Emulator", "Provision & deploy", "Console"],
+      "dependsOn": ["Emulator", "Provision & deploy", "Console", "Marketing site"],
       "dependsOrder": "parallel",
       "group": { "kind": "build", "isDefault": true },
       "problemMatcher": []
@@ -46,11 +46,22 @@
     {
       "label": "Console",
       "type": "shell",
-      // The port is PINNED. Left to itself vite takes the next free one when 5173 is busy,
-      // and the console then loads fine and fails every call to the function on CORS —
-      // whose origin allowlist was provisioned for 5173. A refusal to start naming the busy
-      // port is a much shorter debugging session than that.
-      "command": "npm run dev -- --port 5173 --strictPort",
+      // The Vue app, served at http://localhost:5173/app/ — the same path it lives at in
+      // production, so a path assumption cannot work here and break there. The port is
+      // pinned in vite.config.js: left to itself vite takes the next free one when 5173 is
+      // busy, and the console then loads fine and fails every call on CORS, whose origin
+      // allowlist was provisioned for 5173.
+      "command": "npm run dev",
+      "options": { "cwd": "${workspaceFolder}" },
+      "isBackground": true,
+      "problemMatcher": []
+    },
+    {
+      "label": "Marketing site",
+      "type": "shell",
+      // sitegen's own watcher and dev server, on :8888. Separate from the console's: these
+      // are two different builds that only meet in public/ at release time.
+      "command": "npm run dev:site",
       "options": { "cwd": "${workspaceFolder}" },
       "isBackground": true,
       "problemMatcher": []
