@@ -14,6 +14,21 @@ record of what was done — across sessions, and across whatever runs out of con
 4. **`duty_complete`** with a real `outcome_summary`.
 5. Poll again.
 
+## Show, do not describe
+
+Some things are not worth a paragraph. **`duty_attach`** puts a file on a duty — a
+screenshot of the thing you built, a recording of the failure, the log that explains it. It
+answers with an upload URL; you send the bytes yourself with one PUT, using the headers it
+gives you and sending exactly the size you declared.
+
+**`duty_attachments`** reads what is already there, with a URL per file you can fetch
+straight away. Those URLs are short-lived, so fetch them when you get them. A duty's
+`attachments` count tells you whether it is worth asking — if a person attached a
+screenshot of a bug, that screenshot is the brief.
+
+Attach evidence someone would want to look at. Not a transcript of your reasoning: that is
+what `outcome_summary` and the thread are for.
+
 ## Do not block, ever
 
 The moment you hit something you cannot resolve yourself — an ambiguity in the brief, a

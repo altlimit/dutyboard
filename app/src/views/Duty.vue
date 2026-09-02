@@ -3,6 +3,7 @@ import { computed, onUnmounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { api, getDocs, query, subscribeLive } from "../lib/altengine.js";
 import { ALL_STATUSES, PRIORITIES, THREAD_KIND_LABELS, ago, exactTime, priorityLabel, statusLabel } from "../lib/duties.js";
+import Attachments from "../components/Attachments.vue";
 
 const props = defineProps({ projectId: { type: String, required: true }, dutyId: { type: String, required: true } });
 const router = useRouter();
@@ -13,6 +14,7 @@ const PAGE = 25;
 
 const duty = ref(null);
 const entries = ref([]);
+const attachments = ref([]);
 const olderCursor = ref(null);
 const loadingOlder = ref(false);
 const error = ref("");
@@ -56,6 +58,10 @@ async function load() {
       }),
     ]);
     duty.value = (dutyRes.documents || []).map(flat)[0] || null;
+    // Only when the duty says there is something to list. The count is maintained with the
+    // rows, so an empty duty costs nothing — and listing mints a signed URL per file, which
+    // is not work to do on the chance that someone attached one.
+    loadAttachments();
     const rows = (threadRes.documents || []).map(flat);
     entries.value = rows;
     // A full page means there may be another. Only then is there anything to offer —
@@ -89,6 +95,19 @@ async function loadOlder() {
     error.value = err.message;
   } finally {
     loadingOlder.value = false;
+  }
+}
+
+async function loadAttachments() {
+  if (!duty.value || !duty.value.attachment_count) {
+    attachments.value = [];
+    return;
+  }
+  try {
+    const res = await api("/duty/attachments", { duty_id: props.dutyId });
+    attachments.value = res.attachments || [];
+  } catch (err) {
+    error.value = err.message;
   }
 }
 
@@ -260,6 +279,8 @@ onUnmounted(() => {
           </div>
         </form>
       </div>
+
+      <Attachments :duty-id="dutyId" :items="attachments" :busy="posting" @changed="load" />
 
       <div v-if="duty.outcome_summary" class="panel" style="border-left: 3px solid var(--ok)">
         <div class="panel__head"><h2>Outcome</h2></div>

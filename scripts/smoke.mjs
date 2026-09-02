@@ -56,6 +56,21 @@ async function authCall(path, body) {
 
 const titles = (poll) => poll.runnable_duties.map((d) => d.title);
 
+/** One document, read the way the console reads it. */
+async function dsGet(collection, key, token) {
+  const res = await fetch(
+    `${BASE}/v1/datastore/${encodeURIComponent(DS)}/ns/_default/col/${collection}/documents/get`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+      body: JSON.stringify({ keys: [key] }),
+    },
+  );
+  const json = await res.json().catch(() => ({}));
+  const doc = (json.documents || [])[0];
+  return doc ? { ...doc.data, key: String(doc.key) } : {};
+}
+
 async function main() {
   console.log(`DutyBoard smoke test → ${API}\n`);
 
@@ -187,6 +202,51 @@ async function main() {
   const noted = await call("/duty/checkpoint", { duty_id: later.duty_id, agent_id: "alpha", kind: "note", message: "a note" }, agent);
   check("a checkpoint returns the entry it created", noted.entry && noted.entry.id && noted.entry.message === "a note", noted);
   check("attributed to its author", noted.entry.author_type === "agent" && noted.entry.author_id === "alpha", noted.entry);
+
+  // --- files on a duty ----------------------------------------------------
+  //
+  // The whole point is that the bytes never touch the function: it signs a URL, the caller
+  // PUTs to it, and a reader gets a short-lived URL back. So this test does the PUT.
+  const png = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+    "base64",
+  );
+  const mint = await call(
+    "/duty/attach",
+    { duty_id: later.duty_id, agent_id: "alpha", name: "evidence.png", size: png.length, content_type: "image/png" },
+    agent,
+  );
+  check("an agent can reserve an attachment", !!mint.upload_url && !!mint.attachment_id, mint);
+
+  const tooBig = await call(
+    "/duty/attach",
+    { duty_id: later.duty_id, agent_id: "alpha", name: "huge.bin", size: 60 * 1024 * 1024 },
+    agent,
+    { expectStatus: true },
+  );
+  check("and is refused one that is too big, before uploading it", tooBig.status === 400, tooBig.status);
+
+  const put = await fetch(mint.upload_url, { method: "PUT", headers: mint.required_headers, body: png });
+  check("the bytes go straight to storage", put.status === 200 || put.status === 204, put.status);
+
+  const files = await call("/duty/attachments", { duty_id: later.duty_id }, human);
+  const file = (files.attachments || [])[0] || {};
+  check("the owner sees the file", file.name === "evidence.png" && file.size === png.length, files);
+  check("attributed to the agent that added it", file.author_type === "agent" && file.author_id === "alpha", file);
+  check("with a URL that is not the public one", !!file.url && !file.pending, file);
+
+  const fetched = await fetch(file.url);
+  const bytes = Buffer.from(await fetched.arrayBuffer());
+  check("and the bytes come back byte for byte", fetched.status === 200 && bytes.equals(png), `${fetched.status} ${bytes.length}B`);
+
+  const counted = await dsGet("duties", later.duty_id, human);
+  check("the duty counts it, so a poll need not ask", counted.attachment_count === 1, counted.attachment_count);
+
+  const unattached = await call("/duty/attachment/delete", { attachment_id: mint.attachment_id }, human);
+  check("removing it answers ok", unattached.ok === true, unattached);
+  check("and the object is gone from storage", (await fetch(file.url)).status === 404, "still there");
+  const afterRemoval = await dsGet("duties", later.duty_id, human);
+  check("and the count comes back down", (afterRemoval.attachment_count || 0) === 0, afterRemoval.attachment_count);
 
   // --- the human answers --------------------------------------------------
   const resolved = await call(

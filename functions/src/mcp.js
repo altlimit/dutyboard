@@ -18,6 +18,7 @@
 
 import { HttpError, json } from "./http.js";
 import { pollDuties, claimDuty, enqueueDuty, checkpointDuty, completeDuty, failDuty, listThread, PRIORITIES, THREAD_KINDS } from "./duties.js";
+import { attachToDuty, listAttachments, MAX_BYTES } from "./attachments.js";
 
 const PROTOCOL_VERSION = "2025-06-18";
 const SERVER_INFO = { name: "dutyboard", title: "DutyBoard", version: "2.0.0" };
@@ -141,6 +142,36 @@ const TOOLS = [
       required: ["duty_id"],
     },
     handler: listThread,
+  },
+  {
+    name: "duty_attachments",
+    title: "Read the files on a duty",
+    description:
+      "Screenshots, recordings and logs attached to a duty, each with a URL you can fetch straight away. The URLs are signed and short-lived — fetch them now rather than storing them. A duty's `attachments` count tells you whether it is worth calling.",
+    inputSchema: {
+      type: "object",
+      properties: { duty_id: s("The duty whose files you want.") },
+      required: ["duty_id"],
+    },
+    handler: listAttachments,
+  },
+  {
+    name: "duty_attach",
+    title: "Attach a file to a duty",
+    description:
+      `Put a file on a duty — a screenshot of what you built, a recording of a failure, a log worth keeping. This does NOT take the bytes: it answers with an upload_url, and you then send the file yourself with a single PUT, using the returned headers exactly and sending exactly \`size\` bytes. Up to ${MAX_BYTES / 1048576}MB. Attach evidence a person would want to look at; do not attach a transcript of your own reasoning.`,
+    inputSchema: {
+      type: "object",
+      properties: {
+        duty_id: s("The duty to attach it to."),
+        name: s("The file name, as a person should see it. e.g. 'checkout-error.png'"),
+        size: { type: "integer", description: "The file's size in bytes. Signed into the URL, so it must be exact.", minimum: 1 },
+        content_type: s("The MIME type, e.g. 'image/png' or 'video/mp4'."),
+        agent_id: s("Which agent is attaching it. Optional when the connection names one."),
+      },
+      required: ["duty_id", "name", "size"],
+    },
+    handler: attachToDuty,
   },
 ];
 

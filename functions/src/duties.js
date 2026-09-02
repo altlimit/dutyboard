@@ -32,6 +32,7 @@ import { badRequest, conflict, forbidden, notFound, str, oneOf, intIn, clip } fr
 import { dutyId, threadId } from "./ids.js";
 import { putOp } from "./store.js";
 import { resolveProject, projectOfDuty, requireHuman, authorOf } from "./identity.js";
+import { sweepAttachments } from "./attachments.js";
 
 export const STATUSES = ["queued", "active", "needs_decision", "blocked", "done", "failed"];
 export const PRIORITIES = ["immediate_blocker", "next", "backlog"];
@@ -452,6 +453,9 @@ export async function deleteDuty(ctx, body) {
     await ctx.store.delete("threads", rows.map((r) => r.key));
     if (rows.length < 200) break;
   }
+  // And its files. Leaving the objects behind would be a slow leak nobody can see: the
+  // rows that named them are gone, so nothing would ever list them again.
+  await sweepAttachments(ctx, { field: "duty_id", value: duty.key });
   await ctx.store.delete("duties", [duty.key]);
   await ctx.publish(project.key, duty.key, { t: "duty", id: duty.key, status: "deleted" });
   return { ok: true, deleted: duty.key };
@@ -459,7 +463,7 @@ export async function deleteDuty(ctx, body) {
 
 // --- helpers --------------------------------------------------------------
 
-async function loadDuty(ctx, id) {
+export async function loadDuty(ctx, id) {
   const key = str(id, "duty_id", { required: true, max: 64 });
   const duty = await ctx.store.get("duties", key);
   if (!duty) throw notFound(`duty '${key}' not found`);
@@ -521,7 +525,7 @@ function suggestedOptions(v) {
 }
 
 /** Drop the fields `flat()` added so a re-put writes the document and not our envelope. */
-function stripMeta(doc) {
+export function stripMeta(doc) {
   const { key, _created, _updated, ...data } = doc;
   return data;
 }

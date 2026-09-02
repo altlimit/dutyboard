@@ -20,6 +20,11 @@ const showPriority = computed(() => d.value.priority === "immediate_blocker");
       <span v-if="d.assigned_agent_id" class="nowrap">
         <span class="sr-only">{{ d.status === "active" ? "held by " : "last worked by " }}</span>{{ d.assigned_agent_id }}
       </span>
+      <span v-if="d.attachment_count" class="nowrap" :title="`${d.attachment_count} file${d.attachment_count === 1 ? '' : 's'}`">
+        <span aria-hidden="true">📎</span>
+        <span class="sr-only">{{ d.attachment_count }} file{{ d.attachment_count === 1 ? "" : "s" }}</span>
+        {{ d.attachment_count }}
+      </span>
       <span class="nowrap">{{ ago(d.updated_at) }}</span>
     </span>
 

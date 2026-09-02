@@ -25,6 +25,7 @@ import { identify } from "./identity.js";
 import { makePublisher, liveToken } from "./live.js";
 import { noteTokenUse, createToken, listTokens, revokeToken } from "./tokens.js";
 import { openBoard, createProject, listProjects, renameProject, deleteProject } from "./projects.js";
+import { attachToDuty, listAttachments, deleteAttachment } from "./attachments.js";
 import {
   pollDuties,
   claimDuty,
@@ -50,6 +51,7 @@ function configure(env) {
     datastoreNamespace: env.DUTYBOARD_NAMESPACE || "",
     authInstance: env.DUTYBOARD_AUTH || "dutyboard-auth",
     channelInstance: env.DUTYBOARD_CHANNEL || "dutyboard-live",
+    blobInstance: env.DUTYBOARD_BLOB || "dutyboard-files",
   };
 }
 
@@ -66,6 +68,9 @@ const ROUTES = {
   "/duty/update": updateDuty,
   "/duty/delete": deleteDuty,
   "/duty/thread": listThread,
+  "/duty/attach": attachToDuty,
+  "/duty/attachments": listAttachments,
+  "/duty/attachment/delete": deleteAttachment,
   "/board/open": openBoard,
   "/projects/create": createProject,
   "/projects/list": listProjects,

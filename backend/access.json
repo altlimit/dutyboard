@@ -14,7 +14,12 @@
     "token may call at all, and this app deliberately gives the browser none that write.",
     "",
     "`tokens` is absent on purpose. Agent credentials are default-denied to browsers; the",
-    "console lists and revokes them through the function instead."
+    "console lists and revokes them through the function instead.",
+    "",
+    "`attachments` is absent for the same reason, one step removed: the row is harmless but",
+    "the object it names is private, and the only way to open one is a short-lived URL the",
+    "function mints for a caller it has just checked. A browser that could read the rows",
+    "would learn what files exist without being able to open them, which is nobody's win."
   ],
   "datastore:dutyboard": {
     "level": "read",

@@ -28,6 +28,10 @@
   "tokens": [
     { "fields": ["project_id", "created_at:desc"], "for": "the function: a board's agent tokens" }
   ],
+  "attachments": [
+    { "fields": ["duty_id", "created_at"], "for": "the function: the files on one duty, oldest first" },
+    { "fields": ["project_id", "created_at"], "for": "the function: sweeping a board's files when it is deleted" }
+  ],
   "agents": [
     { "fields": ["owner_uid", "project_id", "last_seen_at:desc"], "for": "console: which agents are working this board" }
   ]

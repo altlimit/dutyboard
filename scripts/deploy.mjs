@@ -27,6 +27,7 @@ const FN_NAME = process.env.DUTYBOARD_FN_NAME || "board";
 const DS = process.env.DUTYBOARD_DATASTORE || "dutyboard";
 const AUTH = process.env.DUTYBOARD_AUTH || "dutyboard-auth";
 const CHANNEL = process.env.DUTYBOARD_CHANNEL || "dutyboard-live";
+const BLOB = process.env.DUTYBOARD_BLOB || "dutyboard-files";
 
 if (!KEY) {
   console.error("✖ set ALTENGINE_KEY to an API key with 'full' on the functions instance");
@@ -37,10 +38,13 @@ if (!KEY) {
 //   datastore full  — it deletes duties, threads and whole boards; delete sits above write
 //   auth      read  — verifyToken only; it never touches a user record
 //   channel   read  — publish plus subscribe-token minting, neither of which writes state
+//   blob      full  — minting an upload URL is a write, and deleting an attachment (or a
+//                     whole board) has to remove the object, which sits above write
 const grants = {
   [`datastore:${DS}`]: "full",
   [`auth:${AUTH}`]: "read",
   [`channel:${CHANNEL}`]: "write",
+  [`blob:${BLOB}`]: "full",
 };
 
 const code = await readFile(join(root, "functions", "dist", "bundle.js"), "utf8").catch(() => {

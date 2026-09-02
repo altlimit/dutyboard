@@ -206,6 +206,36 @@ export const ORIGIN_ID = Math.random().toString(36).slice(2) + Date.now().toStri
 export const api = (path, body = {}) =>
   authed("POST", `${config.api}${path}`, { body, headers: { "x-dutyboard-origin": ORIGIN_ID } });
 
+/**
+ * PUT a file to a signed upload URL, reporting progress.
+ *
+ * Not one of our endpoints: no Authorization header (the signature IS the credential), and
+ * the headers the mint handed back have to be sent exactly — they are signed in, and a
+ * missing content-type fails the signature rather than the upload.
+ *
+ * XHR rather than fetch, for the one thing fetch still cannot do: tell you how far a 40MB
+ * video has got.
+ */
+export function putSigned(url, headers, file, onProgress) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("PUT", url, true);
+    for (const [k, v] of Object.entries(headers || {})) {
+      // content-length is set by the browser from the body and is refused as a header.
+      if (k.toLowerCase() !== "content-length") xhr.setRequestHeader(k, v);
+    }
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable && onProgress) onProgress(Math.round((e.loaded / e.total) * 100));
+    };
+    xhr.onload = () =>
+      xhr.status >= 200 && xhr.status < 300
+        ? resolve()
+        : reject(new Error(`upload failed (${xhr.status})${xhr.responseText ? ": " + xhr.responseText.slice(0, 200) : ""}`));
+    xhr.onerror = () => reject(new Error("upload failed: the browser could not reach storage"));
+    xhr.send(file);
+  });
+}
+
 // --- live -----------------------------------------------------------------
 
 /**

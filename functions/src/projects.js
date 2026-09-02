@@ -7,6 +7,7 @@ import { conflict, forbidden, str, intIn } from "./http.js";
 import { slugify } from "./ids.js";
 import { requireHuman, resolveProject } from "./identity.js";
 import { liveConfigured, mintLive } from "./live.js";
+import { sweepAttachments } from "./attachments.js";
 
 const SWEEP_PAGE = 200;
 
@@ -128,6 +129,7 @@ export async function deleteProject(ctx, body) {
   }
 
   const removed = {
+    attachments: await sweepAttachments(ctx, { field: "project_id", value: project.key }),
     threads: await sweep(ctx, "threads", project.key),
     duties: await sweep(ctx, "duties", project.key),
     agents: await sweep(ctx, "agents", project.key),

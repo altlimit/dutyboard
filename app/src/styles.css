@@ -421,6 +421,38 @@ input[aria-invalid="true"], textarea[aria-invalid="true"] { border-color: var(--
   overflow: hidden;
 }
 
+/* --- attachments --------------------------------------------------------- */
+.uploads { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.4rem; }
+.uploads li { display: flex; gap: 0.6rem; align-items: center; }
+.uploads progress { flex: 1 1 auto; height: 0.5rem; }
+
+.files { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.6rem; }
+.file {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.5rem 0.6rem;
+  background: var(--bg);
+}
+/* A thumbnail, not the picture. Clicking opens the full thing; a 4000px screenshot laid
+   out at full width would push the decision log off the page. */
+.file__shot {
+  flex: 0 0 auto;
+  width: 5rem;
+  height: 3.5rem;
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--surface-2);
+  display: block;
+}
+.file__shot img, .file__shot { object-fit: cover; }
+.file__shot img { width: 100%; height: 100%; display: block; }
+video.file__shot { width: 7rem; }
+.file__meta { display: flex; flex-direction: column; gap: 0.1rem; min-width: 0; flex: 1 1 auto; }
+.file__meta > * { overflow-wrap: anywhere; }
+
 /* --- thread ------------------------------------------------------------- */
 .thread { list-style: none; margin-inline: 0; margin-bottom: 0; padding: 0; display: grid; gap: 0.75rem; }
 .entry { border: 1px solid var(--border); border-radius: var(--radius); padding: 0.7rem 0.8rem; background: var(--surface); }

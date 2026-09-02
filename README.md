@@ -72,6 +72,7 @@ DutyBoard runs on [altengine](https://www.altengine.net) — no server of its ow
 | `dutyboard` | **datastore** | `projects`, `duties`, `threads`, `agents`, `tokens`. |
 | `dutyboard-auth` | **auth** | The people who own boards. Row rules scope every read to its owner. |
 | `dutyboard-live` | **channel** | Board and duty events, so the console moves as agents work. |
+| `dutyboard-files` | **blob** | Attachments on duties: screenshots, recordings, logs. |
 
 The split that matters: **the console reads the datastore directly and writes nothing.**
 
@@ -255,6 +256,9 @@ only when you first try it hosted.
 | `/duty/complete` | agent | `active` → `done`. Requires an outcome summary. |
 | `/duty/fail` | agent | `→ failed`, with a reason. |
 | `/duty/thread` | both | The decision log for one duty. |
+| `/duty/attach` | both | Reserve a file on a duty; answers with a URL to PUT the bytes to. |
+| `/duty/attachments` | both | The files on a duty, each with a short-lived signed URL. |
+| `/duty/attachment/delete` | both | Remove a file, and the object behind it. |
 | `/duty/resolve` | human | Answer a question; re-queue at the front. |
 | `/duty/update` · `/duty/delete` | human | Edit or remove a duty. |
 | `/board/open` | human | The board, its agents and a channel token — one call, for the console. |
@@ -292,6 +296,11 @@ board, `400` naming the field and the values it accepts.
 
 ## Costs and bounds
 
+- Attachment bytes never pass through the function. It decides whether a caller may upload
+  and how big, signs a URL, and the client PUTs to storage directly — which is what makes a
+  video attachment a video attachment rather than a 413. Objects are private; every read
+  mints a URL that lasts minutes, for a caller just checked against the board. Twenty files
+  a duty, 50MB each.
 - A poll is one indexed query plus one or two point-reads. Briefs are clipped to 220
   characters in the queue listing; the full text comes with the claim.
 - Opening a board is three requests, whatever its size: `/board/open` for the name, the
