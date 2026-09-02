@@ -41,7 +41,8 @@ const CHANNEL = process.env.DUTYBOARD_CHANNEL || "dutyboard-live";
 const FN = process.env.DUTYBOARD_FN_INSTANCE || "dutyboard";
 // Where the console is served from, so the function will answer its calls. CORS is
 // enforced in both deployments, so this is not a local-only convenience.
-const CONSOLE_ORIGINS = (process.env.DUTYBOARD_ORIGINS || "http://localhost:5173,http://127.0.0.1:5173")
+const PORT = process.env.DUTYBOARD_PORT || "5173";
+const CONSOLE_ORIGINS = (process.env.DUTYBOARD_ORIGINS || `http://localhost:${PORT},http://127.0.0.1:${PORT}`)
   .split(",")
   .map((s) => s.trim())
   .filter(Boolean);

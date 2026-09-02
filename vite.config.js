@@ -17,5 +17,13 @@ export default defineConfig({
     outDir: "../public/app",
     emptyOutDir: true,
   },
-  server: { port: 5173, strictPort: true },
+  // strictPort, not the usual "take the next free one". The origin is baked into two
+  // allowlists at provision time — the auth instance's and the function's CORS list — so a
+  // silent move to 5174 produces a console that loads perfectly and fails every call.
+  // Refusing to start is the smaller problem, and it names itself.
+  //
+  // DUTYBOARD_PORT moves both halves together: `npm run setup` derives the allowed origins
+  // from the same variable, so `DUTYBOARD_PORT=5180 npm run setup && DUTYBOARD_PORT=5180 npm run dev`
+  // is all it takes to sit next to something else that already owns 5173.
+  server: { port: Number(process.env.DUTYBOARD_PORT || 5173), strictPort: true },
 });

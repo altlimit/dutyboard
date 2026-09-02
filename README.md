@@ -113,6 +113,24 @@ you were testing on.
 
 In a checkout it is `npm run provision`, and `--smoke` adds the end-to-end test at the end.
 
+An empty board shows you nothing, so there is a seeder:
+
+```bash
+npm run demo        # a board mid-flight, and the account to sign in with
+```
+
+It drives the real API — poll, claim, complete, ask, interrupt — so every column has
+something in it and one duty is parked on a question waiting for an answer. That question
+is the product; answer it and watch the duty go back to the front of the queue.
+
+The console is pinned to port 5173 (`strictPort`), because the origin is baked into two
+allowlists at provision time and a silent move to 5174 gives you a console that loads and
+then fails every call. If something else owns 5173, move both halves together:
+
+```bash
+DUTYBOARD_PORT=5180 npm run setup && DUTYBOARD_PORT=5180 npm run dev
+```
+
 Then, with [taskr](https://github.com/altlimit/taskr), one command starts everything —
 the emulator, provisioning, the console and the marketing site:
 
@@ -132,6 +150,7 @@ taskr "Start All"
 | `npm run dev:site` | The marketing site, watched, on :8888. |
 | `npm run build` | Both, into `public/`. |
 | `npm run preview` | Serves `public/` as a static host would, rewrite included, on :4173. |
+| `npm run demo` | Fills a board with a plausible afternoon's work, and prints the sign-in. |
 | `npm run smoke` | 55 assertions over the whole state machine. |
 
 `altengine dev` is the *only* altengine CLI command involved: there is no `altengine apply`
