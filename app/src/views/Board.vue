@@ -217,7 +217,7 @@ onUnmounted(() => {
       already moved on to other work — answering puts each one back at the front of the queue.
     </p>
 
-    <form v-if="showForm" class="panel stack" @submit.prevent="addDuty">
+    <form v-if="showForm" class="panel panel--form stack" @submit.prevent="addDuty">
       <h2>Add a duty</h2>
       <div class="field">
         <label for="d-title">Title</label>

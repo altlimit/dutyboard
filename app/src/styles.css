@@ -253,6 +253,9 @@ input[aria-invalid="true"], textarea[aria-invalid="true"] { border-color: var(--
   padding: 1rem;
   box-shadow: var(--shadow);
 }
+/* A form in a full-width page still wants a form's width: a text input stretched across
+   1400px is harder to fill in than one that ends where the label does. */
+.panel--form { max-width: 44rem; }
 .panel {
   background: var(--surface);
   border: 1px solid var(--border);
@@ -275,6 +278,35 @@ input[aria-invalid="true"], textarea[aria-invalid="true"] { border-color: var(--
   text-align: center;
   color: var(--text-dim);
 }
+
+/* --- board cards --------------------------------------------------------- */
+/* The boards page: one card per board, the whole card a link. It fills the width it is
+   given rather than sitting in a column of full-width rows, which on a wide window is a
+   list of six-word sentences stretched across 1200px. */
+.cards {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr));
+  gap: 0.75rem;
+}
+.boardcard {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  height: 100%;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 1rem;
+  text-decoration: none;
+  color: inherit;
+}
+.boardcard:hover { border-color: var(--border-strong); }
+.boardcard__name { font-weight: 600; font-size: 1.05rem; letter-spacing: -0.01em; }
+.boardcard__meta { color: var(--text-dim); font-size: 0.85rem; }
 
 /* --- badges ------------------------------------------------------------- */
 .badge {
@@ -480,7 +512,7 @@ th { font-size: 0.85rem; color: var(--text-dim); font-weight: 600; }
 
   /* Board controls become full-width rows rather than a cramped huddle in the corner. */
   .board-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; width: 100%; }
-  .board-actions > * { width: 100%; justify-content: center; }
+  .board-actions > *, .page-action { width: 100%; justify-content: center; }
 
   /* Two rows, not three: brand, theme and sign-out on one; the nav on its own. The
      signed-in name goes — it is the one thing here that tells you nothing you did not
