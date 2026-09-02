@@ -6,10 +6,15 @@
 import { conflict, forbidden, str, intIn } from "./http.js";
 import { slugify } from "./ids.js";
 import { requireHuman, resolveProject } from "./identity.js";
+import { liveConfigured, mintLive } from "./live.js";
 
 const SWEEP_PAGE = 200;
 
 /** `POST /projects/create` */
+/** How many agents the board strip shows. More than this on one board and the strip is
+ *  not the thing that needs fixing. */
+const MAX_AGENTS = 10;
+
 export async function createProject(ctx, body) {
   const caller = requireHuman(ctx.caller);
   const name = str(body.name, "name", { required: true, max: 120 });
@@ -51,6 +56,49 @@ export async function listProjects(ctx, body) {
     cursor,
   };
 }
+
+/**
+ * `POST /board/open` — everything the console needs before it can draw a board.
+ *
+ * The board's name, the agents on it, and a subscribe token for its channel. That was
+ * three round trips from the browser: two datastore queries and a token mint. It is one
+ * here because this function was already reading the project row to authorise the mint —
+ * the other two ride along on a request that was being made anyway.
+ *
+ * The DUTIES are deliberately not here. They are paged, refreshed independently, and read
+ * straight from the datastore where the row rules scope them to their owner; folding them
+ * in would mean reimplementing that access control in this function, which is exactly the
+ * split the whole design rests on.
+ */
+export async function openBoard(ctx, body) {
+  requireHuman(ctx.caller);
+  const project = await resolveProject(ctx.caller, body.project_id, ctx.store);
+
+  const [agents, live] = await Promise.all([
+    ctx.store
+      .query("agents", {
+        where: [{ field: "project_id", op: "=", value: project.key }],
+        order: [{ field: "last_seen_at", dir: "desc" }],
+        limit: MAX_AGENTS,
+      })
+      .then((res) => res.rows.map(agentView)),
+    // Live updates are an enhancement: a board with no channel configured still opens,
+    // it just does not move on its own.
+    liveConfigured(ctx) ? mintLive(ctx, project, body).catch(() => null) : Promise.resolve(null),
+  ]);
+
+  return {
+    project: { project_id: project.key, name: project.name, created_at: project.created_at },
+    agents,
+    live,
+  };
+}
+
+const agentView = (a) => ({
+  agent_id: a.agent_id,
+  active_duty_id: a.active_duty_id || null,
+  last_seen_at: a.last_seen_at || null,
+});
 
 /** `POST /projects/rename` */
 export async function renameProject(ctx, body) {

@@ -112,6 +112,9 @@ async function loadColumn(status, { append = false } = {}) {
   }
 }
 
+/** Refreshing the strip after a transition. The FIRST read comes back with the board (see
+ *  openBoard); this is the one that keeps it current, and it reads the datastore directly
+ *  like every other refresh on this page. */
 async function loadAgents() {
   try {
     const res = await query("agents", {
@@ -182,21 +185,34 @@ async function refresh(keys, { agents = true } = {}) {
   await Promise.all(jobs);
 }
 
-/** The whole board: the working set, and the top of `done`. */
-async function loadAll() {
+/** The whole board: the working set, and the top of `done`.
+ *
+ *  `agents: false` on the first load — `/board/open` is fetching the strip at the same
+ *  moment, and reading it twice on the way in is the sort of thing nobody notices. */
+async function loadAll(opts) {
   try {
-    await refresh(null);
+    await refresh(null, opts);
   } catch (err) {
     error.value = err.message;
   }
 }
 
-async function loadBoard() {
+/**
+ * The board's name, its agents, and the socket — one request.
+ *
+ * These were three: a projects query, an agents query and a token mint. The function was
+ * already reading the project row to authorise the mint, so the other two ride along on a
+ * request that was being made anyway.
+ */
+async function openBoard() {
   try {
-    const res = await query("projects", { where: [{ field: "__key__", op: "=", value: props.projectId }], limit: 1 });
-    board.value = (res.documents || []).map(flat)[0] || null;
+    const res = await api("/board/open", { project_id: props.projectId });
+    board.value = res.project || null;
+    agents.value = res.agents || [];
+    connect(res.live || null);
   } catch (err) {
     error.value = err.message;
+    connect(null);
   }
 }
 
@@ -235,10 +251,10 @@ function scheduleRefresh(frame) {
   }, 400);
 }
 
-function connect() {
+function connect(mint) {
   if (socket) socket.close();
   socket = subscribeLive(
-    { projectId: props.projectId },
+    { projectId: props.projectId, mint },
     (frame) => scheduleRefresh(frame),
     (s) => (liveState.value = s),
   );
@@ -287,9 +303,8 @@ watch(
   () => {
     resetColumns();
     picked.value = null;
-    loadBoard();
-    loadAll();
-    connect();
+    openBoard();
+    loadAll({ agents: false });
   },
   { immediate: true },
 );

@@ -257,6 +257,7 @@ only when you first try it hosted.
 | `/duty/thread` | both | The decision log for one duty. |
 | `/duty/resolve` | human | Answer a question; re-queue at the front. |
 | `/duty/update` · `/duty/delete` | human | Edit or remove a duty. |
+| `/board/open` | human | The board, its agents and a channel token — one call, for the console. |
 | `/projects/*` | human | `create`, `list`, `rename`, `delete`. |
 | `/tokens/*` | human | `mint`, `list`, `revoke`. |
 | `/live/token` | human | A subscribe-only channel token for one board. |
@@ -293,6 +294,10 @@ board, `400` naming the field and the values it accepts.
 
 - A poll is one indexed query plus one or two point-reads. Briefs are clipped to 220
   characters in the queue listing; the full text comes with the claim.
+- Opening a board is three requests, whatever its size: `/board/open` for the name, the
+  agents and a channel token, then two queries — the working set (everything not done, read
+  whole and sorted into columns in the browser) and the top of `done`. Only `done` grows
+  without end, so only `done` pages.
 - `last_used_at` on a token is stamped at most once a minute, and reuses the row that
   authenticated the call rather than reading it twice.
 - Every list is paged with a keyset cursor and says when it is showing a partial answer —

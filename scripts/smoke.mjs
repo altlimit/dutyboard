@@ -69,8 +69,22 @@ async function main() {
   check("signed up a human", !!human);
 
   const projectId = `smoke-${Date.now().toString(36)}`;
+  const other0 = await authCall("/signup", {
+    email: `bystander_${Date.now()}@example.test`,
+    name: "Bystander",
+    password: "correct-horse-battery-staple",
+  });
+
   const project = await call("/projects/create", { name: "Smoke Board", project_id: projectId }, human);
   check("created a board", project.project_id === projectId, project);
+
+  // One call for what the console needs before it can draw anything.
+  const opened = await call("/board/open", { project_id: projectId }, human);
+  check("opening a board returns the board", opened.project && opened.project.name === "Smoke Board", opened.project);
+  check("with its agents", Array.isArray(opened.agents), opened);
+  check("and a channel token to subscribe with", !!(opened.live && opened.live.token), Object.keys(opened.live || {}));
+  const strangerOpen = await call("/board/open", { project_id: projectId }, other0.id_token, { expectStatus: true });
+  check("but not to someone who does not own it", strangerOpen.status === 403, strangerOpen);
 
   const minted = await call("/tokens/mint", { project_id: projectId, name: "smoke agent", default_agent_id: "alpha" }, human);
   const agent = minted.token;

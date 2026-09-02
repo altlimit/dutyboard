@@ -220,7 +220,11 @@ export const api = (path, body = {}) =>
  * Live is an enhancement. If the channel instance is missing or the socket will not stay
  * up, the board still works — it just stops updating on its own.
  */
-export function subscribeLive({ projectId, dutyIds = [] }, onEvent, onState) {
+export function subscribeLive({ projectId, dutyIds = [], mint = null }, onEvent, onState) {
+  // A token the caller already has — `/board/open` hands one back with the board, so the
+  // first connection costs no request of its own. Reconnects mint their own below, which
+  // is what the endpoint stays for.
+  let firstMint = mint;
   let ws = null;
   let closed = false;
   let attempt = 0;
@@ -230,12 +234,15 @@ export function subscribeLive({ projectId, dutyIds = [] }, onEvent, onState) {
   async function connect() {
     if (closed) return;
     setState("connecting");
-    let minted;
-    try {
-      minted = await api("/live/token", { project_id: projectId, duty_ids: dutyIds });
-    } catch {
-      setState("off");
-      return scheduleReconnect();
+    let minted = firstMint;
+    firstMint = null;
+    if (!minted) {
+      try {
+        minted = await api("/live/token", { project_id: projectId, duty_ids: dutyIds });
+      } catch {
+        setState("off");
+        return scheduleReconnect();
+      }
     }
 
     // Take the PATH and QUERY from the mint but keep our own origin.

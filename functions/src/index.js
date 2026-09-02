@@ -24,7 +24,7 @@ import { makeStore } from "./store.js";
 import { identify } from "./identity.js";
 import { makePublisher, liveToken } from "./live.js";
 import { noteTokenUse, createToken, listTokens, revokeToken } from "./tokens.js";
-import { createProject, listProjects, renameProject, deleteProject } from "./projects.js";
+import { openBoard, createProject, listProjects, renameProject, deleteProject } from "./projects.js";
 import {
   pollDuties,
   claimDuty,
@@ -66,6 +66,7 @@ const ROUTES = {
   "/duty/update": updateDuty,
   "/duty/delete": deleteDuty,
   "/duty/thread": listThread,
+  "/board/open": openBoard,
   "/projects/create": createProject,
   "/projects/list": listProjects,
   "/projects/rename": renameProject,

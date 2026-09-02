@@ -52,17 +52,17 @@ export function makePublisher(env, cfg, origin) {
   };
 }
 
-/**
- * `POST /live/token` — a subscribe-only token for one board and, optionally, the
- * duties the console currently has open.
- */
-export async function liveToken(ctx, body) {
-  requireHuman(ctx.caller);
-  if (!ctx.env.channel || !ctx.cfg.channelInstance) {
-    throw badRequest("live updates are not configured for this deployment");
-  }
-  const project = await resolveProject(ctx.caller, body.project_id, ctx.store);
+/** Is a channel configured at all? Live updates are optional; everything else works. */
+export const liveConfigured = (ctx) => !!(ctx.env.channel && ctx.cfg.channelInstance);
 
+/**
+ * Mint a subscribe-only token for a board the caller already owns, and optionally for
+ * some of its duties.
+ *
+ * Split out of the endpoint below so `/board/open` can hand back a token in the same
+ * response as the board itself, rather than the page making a second call for it.
+ */
+export async function mintLive(ctx, project, body) {
   const requested = Array.isArray(body.duty_ids) ? body.duty_ids.slice(0, MAX_DUTY_CHANNELS) : [];
   const dutyIds = requested.map((d, i) => str(d, `duty_ids[${i}]`, { required: true, max: 64 }));
 
@@ -82,4 +82,18 @@ export async function liveToken(ctx, body) {
     { channels, ttlSeconds: TOKEN_TTL_SECONDS, presenceId: ctx.caller.uid },
   );
   return { ...minted, channels };
+}
+
+/**
+ * `POST /live/token` — a subscribe-only token for one board and, optionally, the
+ * duties the console currently has open.
+ *
+ * Still its own endpoint because a socket that drops re-mints on reconnect, and that is
+ * all it needs then.
+ */
+export async function liveToken(ctx, body) {
+  requireHuman(ctx.caller);
+  if (!liveConfigured(ctx)) throw badRequest("live updates are not configured for this deployment");
+  const project = await resolveProject(ctx.caller, body.project_id, ctx.store);
+  return mintLive(ctx, project, body);
 }
