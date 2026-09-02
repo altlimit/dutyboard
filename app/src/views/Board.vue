@@ -112,9 +112,28 @@ async function loadColumn(status, { append = false } = {}) {
   }
 }
 
-/** Refreshing the strip after a transition. The FIRST read comes back with the board (see
- *  openBoard); this is the one that keeps it current, and it reads the datastore directly
- *  like every other refresh on this page. */
+/**
+ * Move one badge, from the event that moved it.
+ *
+ * The four transitions that touch an agent row send the row's three visible fields with
+ * them (`ag`), which is the difference between one query per live event and two. An agent
+ * nobody has seen before is appended rather than ignored: its first claim is exactly when
+ * it should appear on the board.
+ */
+function applyAgent(ag) {
+  if (!ag || !ag.id) return;
+  const next = [...agents.value];
+  const at = next.findIndex((a) => a.agent_id === ag.id);
+  const row = { ...(at >= 0 ? next[at] : { agent_id: ag.id }), active_duty_id: ag.active, last_seen_at: ag.seen };
+  if (at >= 0) next[at] = row;
+  else next.push(row);
+  // The strip is ordered by last_seen_at, and this event is by definition the newest.
+  agents.value = next.sort((a, b) => (b.last_seen_at || 0) - (a.last_seen_at || 0));
+}
+
+/** A full re-read of the strip. Only two things ask for it now: opening the board (through
+ *  `/board/open`, server-side) and an event this page could not make sense of. Everything
+ *  else patches. */
 async function loadAgents() {
   try {
     const res = await query("agents", {
@@ -237,17 +256,23 @@ function scheduleRefresh(frame) {
   const ev = frame && frame.data;
   if (!ev || !ev.id) {
     touched = null; // an event we do not understand: re-read everything rather than guess
-  } else if (touched) {
-    const from = columnHolding(ev.id);
-    if (from) touched.add(from);
-    if (ev.status && columns.value[ev.status]) touched.add(ev.status);
+  } else {
+    applyAgent(ev.ag);
+    if (touched) {
+      const from = columnHolding(ev.id);
+      if (from) touched.add(from);
+      if (ev.status && columns.value[ev.status]) touched.add(ev.status);
+    }
   }
   if (refreshTimer) return;
   refreshTimer = setTimeout(() => {
     refreshTimer = null;
     const keys = touched;
     touched = new Set();
-    refresh(keys);
+    // `agents` only when the event was unintelligible — an understood one has already
+    // patched the strip, and re-reading the collection to confirm it is the query this
+    // whole payload exists to avoid.
+    refresh(keys, { agents: !keys });
   }, 400);
 }
 
@@ -381,7 +406,7 @@ onUnmounted(() => {
     <section v-if="agents.length" aria-labelledby="agents-h">
       <h2 id="agents-h" class="sr-only">Agents on this board</h2>
       <p class="row small muted" style="margin: 0">
-        <span v-for="a in agents" :key="a.key" class="badge">
+        <span v-for="a in agents" :key="a.agent_id" class="badge">
           {{ a.agent_id }} · {{ a.active_duty_id ? "working" : "idle" }} · seen {{ ago(a.last_seen_at) }}
         </span>
       </p>

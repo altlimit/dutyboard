@@ -42,6 +42,15 @@ export const THREAD_KINDS = ["question", "resolution", "checkpoint", "note"];
  *  the names is wrong (`backlog` < `immediate_blocker`), so the rank is stored alongside. */
 const RANK = { immediate_blocker: 0, next: 1, backlog: 2 };
 
+/**
+ * The three fields the console's agent strip shows, carried on the event that changed them.
+ *
+ * Only the four transitions that actually write an agent row send it. This is the whole
+ * reason a live event costs one query instead of two: without it every open tab re-reads
+ * the agents collection just to learn that one badge moved from "working" to "idle".
+ */
+const agentEvent = (id, activeDutyId, at) => ({ id, active: activeDutyId || null, seen: at });
+
 /** Terminal and near-terminal states an agent is no longer holding. */
 const FREES_AGENT = new Set(["needs_decision", "blocked", "done", "failed", "queued"]);
 
@@ -168,7 +177,12 @@ export async function claimDuty(ctx, body) {
     });
   }
 
-  await ctx.publish(project.key, duty.key, { t: "duty", id: duty.key, status: "active" });
+  await ctx.publish(project.key, duty.key, {
+    t: "duty",
+    id: duty.key,
+    status: "active",
+    ag: agentEvent(agentId, duty.key, now),
+  });
   return { status: "active", duty_id: duty.key, duty: briefOf(after, { full: true }) };
 }
 
@@ -225,7 +239,15 @@ export async function enqueueDuty(ctx, body) {
 
   await ctx.store.transaction(ops);
   await ctx.publish(project.key, id, { t: "duty", id, status: "queued" });
-  if (blocked) await ctx.publish(project.key, blocked, { t: "duty", id: blocked, status: "blocked" });
+  if (blocked) {
+    // The interrupt released whoever it interrupted, in the same transaction.
+    await ctx.publish(project.key, blocked, {
+      t: "duty",
+      id: blocked,
+      status: "blocked",
+      ag: agentEvent(agentId, null, now),
+    });
+  }
 
   return { duty_id: id, status: "queued", priority, blocked_duty_id: blocked };
 }
@@ -271,6 +293,7 @@ export async function checkpointDuty(ctx, body) {
   const ops = [putOp("threads", entryKey, entry)];
 
   let state = duty.status;
+  let freed = null; // set when this checkpoint releases the agent, for the live payload
   if (setStatus && setStatus !== duty.status) {
     state = setStatus;
     const next = { ...stripMeta(duty), status: setStatus, updated_at: now };
@@ -284,12 +307,18 @@ export async function checkpointDuty(ctx, body) {
       const agent = await ctx.store.get("agents", aKey);
       if (agent && agent.active_duty_id === duty.key) {
         ops.push(putOp("agents", aKey, { ...stripMeta(agent), active_duty_id: null, last_seen_at: now }));
+        freed = agentId;
       }
     }
   }
 
   await ctx.store.transaction(ops);
-  await ctx.publish(project.key, duty.key, { t: "thread", id: duty.key, status: state });
+  await ctx.publish(project.key, duty.key, {
+    t: "thread",
+    id: duty.key,
+    status: state,
+    ...(freed ? { ag: agentEvent(freed, null, now) } : {}),
+  });
   return { ok: true, state, duty_id: duty.key, entry: { id: entryKey, ...entry } };
 }
 
@@ -335,11 +364,13 @@ async function finishDuty(ctx, body, terminal) {
   ];
 
   const holder = agentId || duty.assigned_agent_id;
+  let freed = null;
   if (holder) {
     const aKey = agentKey(project.key, holder);
     const agent = await ctx.store.get("agents", aKey);
     if (agent && agent.active_duty_id === duty.key) {
       ops.push(putOp("agents", aKey, { ...stripMeta(agent), active_duty_id: null, last_seen_at: now }));
+      freed = holder;
     }
   }
 
@@ -349,7 +380,12 @@ async function finishDuty(ctx, body, terminal) {
   const parent = await unblockParent(ctx, duty, now, ops);
 
   await ctx.store.transaction(ops);
-  await ctx.publish(project.key, duty.key, { t: "duty", id: duty.key, status: terminal });
+  await ctx.publish(project.key, duty.key, {
+    t: "duty",
+    id: duty.key,
+    status: terminal,
+    ...(freed ? { ag: agentEvent(freed, null, now) } : {}),
+  });
   if (parent) await ctx.publish(project.key, parent, { t: "duty", id: parent, status: "queued" });
 
   return { ok: true, status: terminal, duty_id: duty.key, unblocked_duty_id: parent };

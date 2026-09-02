@@ -4,9 +4,15 @@
 //   board.<project_id>  every duty create/transition on that board
 //   duty.<duty_id>      thread activity on one duty
 //
-// Payloads carry an id and a status and nothing else. The console re-reads through the
+// Payloads carry an id and a status and no duty CONTENT. The console re-reads through the
 // access-controlled datastore path, so an event can never show someone a duty they are
 // not allowed to read — which is what makes it safe for the payload to be this thin.
+//
+// The one addition is `ag`: the four transitions that move an agent row carry that row's
+// three visible fields, so the console can patch its agent strip instead of querying the
+// agents collection on every event. It is exempt because it is not a duty and not a
+// secret — only a board's own owner can subscribe at all — and because the strip is
+// decoration, where a card is not.
 //
 // Subscriber tokens are minted HERE rather than by the browser against the auth
 // instance's channel rules, because the rule that matters is "does this person own this
