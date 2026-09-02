@@ -99,11 +99,8 @@ a { color: var(--accent); }
   font-weight: 680; letter-spacing: -0.02em; color: var(--text); text-decoration: none;
   margin-right: auto;
 }
-.brand-mark {
-  width: 1.6rem; height: 1.6rem; border-radius: 6px;
-  background: var(--accent); color: var(--accent-text);
-  display: grid; place-items: center; font-size: 0.9rem; font-weight: 700;
-}
+/* The tile is drawn inside the SVG now — this only sizes it. */
+.brand-mark { width: 1.7rem; height: 1.7rem; display: block; flex: none; }
 
 .primary-nav { display: flex; align-items: center; gap: 1.35rem; }
 .primary-nav a { color: var(--text-dim); text-decoration: none; font-size: 0.95rem; }
