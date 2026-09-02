@@ -149,7 +149,7 @@ description: "A coordination bus and asynchronous human-in-the-loop decision eng
     </p>
 
     <pre class="code"><code>claude mcp add --transport http dutyboard \
-  "https://your-board-fn.altengine.app/api/mcp?agent=alpha" \
+  "https://your-board-fn.altengine.app/board/mcp?agent=alpha" \
   --header "Authorization: Bearer db_…"</code></pre>
 
     <p>
@@ -159,7 +159,7 @@ description: "A coordination bus and asynchronous human-in-the-loop decision eng
       your runtime would rather just call it:
     </p>
 
-    <pre class="code"><code>curl -X POST https://your-board-fn.altengine.app/api/duty/poll \
+    <pre class="code"><code>curl -X POST https://your-board-fn.altengine.app/board/duty/poll \
   -H "Authorization: Bearer db_…" -d '{"agent_id":"alpha"}'</code></pre>
 
     <p class="subtle small">

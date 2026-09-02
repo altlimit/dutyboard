@@ -79,6 +79,16 @@
       "problemMatcher": []
     },
     {
+      "label": "Preview the build",
+      "type": "shell",
+      // The built bytes in public/, served the way a static host has to serve them —
+      // including the /app/* → /app/index.html rewrite, which no dev server exercises.
+      "command": "npm run build && npm run preview",
+      "options": { "cwd": "${workspaceFolder}" },
+      "isBackground": true,
+      "problemMatcher": []
+    },
+    {
       "label": "Smoke test",
       "type": "shell",
       "command": "npm run smoke",

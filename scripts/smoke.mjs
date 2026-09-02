@@ -15,7 +15,8 @@ const BASE = (process.env.ALTENGINE_URL || "http://127.0.0.1:9191").replace(/\/+
 const FN = process.env.DUTYBOARD_FN_INSTANCE || "dutyboard";
 const DS = process.env.DUTYBOARD_DATASTORE || "dutyboard";
 const AUTH = process.env.DUTYBOARD_AUTH || "dutyboard-auth";
-const API = process.env.DUTYBOARD_API || (BASE.includes("altengine.net") ? `https://${FN}-fn.altengine.app/api` : `${BASE}/fn/${FN}/api`);
+const FN_NAME = process.env.DUTYBOARD_FN_NAME || "board";
+const API = process.env.DUTYBOARD_API || (BASE.includes("altengine.net") ? `https://${FN}-fn.altengine.app/${FN_NAME}` : `${BASE}/fn/${FN}/${FN_NAME}`);
 
 let passed = 0;
 const failures = [];

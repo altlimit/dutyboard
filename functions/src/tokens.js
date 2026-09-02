@@ -11,7 +11,7 @@ import { notFound, forbidden, str, intIn } from "./http.js";
 import { mintToken, sha256Hex } from "./ids.js";
 import { requireHuman, resolveProject } from "./identity.js";
 
-/** `POST /api/tokens/mint` — returns the one and only copy of the token. */
+/** `POST /tokens/mint` — returns the one and only copy of the token. */
 export async function createToken(ctx, body) {
   const caller = requireHuman(ctx.caller);
   const project = await resolveProject(ctx.caller, body.project_id, ctx.store);
@@ -36,7 +36,7 @@ export async function createToken(ctx, body) {
   return { token, token_id: key, project_id: project.key, name, default_agent_id: defaultAgentId || null };
 }
 
-/** `POST /api/tokens/list` — names and hints only; the values are gone. */
+/** `POST /tokens/list` — names and hints only; the values are gone. */
 export async function listTokens(ctx, body) {
   requireHuman(ctx.caller);
   const project = await resolveProject(ctx.caller, body.project_id, ctx.store);
@@ -61,7 +61,7 @@ export async function listTokens(ctx, body) {
   };
 }
 
-/** `POST /api/tokens/revoke` — the row stays, marked, so a revoked token's last use
+/** `POST /tokens/revoke` — the row stays, marked, so a revoked token's last use
  *  is still visible. `identify` refuses it from the next request onward. */
 export async function revokeToken(ctx, body) {
   requireHuman(ctx.caller);

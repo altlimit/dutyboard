@@ -1,10 +1,15 @@
 // DutyBoard — the whole server.
 //
-// One altengine function, deployed as `api`, so every route in the spec lives under the
-// URL the console shows you:
+// One altengine function, deployed as `board`, so every route in the spec lives under
+// the URL the console shows you:
 //
-//   https://<subdomain>-fn.altengine.app/api/duty/poll        (hosted)
-//   http://127.0.0.1:9191/fn/<instance>/api/duty/poll         (altengine dev)
+//   https://<subdomain>-fn.altengine.app/board/duty/poll      (hosted)
+//   http://127.0.0.1:9191/fn/<instance>/board/duty/poll       (altengine dev)
+//
+// The name is `board` and not `api` because the platform reserves `api` on a function
+// host: the console's own SPA makes relative calls to /api/auth/*, so a tenant function
+// answering there could be lured into serving them. A deploy named `api` is refused —
+// hosted only, which is exactly the kind of difference the emulator will not show you.
 //
 // Why a function and not direct datastore access from the browser: every transition
 // here writes more than one collection at once — claiming a duty touches the duty and
@@ -74,9 +79,11 @@ const ROUTES = {
 /**
  * The path below this function, in both deployments.
  *
- * Hosted, the function name is the first segment (`/api/duty/poll`). Locally there are
- * no per-instance subdomains, so it is `/fn/<instance>/api/duty/poll`. Reading the path
- * off the URL rather than assuming a prefix is what makes one bundle work in both.
+ * Hosted, the function name is the first segment (`/board/duty/poll`). Locally there are
+ * no per-instance subdomains, so it is `/fn/<instance>/board/duty/poll`. The name itself
+ * comes from `x-ae-fn`, so this keeps working whatever the function is deployed as —
+ * reading the path off the request rather than assuming a prefix is what makes one
+ * bundle work in both.
  */
 function routePath(url, fnName) {
   const parts = url.pathname.split("/").filter(Boolean);
@@ -110,7 +117,9 @@ export default {
 
     // Unauthenticated, so a deploy can be checked before any credential exists.
     if (path === "/health" || path === "/") {
-      return json({ ok: true, service: "dutyboard", version: VERSION, mcp: "/api/mcp" });
+      // The MCP path, relative to this function — the prefix in front of it depends on
+      // where it is deployed, which is exactly what routePath above exists to absorb.
+      return json({ ok: true, service: "dutyboard", version: VERSION, mcp: "/mcp" });
     }
 
     try {
@@ -133,7 +142,7 @@ export default {
       if (path === "/mcp") return await handleMcp(ctx, request);
 
       const handler = ROUTES[path];
-      if (!handler) throw notFound(`no route '${path}' — see /api/health`);
+      if (!handler) throw notFound(`no route '${path}' — see /health`);
       if (request.method !== "POST") {
         throw new HttpError(405, "METHOD_NOT_ALLOWED", `use POST for '${path}'`);
       }

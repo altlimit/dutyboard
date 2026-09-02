@@ -11,10 +11,11 @@
     "build:site": "sitegen -minify -clean",
     "build:app": "vite build",
     "build:fn": "node functions/build.mjs",
-    "deploy": "npm run build:fn && node scripts/deploy.mjs",
+    "provision": "sh scripts/provision.sh",
     "setup": "node scripts/setup.mjs",
-    "smoke": "node scripts/smoke.mjs",
-    "preview": "vite preview"
+    "deploy": "npm run build:fn && node scripts/deploy.mjs",
+    "preview": "node scripts/serve.mjs",
+    "smoke": "node scripts/smoke.mjs"
   },
   "dependencies": {
     "vue": "^3.5.13",

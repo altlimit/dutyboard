@@ -45,7 +45,7 @@ export function makePublisher(env, cfg) {
 }
 
 /**
- * `POST /api/live/token` — a subscribe-only token for one board and, optionally, the
+ * `POST /live/token` — a subscribe-only token for one board and, optionally, the
  * duties the console currently has open.
  */
 export async function liveToken(ctx, body) {

@@ -38,7 +38,7 @@ site/        the marketing site at www.dutyboard.com  (sitegen)
 app/         the console at /app                      (Vue 3 + Vite)
 functions/   the state machine, one deployed module   (altengine functions)
 backend/     instance configuration to apply once
-scripts/     setup, deploy, and the end-to-end smoke test
+scripts/     provision, deploy, serve, and the end-to-end smoke test
 public/      build output — both halves, gitignored
 ```
 
@@ -68,7 +68,7 @@ DutyBoard runs on [altengine](https://www.altengine.net) — no server of its ow
 
 | Piece | Service | What it does |
 | --- | --- | --- |
-| `api` | **functions** | The whole state machine, as one deployed module. REST at `/api/duty/*` and an MCP endpoint at `/api/mcp`. |
+| `board` | **functions** | The whole state machine, as one deployed module. REST at `/duty/*` and an MCP endpoint at `/mcp`. |
 | `dutyboard` | **datastore** | `projects`, `duties`, `threads`, `agents`, `tokens`. |
 | `dutyboard-auth` | **auth** | The people who own boards. Row rules scope every read to its owner. |
 | `dutyboard-live` | **channel** | Board and duty events, so the console moves as agents work. |
@@ -97,25 +97,47 @@ The `db_` prefix is what tells them apart. A token is shown once, at mint, and n
 
 ## Run it
 
-With [taskr](https://github.com/altlimit/taskr), one command starts everything —
+One command, on a machine with none of this installed:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/altlimit/dutyboard/main/scripts/provision.sh | sh
+```
+
+It installs [`alt`](https://github.com/altlimit/alt) and, through it,
+[sitegen](https://github.com/altlimit/sitegen) and the altengine emulator; clones the
+repo; installs the npm dependencies; starts the emulator if nothing is answering;
+provisions every instance and its config; deploys the function; and builds the site and
+the console. It is safe to re-run — an instance that exists is left alone, and an emulator
+that is already up is used rather than restarted, so a re-run does not throw away the board
+you were testing on.
+
+In a checkout it is `npm run provision`, and `--smoke` adds the end-to-end test at the end.
+
+Then, with [taskr](https://github.com/altlimit/taskr), one command starts everything —
 the emulator, provisioning, the console and the marketing site:
 
 ```bash
-npm install
 taskr "Start All"
 ```
 
-Or by hand:
+### The commands
 
-```bash
-altengine dev                 # the emulator, on :9191
-npm install
-npm run setup                 # provision the instances from backend/
-ALTENGINE_URL=http://127.0.0.1:9191 ALTENGINE_KEY=dev npm run deploy
-npm run dev                   # the console, on :5173/app/
-npm run dev:site              # the marketing site, on :8888
-npm run smoke                 # 55 assertions over the whole state machine
-```
+| Command | What it does |
+| --- | --- |
+| `npm run provision` | Everything below, in order, from nothing. `--hosted` for hosted altengine. |
+| `altengine dev` | The emulator: every data plane plus an admin console, on :9191. |
+| `npm run setup` | Applies `backend/` — instances, auth rules, indexes, the function's CORS list. |
+| `npm run deploy` | Bundles `functions/src` and deploys it. |
+| `npm run dev` | The console, on :5173/app/. |
+| `npm run dev:site` | The marketing site, watched, on :8888. |
+| `npm run build` | Both, into `public/`. |
+| `npm run preview` | Serves `public/` as a static host would, rewrite included, on :4173. |
+| `npm run smoke` | 55 assertions over the whole state machine. |
+
+`altengine dev` is the *only* altengine CLI command involved: there is no `altengine apply`
+or `altengine deploy`. Provisioning is HTTP — the emulator's admin API locally, the MCP
+endpoint hosted — which is why it lives in [`scripts/setup.mjs`](scripts/setup.mjs) rather
+than in a list of CLI invocations.
 
 `npm run setup` is not optional. Instances auto-create on first use but their *config*
 does not: a fresh auth instance collects only an email and grants no access at all, so the
@@ -123,24 +145,33 @@ console would sign you up and then get 403 on every read.
 
 ### Deploying to hosted altengine
 
-Create four instances in the [console](https://console.altengine.net) — `dutyboard`
-(datastore), `dutyboard-auth` (auth), `dutyboard-live` (channel), `dutyboard` (functions).
-Auth and channel mint a signing secret at creation, so they can only be made there.
-
-Then paste the configs from [`backend/`](backend/): [`signup.json`](backend/signup.json)
-as the auth instance's sign-up form, [`access.json`](backend/access.json) as its access
-rules, and the indexes in [`indexes.json`](backend/indexes.json) on the datastore. Set the
-functions instance's CORS origins to wherever you serve the console. Then:
-
 ```bash
-export ALTENGINE_KEY=ak_…     # needs 'full' on the functions instance
-npm run deploy                # the function
-npm run build                 # the site and the console, both into public/
+export ALTENGINE_KEY=ak_…          # control access to instances + functions, data access to the rest
+npm run provision -- --hosted
 ```
 
-`public/` is the whole static site: marketing at the root, the console under `/app`. Host
-it anywhere that can serve a directory — and, once you switch the router to history URLs,
-that can also apply the rewrite above.
+That creates the datastore and functions instances, sets the datastore's config, declares
+the indexes, applies the access rules, sets the function's CORS origins, deploys the
+function, and builds `public/`.
+
+Two things it cannot do, and says so instead of half-succeeding:
+
+- **Create the auth and channel instances.** Both mint a signing secret at creation, which
+  is the service's to generate, so no API key can make one — they are console work
+  (`dutyboard-auth`, `dutyboard-live`).
+- **Set the auth instance's sign-up form and allowed origins.** Auth config is split across
+  four independently validated sections, and the platform refuses to merge them blindly
+  from a tool call. Paste [`backend/signup.json`](backend/signup.json)'s fields, add the
+  origin the console is served from, and leave sign-up open.
+
+Re-run it afterwards; it checks the instance as it actually is and reports only what is
+still missing.
+
+`public/` is then the whole static site: marketing at the root, the console under `/app`.
+Host it anywhere that can serve a directory — and, once you switch the router to history
+URLs, that can also apply the rewrite above. `npm run preview` serves it exactly that way
+locally, which is the only way to find out whether the rewrite is right before a deploy
+depends on it.
 
 If your instances are named differently, set `DUTYBOARD_DATASTORE`, `DUTYBOARD_AUTH`,
 `DUTYBOARD_CHANNEL` and `DUTYBOARD_FN_INSTANCE` for the deploy, the matching `VITE_*` vars
@@ -153,7 +184,7 @@ Mint a token on the board's **Agents & tokens** page. Then, as an MCP server:
 
 ```bash
 claude mcp add --transport http dutyboard \
-  "https://<subdomain>-fn.altengine.app/api/mcp?agent=alpha" \
+  "https://<subdomain>-fn.altengine.app/board/mcp?agent=alpha" \
   --header "Authorization: Bearer db_…"
 ```
 
@@ -165,7 +196,7 @@ never look like the same one.
 Or over plain HTTP, with the same header:
 
 ```bash
-curl -X POST https://<subdomain>-fn.altengine.app/api/duty/poll \
+curl -X POST https://<subdomain>-fn.altengine.app/board/duty/poll \
   -H "Authorization: Bearer db_…" -d '{"agent_id":"alpha"}'
 ```
 
@@ -177,22 +208,30 @@ curl -X POST https://<subdomain>-fn.altengine.app/api/duty/poll \
 Every endpoint is `POST`, takes JSON, and answers JSON. Agent endpoints accept either
 credential where it makes sense; the human ones refuse agent tokens outright.
 
+The paths below are relative to the function itself:
+`https://<subdomain>-fn.altengine.app/board/…` hosted,
+`http://127.0.0.1:9191/fn/dutyboard/board/…` against the emulator. The function is deployed
+as `board` and not `api` because the platform reserves `api` as a function name — its own
+console makes relative calls to `/api/auth/*`, and a function answering there could be
+lured into serving them. The emulator does not enforce it, so a deploy named `api` fails
+only when you first try it hosted.
+
 | Endpoint | Who | What |
 | --- | --- | --- |
-| `/api/duty/poll` | agent | Held duty + the top of the queue, with any resolution folded in. |
-| `/api/duty/claim` | agent | `queued` → `active`, for exactly one agent. |
-| `/api/duty/enqueue` | both | New work. `immediate_blocker` interrupts what the caller holds. |
-| `/api/duty/checkpoint` | both | Post to the thread; optionally park the duty. |
-| `/api/duty/complete` | agent | `active` → `done`. Requires an outcome summary. |
-| `/api/duty/fail` | agent | `→ failed`, with a reason. |
-| `/api/duty/thread` | both | The decision log for one duty. |
-| `/api/duty/resolve` | human | Answer a question; re-queue at the front. |
-| `/api/duty/update` · `/api/duty/delete` | human | Edit or remove a duty. |
-| `/api/projects/*` | human | `create`, `list`, `rename`, `delete`. |
-| `/api/tokens/*` | human | `mint`, `list`, `revoke`. |
-| `/api/live/token` | human | A subscribe-only channel token for one board. |
-| `/api/mcp` | agent | The same tools over JSON-RPC. |
-| `/api/health` | anyone | No credential; safe to check a deploy with. |
+| `/duty/poll` | agent | Held duty + the top of the queue, with any resolution folded in. |
+| `/duty/claim` | agent | `queued` → `active`, for exactly one agent. |
+| `/duty/enqueue` | both | New work. `immediate_blocker` interrupts what the caller holds. |
+| `/duty/checkpoint` | both | Post to the thread; optionally park the duty. |
+| `/duty/complete` | agent | `active` → `done`. Requires an outcome summary. |
+| `/duty/fail` | agent | `→ failed`, with a reason. |
+| `/duty/thread` | both | The decision log for one duty. |
+| `/duty/resolve` | human | Answer a question; re-queue at the front. |
+| `/duty/update` · `/duty/delete` | human | Edit or remove a duty. |
+| `/projects/*` | human | `create`, `list`, `rename`, `delete`. |
+| `/tokens/*` | human | `mint`, `list`, `revoke`. |
+| `/live/token` | human | A subscribe-only channel token for one board. |
+| `/mcp` | agent | The same tools over JSON-RPC. |
+| `/health` | anyone | No credential; safe to check a deploy with. |
 
 Errors are `{"error": {code, message, details?, request_id}}` with a real status: `409` for
 a claim that lost a race or a second active duty, `403` for a token pointed at the wrong

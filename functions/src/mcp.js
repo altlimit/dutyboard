@@ -1,10 +1,10 @@
-// MCP over streamable HTTP, at POST /api/mcp.
+// MCP over streamable HTTP, at POST /mcp.
 //
 // The same handlers the REST routes call, exposed as tools so an agent runtime can add
 // DutyBoard as a server and get `duty_poll` / `duty_claim` / … with no shim in between:
 //
 //   claude mcp add --transport http dutyboard \
-//     "https://<sub>-fn.altengine.app/api/mcp?agent=alpha" \
+//     "https://<sub>-fn.altengine.app/board/mcp?agent=alpha" \
 //     --header "Authorization: Bearer db_…"
 //
 // Stateless by design: every request carries its own bearer token, so there is no

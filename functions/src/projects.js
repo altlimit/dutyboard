@@ -9,7 +9,7 @@ import { requireHuman, resolveProject } from "./identity.js";
 
 const SWEEP_PAGE = 200;
 
-/** `POST /api/projects/create` */
+/** `POST /projects/create` */
 export async function createProject(ctx, body) {
   const caller = requireHuman(ctx.caller);
   const name = str(body.name, "name", { required: true, max: 120 });
@@ -36,7 +36,7 @@ export async function createProject(ctx, body) {
   return { project_id: key, name };
 }
 
-/** `POST /api/projects/list` — the boards this person owns. */
+/** `POST /projects/list` — the boards this person owns. */
 export async function listProjects(ctx, body) {
   const caller = requireHuman(ctx.caller);
   const limit = intIn(body.limit, "limit", 1, 100, 50);
@@ -52,7 +52,7 @@ export async function listProjects(ctx, body) {
   };
 }
 
-/** `POST /api/projects/rename` */
+/** `POST /projects/rename` */
 export async function renameProject(ctx, body) {
   requireHuman(ctx.caller);
   const project = await resolveProject(ctx.caller, body.project_id, ctx.store);
@@ -66,7 +66,7 @@ export async function renameProject(ctx, body) {
 }
 
 /**
- * `POST /api/projects/delete` — the project and everything under it.
+ * `POST /projects/delete` — the project and everything under it.
  *
  * Deliberately requires the caller to repeat the project id in `confirm`: this removes
  * duties, threads, agent rows and tokens, and there is no undo short of the datastore's

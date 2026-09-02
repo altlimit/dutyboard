@@ -13,7 +13,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const outfile = join(here, "dist", "api.js");
+const outfile = join(here, "dist", "bundle.js");
 
 // The platform's own cap. Hitting it means a dependency crept in that should not have.
 const MAX_BYTES = 1024 * 1024;
@@ -36,4 +36,4 @@ if (size > MAX_BYTES) {
   console.error(`✖ bundle is ${(size / 1024).toFixed(0)} KiB — the limit is 1024 KiB`);
   process.exit(1);
 }
-console.log(`✔ functions/dist/api.js  ${(size / 1024).toFixed(1)} KiB`);
+console.log(`✔ functions/dist/bundle.js  ${(size / 1024).toFixed(1)} KiB`);

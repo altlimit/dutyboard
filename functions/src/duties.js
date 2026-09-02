@@ -51,7 +51,7 @@ const agentKey = (projectId, agentId) => `${projectId}:${agentId}`;
 // --- reading --------------------------------------------------------------
 
 /**
- * `POST /api/duty/poll` — the agent's whole view of the world in one call.
+ * `POST /duty/poll` — the agent's whole view of the world in one call.
  *
  * Answers what it is holding (if anything) and the top of the runnable queue, with any
  * human resolution already folded in so the agent never has to fetch a thread to find
@@ -102,7 +102,7 @@ export async function pollDuties(ctx, body) {
   };
 }
 
-/** `POST /api/duty/thread` — the decision log for one duty, oldest first. */
+/** `POST /duty/thread` — the decision log for one duty, oldest first. */
 export async function listThread(ctx, body) {
   const duty = await loadDuty(ctx, body.duty_id);
   const limit = intIn(body.limit, "limit", 1, 100, 20);
@@ -127,7 +127,7 @@ export async function listThread(ctx, body) {
 
 // --- transitions ----------------------------------------------------------
 
-/** `POST /api/duty/claim` — queued → active, for exactly one agent. */
+/** `POST /duty/claim` — queued → active, for exactly one agent. */
 export async function claimDuty(ctx, body) {
   const agentId = agentIdFrom(ctx, body, { required: true });
   const duty = await loadDuty(ctx, body.duty_id);
@@ -167,7 +167,7 @@ export async function claimDuty(ctx, body) {
 }
 
 /**
- * `POST /api/duty/enqueue` — new work, from either side of the board.
+ * `POST /duty/enqueue` — new work, from either side of the board.
  *
  * `immediate_blocker` from an agent that is holding something means "I cannot continue
  * until this is done": the held duty moves to `blocked` referencing the new child, and
@@ -225,7 +225,7 @@ export async function enqueueDuty(ctx, body) {
 }
 
 /**
- * `POST /api/duty/checkpoint` — record a question, a note, or a milestone.
+ * `POST /duty/checkpoint` — record a question, a note, or a milestone.
  *
  * With `set_status: "needs_decision"` this is the non-blocking pause: the question goes
  * on the duty's thread, the duty parks, and the agent is released to claim other work.
@@ -240,7 +240,7 @@ export async function checkpointDuty(ctx, body) {
   if (kind === "resolution" && ctx.caller.kind === "agent") {
     // Only a human resolves. Otherwise an agent could answer its own question and the
     // decision log would stop meaning what it says.
-    throw forbidden("agents cannot post a 'resolution' — use /api/duty/resolve as a human");
+    throw forbidden("agents cannot post a 'resolution' — use /duty/resolve as a human");
   }
   const message = str(body.message, "message", { required: true, max: 4000 });
   const options = suggestedOptions(body.suggested_options);
@@ -284,12 +284,12 @@ export async function checkpointDuty(ctx, body) {
   return { ok: true, state, duty_id: duty.key };
 }
 
-/** `POST /api/duty/complete` — active → done, with the summary that outlives the run. */
+/** `POST /duty/complete` — active → done, with the summary that outlives the run. */
 export async function completeDuty(ctx, body) {
   return finishDuty(ctx, body, "done");
 }
 
-/** `POST /api/duty/fail` — the honest end. Not in the happy path, but `failed` is a
+/** `POST /duty/fail` — the honest end. Not in the happy path, but `failed` is a
  *  state in the spec and a duty that cannot be done must be able to reach it. */
 export async function failDuty(ctx, body) {
   return finishDuty(ctx, body, "failed");
@@ -347,7 +347,7 @@ async function finishDuty(ctx, body, terminal) {
 }
 
 /**
- * `POST /api/duty/resolve` — the human half of the loop.
+ * `POST /duty/resolve` — the human half of the loop.
  *
  * Appends the resolution to the thread and puts the duty back at the top of the queue
  * with the answer bound onto the row, so the next `poll` carries it without a lookup.
@@ -390,7 +390,7 @@ export async function resolveDuty(ctx, body) {
   return { ok: true, status: "queued", duty_id: duty.key };
 }
 
-/** `POST /api/duty/update` — the board's own edit path (title, brief, priority, status). */
+/** `POST /duty/update` — the board's own edit path (title, brief, priority, status). */
 export async function updateDuty(ctx, body) {
   requireHuman(ctx.caller);
   const duty = await loadDuty(ctx, body.duty_id);
@@ -425,7 +425,7 @@ export async function updateDuty(ctx, body) {
   return { ok: true, duty_id: duty.key, status: next.status };
 }
 
-/** `POST /api/duty/delete` — remove a duty and its thread. People make mistakes. */
+/** `POST /duty/delete` — remove a duty and its thread. People make mistakes. */
 export async function deleteDuty(ctx, body) {
   requireHuman(ctx.caller);
   const duty = await loadDuty(ctx, body.duty_id);

@@ -19,7 +19,11 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const URL_BASE = (process.env.ALTENGINE_URL || "https://api.altengine.net").replace(/\/+$/, "");
 const KEY = process.env.ALTENGINE_KEY || "";
 const FN_INSTANCE = process.env.DUTYBOARD_FN_INSTANCE || "dutyboard";
-const FN_NAME = process.env.DUTYBOARD_FN_NAME || "api";
+// `board`, not `api`: the hosted platform reserves `api` as a function name (its own
+// console makes relative calls to /api/auth/* from a page that could be served on a
+// function host) and refuses the deploy. The emulator does not, so the name has to be
+// right here or the first hosted deploy is where you find out.
+const FN_NAME = process.env.DUTYBOARD_FN_NAME || "board";
 const DS = process.env.DUTYBOARD_DATASTORE || "dutyboard";
 const AUTH = process.env.DUTYBOARD_AUTH || "dutyboard-auth";
 const CHANNEL = process.env.DUTYBOARD_CHANNEL || "dutyboard-live";
@@ -39,8 +43,8 @@ const grants = {
   [`channel:${CHANNEL}`]: "write",
 };
 
-const code = await readFile(join(root, "functions", "dist", "api.js"), "utf8").catch(() => {
-  console.error("✖ functions/dist/api.js not found — run `npm run build:fn` first");
+const code = await readFile(join(root, "functions", "dist", "bundle.js"), "utf8").catch(() => {
+  console.error("✖ functions/dist/bundle.js not found — run `npm run build:fn` first");
   process.exit(1);
 });
 

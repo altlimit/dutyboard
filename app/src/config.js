@@ -15,6 +15,7 @@ const env = {
   channel: import.meta.env.VITE_CHANNEL_INSTANCE || "dutyboard-live",
   functions: import.meta.env.VITE_FUNCTIONS_INSTANCE || "dutyboard",
   api: import.meta.env.VITE_API_URL || "",
+  fn: import.meta.env.VITE_FUNCTION_NAME || "board",
 };
 
 function override(key) {
@@ -27,6 +28,8 @@ function override(key) {
 
 const baseUrl = (override("baseUrl") || env.baseUrl).replace(/\/+$/, "");
 const functions = override("functions") || env.functions;
+// The deployed function's name — the first path segment under its host. See scripts/deploy.mjs.
+const fn = override("fn") || env.fn;
 
 /**
  * Where the function lives.
@@ -40,7 +43,7 @@ function apiUrl() {
   const explicit = override("api") || env.api;
   if (explicit) return explicit.replace(/\/+$/, "");
   const local = /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(:|\/|$)/.test(baseUrl);
-  return local ? `${baseUrl}/fn/${functions}/api` : `https://${functions}-fn.altengine.app/api`;
+  return local ? `${baseUrl}/fn/${functions}/${fn}` : `https://${functions}-fn.altengine.app/${fn}`;
 }
 
 export const config = {
@@ -49,6 +52,7 @@ export const config = {
   datastore: override("datastore") || env.datastore,
   channel: override("channel") || env.channel,
   functions,
+  fn,
   api: apiUrl(),
   // The default (unnamed) namespace cannot ride a URL path, so it travels as the
   // reserved `_default` sentinel and the server maps it back.
