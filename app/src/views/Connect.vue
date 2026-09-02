@@ -47,7 +47,7 @@ async function check() {
   checking.value = true;
   result.value = null;
   const base = form.value.baseUrl.replace(/\/+$/, "");
-  const out = { auth: null, authWarn: "", api: null };
+  const out = { auth: null, authWarn: "", api: null, files: null };
   try {
     const res = await fetch(`${base}/v1/auth/${encodeURIComponent(form.value.auth)}/config`);
     const cfg = await res.json().catch(() => ({}));
@@ -72,6 +72,10 @@ async function check() {
     const res = await fetch(`${apiPreview()}/health`);
     const body = await res.json().catch(() => ({}));
     out.api = res.ok && body.ok ? `ok (${body.service} ${body.version || ""})`.trim() : `answered ${res.status}`;
+    // There is no blob field on this form on purpose — the browser never names that
+    // instance, it asks the function for an upload URL and PUTs to whatever comes back. So
+    // the only way to know whether files work is to ask the function, which is this.
+    if (res.ok && body.ok) out.files = body.attachments ? "on" : "off";
   } catch (err) {
     out.api = err.message || "unreachable";
   }
@@ -143,7 +147,9 @@ onMounted(check);
         <label for="c-fnname">Function name</label>
         <input id="c-fnname" v-model="form.fn" required placeholder="board" />
         <p class="hint">
-          The state machine will be called at <code>{{ apiPreview() }}</code>
+          The state machine will be called at <code>{{ apiPreview() }}</code>. There is no field
+          here for the blob instance that stores attachments: this page never names it — it asks
+          the function for an upload URL and sends the file to whatever it gets back.
         </p>
       </div>
 
@@ -155,9 +161,21 @@ onMounted(check);
       >
         <strong>Auth instance:</strong> {{ result.auth }}<br />
         <strong>Function:</strong> {{ result.api }}
+        <template v-if="result.files"><br /><strong>Attachments:</strong> {{ result.files }}</template>
+        <p v-if="result.files === 'off'" class="small" style="margin: 0.5rem 0 0">
+          Screenshots and recordings are turned off on this deployment. They are configured on
+          the function, not here: give it a blob instance (<code class="mono">DUTYBOARD_BLOB</code>)
+          and a <code class="mono">blob</code> grant, then redeploy. Everything else works without it.
+        </p>
         <p v-if="result.authWarn" class="small" style="margin: 0.5rem 0 0">{{ result.authWarn }}</p>
-        <p v-if="!String(result.auth).startsWith('ok')" class="small" style="margin: 0.5rem 0 0">
-          If that is a network or CORS error, add this page's origin
+        <p
+          v-if="!String(result.auth).startsWith('ok') || !String(result.api).startsWith('ok')"
+          class="small"
+          style="margin: 0.5rem 0 0"
+        >
+          A name that is wrong and an origin that is not allowed fail the same way from a
+          browser — "failed to fetch", with the reason only in the developer console. Check the
+          spelling, then add this page's origin
           (<code class="mono">{{ typeof window !== "undefined" ? window.location.origin : "" }}</code>) to the auth
           instance's allowed origins and to the functions instance's CORS origins.
         </p>

@@ -205,9 +205,15 @@ locally, which is the only way to find out whether the rewrite is right before a
 depends on it.
 
 If your instances are named differently, set `DUTYBOARD_DATASTORE`, `DUTYBOARD_AUTH`,
-`DUTYBOARD_CHANNEL` and `DUTYBOARD_FN_INSTANCE` for the deploy, the matching `VITE_*` vars
-for the console, and add the names as `env`-exposure secrets on the functions instance so
-the deployed code resolves them too.
+`DUTYBOARD_CHANNEL`, `DUTYBOARD_BLOB` and `DUTYBOARD_FN_INSTANCE` for the deploy, the
+matching `VITE_*` vars for the console, and add the names as `env`-exposure secrets on the
+functions instance so the deployed code resolves them too.
+
+`DUTYBOARD_BLOB` has no `VITE_*` twin, and that is not an omission: the console never names
+the blob instance. It asks the function for an upload URL and sends the file to whatever
+comes back, so where attachments are stored is the function's business alone. `/health`
+reports whether they are configured, which is what the console's **Connect your altengine**
+screen shows.
 
 ## Connecting an agent
 

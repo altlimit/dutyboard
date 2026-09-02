@@ -123,9 +123,21 @@ export default {
 
     // Unauthenticated, so a deploy can be checked before any credential exists.
     if (path === "/health" || path === "/") {
-      // The MCP path, relative to this function — the prefix in front of it depends on
-      // where it is deployed, which is exactly what routePath above exists to absorb.
-      return json({ ok: true, service: "dutyboard", version: VERSION, mcp: "/mcp" });
+      // Capabilities, not configuration: whether attachments work here is decided by the
+      // deploy (a blob grant and an instance name), and it is the one thing about this
+      // function a console cannot find out by looking at itself — the browser never names
+      // the blob instance, it only ever asks this function for an upload URL. The name is
+      // deliberately not reported; whether it exists is the useful half.
+      const cfg = configure(env);
+      return json({
+        ok: true,
+        service: "dutyboard",
+        version: VERSION,
+        // The MCP path, relative to this function — the prefix in front of it depends on
+        // where it is deployed, which is exactly what routePath above exists to absorb.
+        mcp: "/mcp",
+        attachments: !!(env.blob && cfg.blobInstance),
+      });
     }
 
     try {
