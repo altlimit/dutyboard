@@ -8,7 +8,6 @@ import DutyCard from "./DutyCard.vue";
 const props = defineProps({
   col: { type: Object, required: true },
   state: { type: Object, required: true }, // { rows, cursor, loading }
-  shown: { type: Number, required: true },
   projectId: { type: String, required: true },
   // Standalone: the phone layout, where the chips are the heading and the hint is worth
   // showing rather than hiding from everyone but a screen reader.
@@ -17,10 +16,9 @@ const props = defineProps({
 
 defineEmits(["more"]);
 
-const visible = computed(() => props.state.rows.slice(0, props.shown));
-/** More to show: either already loaded and clipped, or one page further back. */
-const more = computed(() => props.state.rows.length > props.shown || !!props.state.cursor);
-const hidden = computed(() => Math.max(0, props.state.rows.length - props.shown));
+/** A cursor is the only thing that means "there is more". Every row fetched is on screen,
+ *  so this button always costs a request and always brings something back. */
+const more = computed(() => !!props.state.cursor);
 </script>
 
 <template>
@@ -34,7 +32,7 @@ const hidden = computed(() => Math.max(0, props.state.rows.length - props.shown)
     <p :class="standalone ? 'muted small column__note' : 'sr-only'">{{ col.hint }}</p>
 
     <ul class="column__list">
-      <li v-for="duty in visible" :key="duty.key">
+      <li v-for="duty in state.rows" :key="duty.key">
         <DutyCard :duty="duty" :project-id="projectId" />
       </li>
     </ul>
@@ -42,8 +40,8 @@ const hidden = computed(() => Math.max(0, props.state.rows.length - props.shown)
     <p v-if="state.loading && !state.rows.length" class="muted small column__note" role="status">Loading…</p>
     <p v-else-if="!state.rows.length" class="muted small column__note">Nothing here.</p>
 
-    <button v-if="more" type="button" class="column__more" @click="$emit('more', col.key)">
-      Show more<span v-if="hidden"> ({{ hidden }}{{ state.cursor ? "+" : "" }})</span>
+    <button v-if="more" type="button" class="column__more" :disabled="state.loading" @click="$emit('more', col.key)">
+      {{ state.loading ? "Loading…" : "Show more" }}
     </button>
   </section>
 </template>

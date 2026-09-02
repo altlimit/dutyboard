@@ -6,13 +6,11 @@ import BoardColumn from "../components/BoardColumn.vue";
 
 const props = defineProps({ projectId: { type: String, required: true } });
 
-/** How much of a column is fetched at once, and how much of that is rendered before you
- *  ask for more. They are different numbers on purpose: the query is cheap and paging it
- *  costs a round trip, but a column that renders forty cards buries the four columns next
- *  to it — on a phone it buries the whole board. */
-const PAGE = 50;
-const FIRST = 8;
-const STEP = 12;
+/** One page of a column. Small enough that a busy column does not bury the four next to
+ *  it, and every card fetched is a card rendered: "Show more" fetches the next page rather
+ *  than revealing rows that were already here, which is a control that pretends to do
+ *  something. */
+const PAGE = 12;
 
 /** Below this the board stops being columns and becomes one column behind chips. Wide
  *  enough that six columns still get ~170px each, which is the point where a title stops
@@ -21,7 +19,6 @@ const WIDE = "(min-width: 1080px)";
 
 const board = ref(null);
 const columns = ref({});
-const shown = ref({});
 const agents = ref([]);
 const error = ref("");
 const liveState = ref("connecting");
@@ -41,10 +38,10 @@ wideQuery.addEventListener("change", onWidth);
 let socket = null;
 let refreshTimer = null;
 
-const blank = () => Object.fromEntries(STATUS_COLUMNS.map((c) => [c.key, { rows: [], cursor: null, loading: true }]));
 const resetColumns = () => {
-  columns.value = blank();
-  shown.value = Object.fromEntries(STATUS_COLUMNS.map((c) => [c.key, FIRST]));
+  columns.value = Object.fromEntries(
+    STATUS_COLUMNS.map((c) => [c.key, { rows: [], cursor: null, loading: true }]),
+  );
 };
 resetColumns();
 
@@ -101,13 +98,6 @@ async function loadBoard() {
   } catch (err) {
     error.value = err.message;
   }
-}
-
-/** Show more of one column, fetching another page only when the loaded rows run out. */
-function showMore(key) {
-  shown.value[key] += STEP;
-  const col = columns.value[key];
-  if (shown.value[key] > col.rows.length && col.cursor) loadColumn(key, { append: true });
 }
 
 /** Live events name a duty and a status, but a move is two columns changing at once and
@@ -263,9 +253,8 @@ onUnmounted(() => {
         :key="col.key"
         :col="col"
         :state="columns[col.key]"
-        :shown="shown[col.key]"
         :project-id="projectId"
-        @more="showMore"
+        @more="loadColumn($event, { append: true })"
       />
     </div>
 
@@ -289,10 +278,9 @@ onUnmounted(() => {
       <BoardColumn
         :col="STATUS_COLUMNS.find((c) => c.key === focusColumn)"
         :state="columns[focusColumn]"
-        :shown="shown[focusColumn]"
         :project-id="projectId"
         standalone
-        @more="showMore"
+        @more="loadColumn($event, { append: true })"
       />
     </template>
   </div>

@@ -7,12 +7,14 @@ import { ALL_STATUSES, PRIORITIES, THREAD_KIND_LABELS, ago, exactTime, priorityL
 const props = defineProps({ projectId: { type: String, required: true }, dutyId: { type: String, required: true } });
 const router = useRouter();
 
-/** How much of the thread is on screen before you ask for the rest. A duty that ran for a
- *  week has a long log, and almost every visit is about the last thing that happened. */
-const RECENT = 5;
+/** One page of the decision log. Newest first, because almost every visit is about the
+ *  last thing that happened, and older pages are fetched only if someone asks for them. */
+const PAGE = 25;
 
 const duty = ref(null);
 const entries = ref([]);
+const olderCursor = ref(null);
+const loadingOlder = ref(false);
 const error = ref("");
 const notice = ref("");
 const loading = ref(true);
@@ -20,7 +22,6 @@ const answer = ref("");
 const note = ref("");
 const posting = ref(false);
 const editing = ref(false);
-const showAll = ref(false);
 const edit = ref({ title: "", brief: "", priority: "next", status: "queued" });
 
 let socket = null;
@@ -33,21 +34,15 @@ const needsAnswer = computed(() => duty.value && duty.value.status === "needs_de
 /** The options an agent offered, if it offered any — answering with one click is the
  *  difference between a question answered in seconds and one answered tomorrow.
  *
- *  `entries` stays oldest-first, which is what this scan needs; the reversal for display
- *  happens below. Reversing the source array instead would quietly invert this. */
+ *  `entries` is newest-first, so this walks forward from the most recent entry and stops
+ *  at a resolution: once a question has been answered its options are history. */
 const options = computed(() => {
-  for (let i = entries.value.length - 1; i >= 0; i--) {
-    const e = entries.value[i];
+  for (const e of entries.value) {
     if (e.kind === "resolution") return [];
     if (e.metadata && Array.isArray(e.metadata.suggested_options)) return e.metadata.suggested_options;
   }
   return [];
 });
-
-/** Newest first. What happened last is what you came to read. */
-const ordered = computed(() => [...entries.value].reverse());
-const visibleEntries = computed(() => (showAll.value ? ordered.value : ordered.value.slice(0, RECENT)));
-const earlier = computed(() => Math.max(0, ordered.value.length - visibleEntries.value.length));
 
 async function load() {
   error.value = "";
@@ -56,12 +51,16 @@ async function load() {
       getDocs("duties", [props.dutyId]),
       query("threads", {
         where: [{ field: "duty_id", op: "=", value: props.dutyId }],
-        order: [{ field: "created_at", dir: "asc" }],
-        limit: 200,
+        order: [{ field: "created_at", dir: "desc" }],
+        limit: PAGE,
       }),
     ]);
     duty.value = (dutyRes.documents || []).map(flat)[0] || null;
-    entries.value = (threadRes.documents || []).map(flat);
+    const rows = (threadRes.documents || []).map(flat);
+    entries.value = rows;
+    // A full page means there may be another. Only then is there anything to offer —
+    // a "show more" over rows already in memory hides them for no reason.
+    olderCursor.value = rows.length === PAGE ? threadRes.cursor || null : null;
     // Only reset the edit form when it is not open: a live refresh landing mid-sentence
     // must not overwrite what someone is typing.
     if (duty.value && !editing.value) resetEdit();
@@ -69,6 +68,27 @@ async function load() {
     error.value = err.message;
   } finally {
     loading.value = false;
+  }
+}
+
+/** The page before this one, fetched. Appended rather than replacing, so reading back
+ *  through a long log does not lose your place. */
+async function loadOlder() {
+  loadingOlder.value = true;
+  try {
+    const res = await query("threads", {
+      where: [{ field: "duty_id", op: "=", value: props.dutyId }],
+      order: [{ field: "created_at", dir: "desc" }],
+      limit: PAGE,
+      cursor: olderCursor.value,
+    });
+    const rows = (res.documents || []).map(flat);
+    entries.value = [...entries.value, ...rows];
+    olderCursor.value = rows.length === PAGE ? res.cursor || null : null;
+  } catch (err) {
+    error.value = err.message;
+  } finally {
+    loadingOlder.value = false;
   }
 }
 
@@ -150,7 +170,7 @@ watch(
   () => {
     loading.value = true;
     editing.value = false;
-    showAll.value = false;
+    olderCursor.value = null;
     load();
     connect();
   },
@@ -291,7 +311,7 @@ onUnmounted(() => {
 
         <p v-if="!entries.length" class="empty">Nothing on the record yet.</p>
         <ul v-else class="thread">
-          <li v-for="e in visibleEntries" :key="e.key" class="entry" :class="`entry--${e.kind}`">
+          <li v-for="e in entries" :key="e.key" class="entry" :class="`entry--${e.kind}`">
             <div class="entry__head">
               <span class="entry__who">{{ e.author_type === "human" ? e.author_name || "You" : e.author_id }}</span>
               <span class="badge">{{ THREAD_KIND_LABELS[e.kind] || e.kind }}</span>
@@ -304,11 +324,8 @@ onUnmounted(() => {
           </li>
         </ul>
 
-        <button v-if="earlier" type="button" style="width: 100%" @click="showAll = true">
-          Show {{ earlier }} earlier {{ earlier === 1 ? "entry" : "entries" }}
-        </button>
-        <button v-else-if="showAll && ordered.length > RECENT" type="button" style="width: 100%" @click="showAll = false">
-          Show only the latest
+        <button v-if="olderCursor" type="button" style="width: 100%" :disabled="loadingOlder" @click="loadOlder">
+          {{ loadingOlder ? "Loading…" : "Load earlier entries" }}
         </button>
       </section>
     </template>
