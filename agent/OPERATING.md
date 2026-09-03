@@ -17,9 +17,16 @@ record of what was done — across sessions, and across whatever runs out of con
 ## Show, do not describe
 
 Some things are not worth a paragraph. **`duty_attach`** puts a file on a duty — a
-screenshot of the thing you built, a recording of the failure, the log that explains it. It
-answers with an upload URL; you send the bytes yourself with one PUT, using the headers it
-gives you and sending exactly the size you declared.
+screenshot of the thing you built, a recording of the failure, the log that explains it.
+
+Two ways, and you pick by what you can actually do. If you can make an HTTP request, pass
+`size`: it answers with an upload URL and you send the bytes yourself with one PUT, using
+the headers it gives you and sending exactly the size you declared. That path takes up to
+50MB and is the only one for anything large.
+
+If you cannot make a PUT — a connection that gives you tools and nothing else — pass
+`content_base64` instead and the file is stored in that one call, up to 2MB. Enough for a
+screenshot or a log. Do not use it for video.
 
 **`duty_attachments`** reads what is already there, with a URL per file you can fetch
 straight away. Those URLs are short-lived, so fetch them when you get them. A duty's

@@ -95,6 +95,18 @@ const ROUTES = {
 export const ROUTE_PATHS = Object.keys(ROUTES);
 
 /**
+ * Bodies big enough to carry an inline attachment, for the two doors that can receive one.
+ *
+ * Everything else is held to the default in http.js, which is small on purpose: no other
+ * endpoint has a field that could legitimately be megabytes, and `request.text()` buffers
+ * whatever arrives before any per-field cap can look at it.
+ */
+/** Comfortably above base64 of MAX_INLINE_BYTES (2MB raw ≈ 2.7MB encoded), so an oversized
+ *  inline upload is refused by the attachment limit — which says to use the upload_url and
+ *  how big that path takes — rather than by a body limit, which says only "too big". */
+const ATTACH_BODY_BYTES = 4 * 1024 * 1024;
+
+/**
  * The path below this function, in both deployments.
  *
  * Hosted, the function name is the first segment (`/board/duty/poll`). Locally there are
@@ -181,7 +193,7 @@ export default {
       // writes at most once a minute per token, so it is not on the hot path.
       await noteTokenUse(ctx, caller);
 
-      if (path === "/mcp") return await handleMcp(ctx, request);
+      if (path === "/mcp") return await handleMcp(ctx, request, ATTACH_BODY_BYTES);
 
       const handler = ROUTES[path];
       if (!handler) throw notFound(`no route '${path}' — see /health`);
@@ -189,7 +201,7 @@ export default {
         throw new HttpError(405, "METHOD_NOT_ALLOWED", `use POST for '${path}'`);
       }
 
-      const body = await readJson(request);
+      const body = await readJson(request, path === "/duty/attach" ? { max: ATTACH_BODY_BYTES } : undefined);
       // A `project_id` in the query string is a convenience for curl and for the
       // console's own links; the body wins where both are present.
       if (!body.project_id && url.searchParams.get("project_id")) {

@@ -379,9 +379,13 @@ board, `400` naming the field and the values it accepts.
 
 ## Costs and bounds
 
-- Attachment bytes never pass through the function. It decides whether a caller may upload
-  and how big, signs a URL, and the client PUTs to storage directly — which is what makes a
-  video attachment a video attachment rather than a 413. Objects are private; every read
+- Attachment bytes normally never pass through the function. It decides whether a caller may
+  upload and how big, signs a URL, and the client PUTs to storage directly — which is what
+  makes a video attachment a video attachment rather than a 413. There is one narrow
+  exception: a caller whose entire transport is MCP holds a list of tools, not an HTTP
+  client, so asking it to PUT was asking for something it cannot do. `content_base64` on
+  `duty_attach` stores the bytes in that call, up to 2MB — a screenshot or a log, not a
+  recording. Objects are private; every read
   mints a URL that lasts minutes, for a caller just checked against the board. Twenty files
   a duty, 50MB each. The count cached on the duty row is a hint, not a ledger: uploads
   landing together all read it and all write the same increment, so it can under-count until

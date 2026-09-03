@@ -31,7 +31,7 @@ export const tooLarge = (msg) => new HttpError(413, "PAYLOAD_TOO_LARGE", msg);
  * it, and file bytes deliberately do not come through this function at all: an upload is a
  * signed URL the client PUTs to directly, so there is no legitimate large body to allow for.
  */
-const MAX_BODY_BYTES = 256 * 1024;
+export const MAX_BODY_BYTES = 256 * 1024;
 
 export function json(body, status = 200, headers = {}) {
   return new Response(JSON.stringify(body), {
@@ -58,18 +58,28 @@ export function errorResponse(err, requestId) {
 }
 
 /** Parse a JSON body, tolerating an empty one (a POST with no payload is a valid call). */
-export async function readJson(request) {
-  // Checked before reading, when the header is there — refusing after buffering 100MB is
-  // not much of a refusal. The length is re-checked below because content-length can lie
-  // or be absent on a chunked request.
+/**
+ * The body as text, bounded. Split out of readJson because the MCP endpoint parses its own
+ * envelope and used to read `request.text()` with no limit at all — a hole straight through
+ * the bound below, on the door most of this API's traffic arrives at.
+ */
+export async function readBoundedText(request, max = MAX_BODY_BYTES) {
   const declared = Number(request.headers.get("content-length"));
-  if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) {
-    throw tooLarge(`body is ${Math.round(declared / 1024)}KB — the limit is ${MAX_BODY_BYTES / 1024}KB`);
+  if (Number.isFinite(declared) && declared > max) {
+    throw tooLarge(`body is ${Math.round(declared / 1024)}KB — the limit is ${Math.round(max / 1024)}KB`);
   }
   const text = await request.text();
-  if (text.length > MAX_BODY_BYTES) {
-    throw tooLarge(`body is ${Math.round(text.length / 1024)}KB — the limit is ${MAX_BODY_BYTES / 1024}KB`);
+  if (text.length > max) {
+    throw tooLarge(`body is ${Math.round(text.length / 1024)}KB — the limit is ${Math.round(max / 1024)}KB`);
   }
+  return text;
+}
+
+export async function readJson(request, { max = MAX_BODY_BYTES } = {}) {
+  // Checked from content-length first, when it is there — refusing after buffering 100MB is
+  // not much of a refusal — and again from the text, because that header can lie or be
+  // absent on a chunked request.
+  const text = await readBoundedText(request, max);
   if (!text) return {};
   try {
     return JSON.parse(text);

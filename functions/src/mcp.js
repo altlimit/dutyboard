@@ -16,9 +16,9 @@
 // needs_decision, not queued" is what lets it, and a protocol-level error would instead
 // look to most clients like the server broke.
 
-import { HttpError, json } from "./http.js";
+import { HttpError, json, readBoundedText } from "./http.js";
 import { pollDuties, claimDuty, enqueueDuty, checkpointDuty, completeDuty, failDuty, listThread, PRIORITIES, THREAD_KINDS } from "./duties.js";
-import { attachToDuty, listAttachments, MAX_BYTES } from "./attachments.js";
+import { attachToDuty, listAttachments, MAX_BYTES, MAX_INLINE_BYTES } from "./attachments.js";
 import { VERSION } from "./version.js";
 
 const PROTOCOL_VERSION = "2025-06-18";
@@ -190,17 +190,28 @@ const TOOLS = [
     name: "duty_attach",
     title: "Attach a file to a duty",
     description:
-      `Put a file on a duty — a screenshot of what you built, a recording of a failure, a log worth keeping. This does NOT take the bytes: it answers with an upload_url, and you then send the file yourself with a single PUT, using the returned headers exactly and sending exactly \`size\` bytes. Up to ${MAX_BYTES / 1048576}MB. Attach evidence a person would want to look at; do not attach a transcript of your own reasoning.`,
+      `Put a file on a duty — a screenshot of what you built, a recording of a failure, a log worth keeping. TWO WAYS. If you can make an HTTP request: pass \`size\` and it answers with an upload_url you PUT the bytes to, using the returned headers exactly and sending exactly that many bytes — up to ${MAX_BYTES / 1048576}MB, and the only way for anything large. If you cannot, or would rather not: pass \`content_base64\` instead of \`size\` and the file is stored in this one call, up to ${MAX_INLINE_BYTES / 1048576}MB. Attach evidence a person would want to look at; do not attach a transcript of your own reasoning.`,
     inputSchema: {
       type: "object",
       properties: {
         duty_id: s("The duty to attach it to."),
         name: s("The file name, as a person should see it. e.g. 'checkout-error.png'"),
-        size: { type: "integer", description: "The file's size in bytes. Signed into the URL, so it must be exact.", minimum: 1 },
+        size: {
+          type: "integer",
+          description: "The file's size in bytes, for the upload_url path. Signed into the URL, so it must be exact. Omit when sending content_base64.",
+          minimum: 1,
+        },
+        content_base64: s(
+          "The file itself, base64. Use this when you cannot make an HTTP PUT — the bytes are stored in this call and there is nothing to send afterwards. Small files only; a large one is refused with a message telling you to use `size` instead.",
+        ),
         content_type: s("The MIME type, e.g. 'image/png' or 'video/mp4'."),
         agent_id: s("Which agent is attaching it. Optional when the connection names one."),
       },
-      required: ["duty_id", "name", "size"],
+      // `size` is no longer required: one of size / content_base64 must be there, and the
+      // handler says which is missing. A schema cannot express "exactly one of these" in a
+      // way every client validates the same way, and a wrong refusal from the client side
+      // is harder to act on than a clear one from ours.
+      required: ["duty_id", "name"],
     },
     handler: attachToDuty,
   },
@@ -258,14 +269,19 @@ async function dispatch(ctx, msg) {
   }
 }
 
-export async function handleMcp(ctx, request) {
+export async function handleMcp(ctx, request, maxBody) {
   if (request.method === "GET") {
     // No server-initiated messages, so there is no stream to open.
     return new Response("this MCP endpoint is POST-only", { status: 405, headers: { allow: "POST" } });
   }
+  // Bounded. This used to be a bare request.text(), which was a hole straight through the
+  // body limit on the door most of this API's traffic arrives at. Too large throws an
+  // HttpError and comes back as a 413 rather than a JSON-RPC error, because a body that was
+  // never read is not a message that can carry an id to answer.
+  const text = await readBoundedText(request, maxBody);
   let msg;
   try {
-    msg = JSON.parse(await request.text());
+    msg = JSON.parse(text);
   } catch {
     return json(rpcErr(null, -32700, "parse error"), 200);
   }

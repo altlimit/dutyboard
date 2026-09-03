@@ -323,10 +323,48 @@ async function main() {
   const counted = await dsGet("duties", later.duty_id, human);
   check("the duty counts it, so a poll need not ask", counted.attachment_count === 1, counted.attachment_count);
 
+  // An agent whose only transport is MCP cannot make a PUT — it holds a list of tools, not
+  // an HTTP client — so telling it to attach a screenshot was telling it to do something it
+  // could not do. `content_base64` stores the bytes in the call itself.
+  //
+  // The round trip is compared BYTE FOR BYTE against a payload with every value 0-255 in it,
+  // because the first version of this looked perfect: right length, right count, and every
+  // byte above 0x7F silently replaced with 253. `atob` was the culprit; a file of the right
+  // size full of the wrong bytes is the worst shape a corruption can take.
+  const ladder = Uint8Array.from({ length: 256 }, (_, i) => i);
+  const asB64 = btoa(String.fromCharCode(...ladder));
+  const inlined = await call(
+    "/duty/attach",
+    { duty_id: soon.duty_id, name: "ladder.bin", content_type: "application/octet-stream", content_base64: asB64 },
+    human,
+  );
+  check("an inline attachment needs no second request", inlined.uploaded === true && inlined.size === 256, inlined);
+  const inlineList = await call("/duty/attachments", { duty_id: soon.duty_id }, human);
+  const stored = (inlineList.attachments || []).find((a) => a.name === "ladder.bin");
+  const ladderBack = new Uint8Array(await (await fetch(stored.url)).arrayBuffer());
+  check(
+    "and every byte of it survives, including the ones above 0x7F",
+    ladderBack.length === 256 && ladderBack.every((b, i) => b === i),
+    { length: ladderBack.length, firstBad: [...ladderBack].findIndex((b, i) => b !== i) },
+  );
+
+  const tooBigInline = await call(
+    "/duty/attach",
+    { duty_id: soon.duty_id, name: "huge.bin", content_base64: "A".repeat(3_000_000) },
+    human,
+    { expectStatus: true },
+  );
+  check(
+    "an oversized inline upload is refused, and named the other path",
+    tooBigInline.status === 400 && /upload_url/.test(JSON.stringify(tooBigInline.json)),
+    tooBigInline.json,
+  );
+
   // Concurrent uploads all read the same count and all write the same +1, so the cached
   // number under-counts. The rows are the truth and a read reconciles to them — a paperclip
   // saying 1 next to three files is small, but it is the kind of small that never gets fixed
   // unless something asserts it.
+  const beforeConcurrent = (await call("/duty/attachments", { duty_id: soon.duty_id }, human)).attachments.length;
   const three = await Promise.all(
     [1, 2, 3].map((n) =>
       call("/duty/attach", { duty_id: soon.duty_id, name: `c${n}.txt`, size: 5, content_type: "text/plain" }, human),
@@ -335,11 +373,16 @@ async function main() {
   for (const m of three) await fetch(m.upload_url, { method: "PUT", headers: m.required_headers, body: "hello" });
   const drifted = await dsGet("duties", soon.duty_id, human);
   const reconciled = await call("/duty/attachments", { duty_id: soon.duty_id }, human);
-  check("three concurrent uploads all land", (reconciled.attachments || []).length === 3, reconciled.attachments && reconciled.attachments.length);
+  const expectedFiles = beforeConcurrent + 3;
+  check(
+    `three concurrent uploads all land (${beforeConcurrent} → ${expectedFiles})`,
+    (reconciled.attachments || []).length === expectedFiles,
+    reconciled.attachments && reconciled.attachments.length,
+  );
   const healed = await dsGet("duties", soon.duty_id, human);
   check(
     `and reading the duty reconciles its count (${drifted.attachment_count} → ${healed.attachment_count})`,
-    healed.attachment_count === 3,
+    healed.attachment_count === expectedFiles,
     { before: drifted.attachment_count, after: healed.attachment_count },
   );
 

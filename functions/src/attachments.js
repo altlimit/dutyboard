@@ -33,6 +33,64 @@ export const MAX_ATTACHMENTS = 20;
  *  anyone uploads 400MB and finds out from storage. */
 export const MAX_BYTES = 50 * 1024 * 1024;
 
+/**
+ * The ceiling for bytes sent INLINE, base64 in the request body.
+ *
+ * The design is that bytes go straight to storage and never through here, and for anything
+ * large that stands: an isolate cannot hold a video. But a caller whose only transport is
+ * MCP has no way to make a PUT — it has a list of tools, not an HTTP client — and telling
+ * such an agent to attach a screenshot was telling it to do something it cannot do. So
+ * there is a small door: enough for a screenshot, a recording of a short interaction, or a
+ * log, and not enough to make the function a file server.
+ */
+export const MAX_INLINE_BYTES = 2 * 1024 * 1024;
+
+const B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+const B64_INV = (() => {
+  const t = new Int8Array(128).fill(-1);
+  for (let i = 0; i < B64.length; i++) t[B64.charCodeAt(i)] = i;
+  t["-".charCodeAt(0)] = 62; // URL-safe alphabet, accepted because callers send it
+  t["_".charCodeAt(0)] = 63;
+  return t;
+})();
+
+/**
+ * Base64 → bytes, without `atob`.
+ *
+ * `atob` is the obvious way and it silently destroys the data. It answers with a string
+ * whose code units are meant to be bytes, and a runtime that holds strings as UTF-8 —
+ * which the local emulator does — cannot represent a lone 0x80: it becomes U+FFFD, and
+ * `bytes[i] = charCodeAt(i)` truncates 65533 to 253. So every byte above 0x7F came back as
+ * 253 and a PNG round-tripped to garbage of the right length, which is the worst shape a
+ * corruption can take. Measured, not guessed: 256 known bytes in, first difference at 128.
+ *
+ * Six bits at a time, one code path, identical everywhere — the same reasoning as the
+ * hand-rolled SHA-256 in hash.js, and for the same reason: a difference between the
+ * developer's machine and production is the one place a bug must not be allowed to live.
+ */
+function fromBase64(value, field) {
+  const src = String(value).replace(/^data:[^;]*;base64,/, "").replace(/[\s=]+/g, "");
+  const out = new Uint8Array(Math.floor((src.length * 3) / 4));
+  let acc = 0;
+  let bits = 0;
+  let n = 0;
+  for (let i = 0; i < src.length; i++) {
+    const code = src.charCodeAt(i);
+    const six = code < 128 ? B64_INV[code] : -1;
+    if (six < 0) throw badRequest(`'${field}' is not valid base64`);
+    acc = (acc << 6) | six;
+    bits += 6;
+    if (bits >= 8) {
+      bits -= 8;
+      out[n++] = (acc >> bits) & 0xff;
+    }
+  }
+  // A trailing group of one character carries no whole byte and means the input was
+  // truncated — worth refusing rather than storing a file that is quietly short.
+  if (src.length % 4 === 1) throw badRequest(`'${field}' is not valid base64 (truncated)`);
+  return out.subarray(0, n);
+}
+
 /** How long after minting an upload URL a row with no object behind it is assumed dead.
  *  Comfortably longer than the URL's own life, so a slow upload is never swept mid-flight. */
 const ABANDONED_AFTER_MS = 60 * 60 * 1000;
@@ -65,6 +123,10 @@ const view = (row, extra) => ({
  *
  * The size is signed into the URL, so it is a real bound rather than a promise — sending
  * more is refused by storage, not by us.
+ *
+ * OR, for a caller that cannot make a PUT — an agent whose whole transport is MCP — pass
+ * `content_base64` instead of `size` and the bytes are stored here, in this call. Small
+ * files only; see MAX_INLINE_BYTES for why that door is narrow.
  */
 export async function attachToDuty(ctx, body) {
   const target = requireBlob(ctx);
@@ -73,13 +135,23 @@ export async function attachToDuty(ctx, body) {
 
   const name = str(body.name, "name", { required: true, max: 200 });
   const contentType = str(body.content_type, "content_type", { max: 120, fallback: "application/octet-stream" });
+  const inline = body.content_base64 != null ? fromBase64(body.content_base64, "content_base64") : null;
 
   // Not `intIn`: that clamps, and a clamped size would sign a URL for fewer bytes than the
   // client is about to send — a confusing failure at storage instead of a clear one here.
-  const size = Number(body.size);
-  if (!Number.isFinite(size) || size <= 0) throw badRequest("'size' must be the file's size in bytes");
+  const size = inline ? inline.byteLength : Number(body.size);
+  if (!Number.isFinite(size) || size <= 0) {
+    throw badRequest("'size' must be the file's size in bytes, or send the file as 'content_base64'");
+  }
+  if (inline && size > MAX_INLINE_BYTES) {
+    throw badRequest(
+      `'${name}' is ${(size / 1048576).toFixed(1)}MB, and an inline upload is limited to ` +
+        `${MAX_INLINE_BYTES / 1048576}MB. Send 'size' instead and PUT the bytes to the ` +
+        `upload_url that comes back — that path takes up to ${MAX_BYTES / 1048576}MB.`,
+    );
+  }
   if (size > MAX_BYTES) {
-    throw badRequest(`'${name}' is ${Math.round(size / 1048576)}MB — the limit is ${MAX_BYTES / 1048576}MB`);
+    throw badRequest(`'${name}' is ${(size / 1048576).toFixed(1)}MB — the limit is ${MAX_BYTES / 1048576}MB`);
   }
 
   const count = duty.attachment_count || 0;
@@ -87,14 +159,11 @@ export async function attachToDuty(ctx, body) {
     throw badRequest(`this duty already has ${count} attachments — the limit is ${MAX_ATTACHMENTS}`);
   }
 
-  const minted = await ctx.env.blob.uploadUrl(target, {
-    name,
-    size,
-    contentType,
-    public: false,
-    // Enough to trace an object back to what it belongs to without reading our datastore.
-    meta: { duty: duty.key, project: project.key },
-  });
+  // Enough to trace an object back to what it belongs to without reading our datastore.
+  const meta = { duty: duty.key, project: project.key };
+  const stored = inline
+    ? await ctx.env.blob.put(target, name, inline, { contentType, public: false, meta })
+    : await ctx.env.blob.uploadUrl(target, { name, size, contentType, public: false, meta });
 
   const now = Date.now();
   const id = attachmentId();
@@ -102,7 +171,7 @@ export async function attachToDuty(ctx, body) {
     duty_id: duty.key,
     project_id: project.key,
     owner_uid: project.owner_uid,
-    blob_id: minted.id,
+    blob_id: stored.id,
     name,
     content_type: contentType,
     size,
@@ -118,13 +187,18 @@ export async function attachToDuty(ctx, body) {
   ]);
   await ctx.publish(project.key, duty.key, { t: "duty", id: duty.key, status: duty.status });
 
+  // Inline: the bytes are already stored, so there is nothing for the caller to do next and
+  // no URL worth handing back — a signed download URL comes from /duty/attachments, minted
+  // per read, and one issued here would be stale before anyone looked at it.
+  if (inline) return { attachment_id: id, uploaded: true, name, size };
+
   return {
     attachment_id: id,
-    upload_url: minted.upload_url,
+    upload_url: stored.upload_url,
     method: "PUT",
     // Storage signed these in. Sending the bytes without them fails the signature check.
-    required_headers: minted.required_headers || { "content-type": contentType },
-    expires_at: minted.expires_at,
+    required_headers: stored.required_headers || { "content-type": contentType },
+    expires_at: stored.expires_at,
     size,
   };
 }
