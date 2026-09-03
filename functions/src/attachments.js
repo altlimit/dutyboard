@@ -167,14 +167,26 @@ export async function listAttachments(ctx, body) {
     }
   }
 
-  // Sweep what never arrived, and correct the count in the same breath — otherwise a
-  // closed tab leaves a duty permanently claiming an attachment nobody can open.
-  if (abandoned.length) {
-    const fresh = await ctx.store.get("duties", duty.key);
-    const next = Math.max(0, (fresh ? fresh.attachment_count || 0 : 0) - abandoned.length);
+  // Sweep what never arrived, and reconcile the count in the same breath.
+  //
+  // The count is set to what was actually just read, not decremented by what was swept.
+  // Two things drift it, in both directions: a closed tab leaves a duty claiming a file
+  // nobody can open, and two uploads landing together both read the same count and write
+  // the same +1, so a duty with two files says one. The rows are the truth; this is where
+  // the cached number is made to agree with them.
+  const trueCount = out.length;
+  const stale = await ctx.store.get("duties", duty.key);
+  const cached = stale ? stale.attachment_count || 0 : 0;
+  if (abandoned.length || cached !== trueCount) {
     await ctx.store.transaction([
       ...abandoned.map((key) => deleteOp("attachments", key)),
-      putOp("duties", duty.key, { ...stripMeta(fresh || duty), attachment_count: next, updated_at: fresh ? fresh.updated_at : duty.updated_at }),
+      putOp("duties", duty.key, {
+        ...stripMeta(stale || duty),
+        attachment_count: trueCount,
+        // Not a change anyone made — reconciliation must not push the duty to the top of a
+        // board ordered by updated_at.
+        updated_at: stale ? stale.updated_at : duty.updated_at,
+      }),
     ]);
   }
 

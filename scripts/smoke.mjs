@@ -323,6 +323,26 @@ async function main() {
   const counted = await dsGet("duties", later.duty_id, human);
   check("the duty counts it, so a poll need not ask", counted.attachment_count === 1, counted.attachment_count);
 
+  // Concurrent uploads all read the same count and all write the same +1, so the cached
+  // number under-counts. The rows are the truth and a read reconciles to them — a paperclip
+  // saying 1 next to three files is small, but it is the kind of small that never gets fixed
+  // unless something asserts it.
+  const three = await Promise.all(
+    [1, 2, 3].map((n) =>
+      call("/duty/attach", { duty_id: soon.duty_id, name: `c${n}.txt`, size: 5, content_type: "text/plain" }, human),
+    ),
+  );
+  for (const m of three) await fetch(m.upload_url, { method: "PUT", headers: m.required_headers, body: "hello" });
+  const drifted = await dsGet("duties", soon.duty_id, human);
+  const reconciled = await call("/duty/attachments", { duty_id: soon.duty_id }, human);
+  check("three concurrent uploads all land", (reconciled.attachments || []).length === 3, reconciled.attachments && reconciled.attachments.length);
+  const healed = await dsGet("duties", soon.duty_id, human);
+  check(
+    `and reading the duty reconciles its count (${drifted.attachment_count} → ${healed.attachment_count})`,
+    healed.attachment_count === 3,
+    { before: drifted.attachment_count, after: healed.attachment_count },
+  );
+
   const unattached = await call("/duty/attachment/delete", { attachment_id: mint.attachment_id }, human);
   check("removing it answers ok", unattached.ok === true, unattached);
   check("and the object is gone from storage", (await fetch(file.url)).status === 404, "still there");

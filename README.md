@@ -374,7 +374,9 @@ board, `400` naming the field and the values it accepts.
   and how big, signs a URL, and the client PUTs to storage directly — which is what makes a
   video attachment a video attachment rather than a 413. Objects are private; every read
   mints a URL that lasts minutes, for a caller just checked against the board. Twenty files
-  a duty, 50MB each.
+  a duty, 50MB each. The count cached on the duty row is a hint, not a ledger: uploads
+  landing together all read it and all write the same increment, so it can under-count until
+  something reads the duty, which reconciles it to the rows that actually exist.
 - A poll is one indexed query plus one or two point-reads. Briefs are clipped to 220
   characters in the queue listing; the full text comes with the claim.
 - Opening a board is three requests, whatever its size: `/board/open` for the name, the
