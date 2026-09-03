@@ -241,13 +241,17 @@ async function provisionHosted({ signup, access, indexes }) {
   const instances = await mcp("list_instances", {});
   const exists = (service, name) => (instances?.[service] || []).some((i) => i.name === name);
 
-  // The two the platform will not create from here. Reported together, at the end, as one
-  // list of things to do — not as a failure per missing instance.
+  // Anything the platform refuses to create ends up here and is reported together, at the
+  // end, as one list of things to do — not as a failure per missing instance.
+  //
+  // Auth and channel used to be a certainty: both mint a signing secret at creation and
+  // create_instance would not do it. Newer altengine will, so they are ATTEMPTED like the
+  // rest and only fall back to the console when the refusal actually comes.
   const manual = [];
-  if (!exists("auth", AUTH)) manual.push(["auth", AUTH]);
-  if (!exists("channel", CHANNEL)) manual.push(["channel", CHANNEL]);
 
   for (const [service, name] of [
+    ["auth", AUTH],
+    ["channel", CHANNEL],
     ["datastore", DS],
     ["functions", FN],
     ["blob", BLOB],
@@ -258,9 +262,24 @@ async function provisionHosted({ signup, access, indexes }) {
     }
     // ALREADY_EXISTS is not an error here: two people running this at once, or a name
     // taken between the listing and now, both mean the thing we wanted is in place.
+    let refused = "";
     await mcp("create_instance", { service, name }).catch((err) => {
-      if (!/already exists/i.test(err.toolError || err.message)) throw err;
+      const message = err.toolError || err.message || "";
+      if (/already exists/i.test(message)) return;
+      // "must be created in the console" is the older platform's answer for auth and
+      // channel. It is a thing for a person to do, not a reason to stop provisioning the
+      // rest — everything after this either does not need them or is checked separately.
+      if (/must be created in the console/i.test(message)) {
+        refused = message;
+        return;
+      }
+      throw err;
     });
+    if (refused) {
+      manual.push([service, name]);
+      console.log(`  ${service.padEnd(10)} ${name} — console only on this altengine`);
+      continue;
+    }
     console.log(`  ${service.padEnd(10)} ${name} — created`);
   }
 

@@ -41,73 +41,68 @@ nothing to configure afterwards. If you must use different ones, you have to set
 values on the functions instance, and that is a step this runbook does not cover.
 
 
-## Step 0 — the two instances you cannot create (your user, in the console)
-
-`create_instance` refuses `auth` and `channel`. They mint a signing secret at creation and
-the tool deliberately does not handle that. This is the one part you cannot do.
-
-Ask your user to open https://console.altengine.net and create:
-
-1. An **auth** instance named `dutyboard-auth`. On it:
-   - Sign-up fields: `email` (the identity field, required) and `name` (required).
-     `name` is not decoration — every duty, note and answer is stamped with its author's
-     name from the token's claims, and without the field they are all stamped blank.
-   - Allowed origins: `https://www.dutyboard.com`
-   - **Allow sign-up: OFF.** You will create their account yourself in step 6. Leaving it
-     on means anyone who finds the instance can open an account and spend their quota.
-2. A **channel** instance named `dutyboard-live`. No configuration.
-
-Wait for them to confirm both exist. `list_instances` will show them.
-
-
-## Step 1 — the three you can create
+## Step 1 — create the instances
 
 ```
+create_instance  service=auth       name=dutyboard-auth
+create_instance  service=channel    name=dutyboard-live
 create_instance  service=datastore  name=dutyboard
 create_instance  service=functions  name=dutyboard
 create_instance  service=blob       name=dutyboard-files
 ```
 
-**Note the `slug` from the functions response.** It is a random label, it is NOT the
-instance name, and it is what the function's public hostname is built from:
+If auth or channel come back refused with "must be created in the console", you are talking
+to an altengine that predates their being creatable from here. Ask your user to make those
+two in https://console.altengine.net — same names, no configuration — and carry on. Nothing
+else about this runbook changes.
+
+`ALREADY_EXISTS` means someone ran this before. Carry on; the instance you wanted is there.
+
+**Note the `slug` on the functions response.** It is a random label, it is NOT the instance
+name, and the function's public hostname is built from it:
 `https://<slug>-fn.altengine.app`. If you lose it, `list_instances service=functions`
 reports it too.
 
-`ALREADY_EXISTS` means someone ran this before. Carry on — the instance you wanted is
-there, and `list_instances` will tell you its slug.
+
+## Step 2 — the auth instance's sign-up form (your user, in the console)
+
+This is the one thing you cannot do. `patch_instance_config` refuses `auth`: its config is
+split across several independently-validated sections, and the tool will not merge them
+blindly. Creating the instance is yours; configuring it is not.
+
+Ask your user to open `dutyboard-auth` in https://console.altengine.net and set:
+
+- **Sign-up fields:** `email` (the identity field, required) and `name` (required).
+  `name` is not decoration — every duty, note and answer is stamped with its author's name
+  from the token's claims, and without the field they are all stamped blank. You also cannot
+  create their account in step 6 with a name the instance does not collect.
+- **Allowed origins:** `https://www.dutyboard.com`. Without this the console cannot call the
+  auth instance from a browser at all, and the failure says only "failed to fetch".
+- **Allow sign-up: OFF.** You create their account yourself in step 6, so the public route
+  is never needed. Leaving it on means anyone who finds the instance can open an account and
+  spend their quota.
+
+Wait for them to confirm before continuing — steps 4 and 6 both depend on it.
 
 
-## Step 2 — datastore settings
+## Step 3 — datastore settings
 
 ```
 patch_instance_config  service=datastore  instance=dutyboard
   changes={"autoId":"uuid","autoIndex":true}
 ```
 
-`autoIndex` on means a query nobody anticipated still runs instead of failing.
+**That is the whole of the datastore setup — do not create indexes.** A datastore query
+must be index-served, and `autoIndex` does not merely permit an uncovered one: the first
+query that needs an index creates it and retries, transparently, reporting it back under
+`auto_indexed`. On a datastore this new the collections are empty, so each build writes
+nothing and costs nothing. Declaring the ten indexes DutyBoard uses up front would be ten
+tool calls that buy exactly one thing: not paying for a backfill later. There is no data to
+backfill.
 
-
-## Step 3 — indexes
-
-Declared because the first call of each one is the one a person is waiting on. Field order
-is not interchangeable: equality filters first, then the field that sorts.
-
-```
-datastore_create_index  instance=dutyboard  collection=duties       fields=["project_id","status","prio_rank","created_at"]
-datastore_create_index  instance=dutyboard  collection=duties       fields=["owner_uid","project_id","status","updated_at:desc"]
-datastore_create_index  instance=dutyboard  collection=duties       fields=["owner_uid","project_id","updated_at:desc"]
-datastore_create_index  instance=dutyboard  collection=threads      fields=["duty_id","created_at"]
-datastore_create_index  instance=dutyboard  collection=threads      fields=["owner_uid","duty_id","created_at"]
-datastore_create_index  instance=dutyboard  collection=projects     fields=["owner_uid","created_at:desc"]
-datastore_create_index  instance=dutyboard  collection=tokens       fields=["project_id","created_at:desc"]
-datastore_create_index  instance=dutyboard  collection=attachments  fields=["duty_id","created_at"]
-datastore_create_index  instance=dutyboard  collection=attachments  fields=["project_id","created_at"]
-datastore_create_index  instance=dutyboard  collection=agents       fields=["owner_uid","project_id","last_seen_at:desc"]
-```
-
-The ones leading with `owner_uid` are the console's. Its queries carry an extra
-`owner_uid = $auth.uid` filter that the row rules in step 4 AND in server-side, so the
-index has to lead with it.
+(The declared list lives in `backend/indexes.json` in the repo, which is how the
+repo-based installer does it and the record of what the app asks the datastore for. It is
+documentation, not a prerequisite.)
 
 
 ## Step 4 — what a browser may read

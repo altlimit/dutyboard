@@ -170,19 +170,19 @@ export ALTENGINE_KEY=ak_…          # control access to instances + functions, 
 npm run provision -- --hosted
 ```
 
-That creates the datastore and functions instances, sets the datastore's config, declares
-the indexes, applies the access rules, sets the function's CORS origins, deploys the
-function, and builds `public/`.
+That creates the instances, sets the datastore's config, declares the indexes, applies the
+access rules, sets the function's CORS origins, deploys the function, and builds `public/`.
 
-Two things it cannot do, and says so instead of half-succeeding:
+One thing it cannot do, and says so instead of half-succeeding: **set the auth instance's
+sign-up form and allowed origins.** Auth config is split across four independently
+validated sections, and the platform refuses to merge them blindly from a tool call. Paste
+[`backend/signup.json`](backend/signup.json)'s fields and add the origin the console is
+served from.
 
-- **Create the auth and channel instances.** Both mint a signing secret at creation, which
-  is the service's to generate, so no API key can make one — they are console work
-  (`dutyboard-auth`, `dutyboard-live`).
-- **Set the auth instance's sign-up form and allowed origins.** Auth config is split across
-  four independently validated sections, and the platform refuses to merge them blindly
-  from a tool call. Paste [`backend/signup.json`](backend/signup.json)'s fields and add the
-  origin the console is served from.
+On older altengine it also could not CREATE the auth and channel instances — both mint a
+signing secret at creation, and `create_instance` would not do that. It tries now, and only
+reports them as console work if that refusal actually comes back, so the same command is
+right on both.
 
 Re-run it afterwards; it checks the instance as it actually is and reports only what is
 still missing.
@@ -199,12 +199,18 @@ CORS binds browsers, and nothing else.
 Everything above is also written for an agent to do, at
 [dutyboard.com/llms.txt](https://www.dutyboard.com/llms.txt). Give an assistant the
 altengine MCP (`https://api.altengine.net/mcp`) and that URL, and it provisions the rest:
-the three instances it is allowed to create, the datastore settings, all ten indexes, the
-access rules, the function and its grants and CORS, and your account.
+the instances, the datastore settings, the access rules, the function with its grants and
+CORS, and your account.
 
-You still create the auth and channel instances in the console — the same two, for the same
-reason. Then it hands back a link that fills the console's connection form with what it
-provisioned, so the last step is one click.
+The one step left with you is the auth instance's sign-up form and allowed origins, in the
+console — creating that instance is automatic, configuring it is not. Then the agent hands
+back a link that fills the console's connection form with what it provisioned, so the last
+step is one click.
+
+It does not declare indexes, and neither should you when starting from nothing. Auto-index
+is on: the first query needing one creates it and retries, and on an empty collection that
+build writes nothing. [`backend/indexes.json`](backend/indexes.json) stays the record of
+what the app asks the datastore for — worth reading, not worth running.
 
 The link fills the form; it does not save. A link that silently repointed a console would
 be a tidy way to put someone's sign-in form in front of an auth instance they do not own,
