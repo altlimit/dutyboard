@@ -39,8 +39,9 @@ import {
   listThread,
 } from "./duties.js";
 import { handleMcp } from "./mcp.js";
+import { VERSION } from "./version.js";
 
-const VERSION = "2.0.0";
+
 
 /** Instance names are configuration, not constants: the same bundle serves a hosted
  *  deployment and a local emulator whose instances are named differently. Set them as

@@ -21,7 +21,10 @@
 // should be off there (see README), and these accounts are made through the public
 // sign-up route.
 
+import { readFileSync } from "node:fs";
 import { ROUTE_PATHS } from "../functions/src/index.js";
+
+const PKG_VERSION = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version;
 
 const BASE = (process.env.ALTENGINE_URL || "http://127.0.0.1:9191").replace(/\/+$/, "");
 const FN = process.env.DUTYBOARD_FN_INSTANCE || "dutyboard";
@@ -94,6 +97,10 @@ async function main() {
 
   const health = await fetch(`${API}/health`).then((r) => r.json());
   check("health responds", health.ok === true, health);
+  // A version that lies is worse than no version: it is the first thing anyone reads when
+  // deciding whether a bug is already fixed. It was written out three times, twice as
+  // copies nobody would think to update at release.
+  check(`and reports the package version (${PKG_VERSION})`, health.version === PKG_VERSION, health);
 
   // --- a person, a board, and a token for an agent ------------------------
   const email = `smoke_${Date.now()}@example.test`;
@@ -387,6 +394,24 @@ async function main() {
     { expectStatus: true },
   );
   check("nor write to its thread", theirCheckpoint.status === 404, theirCheckpoint);
+
+  // --- what is actually deployed ------------------------------------------
+  //
+  // A version that lies is worse than no version: it is the first thing anyone reads when
+  // deciding whether a bug is already fixed. It used to be written out three times, twice
+  // as copies nobody would think to update at release, so this asserts the deployment
+  // agrees with package.json on both surfaces that report it.
+  const initialized = await rpc("initialize", {
+    protocolVersion: "2025-06-18",
+    capabilities: {},
+    clientInfo: { name: "smoke", version: "1" },
+  });
+  check("MCP serverInfo agrees with it", initialized.result.serverInfo.version === PKG_VERSION, initialized.result.serverInfo);
+  check(
+    "and the handshake carries the operating protocol",
+    /duty_poll/.test(initialized.result.instructions || "") && /duty_checkpoint/.test(initialized.result.instructions || ""),
+    (initialized.result.instructions || "").slice(0, 120),
+  );
 
   // --- the bounds that protect the bill -----------------------------------
   //

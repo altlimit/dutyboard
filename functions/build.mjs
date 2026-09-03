@@ -8,7 +8,7 @@
 // fails now, with a filename and a line number, instead of after a deploy.
 
 import { build } from "esbuild";
-import { mkdir, stat } from "node:fs/promises";
+import { mkdir, readFile, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -17,6 +17,9 @@ const outfile = join(here, "dist", "bundle.js");
 
 // The platform's own cap. Hitting it means a dependency crept in that should not have.
 const MAX_BYTES = 1024 * 1024;
+
+// package.json is the single source of the version; see functions/src/version.js.
+const pkg = JSON.parse(await readFile(join(here, "..", "package.json"), "utf8"));
 
 await mkdir(join(here, "dist"), { recursive: true });
 await build({
@@ -29,6 +32,7 @@ await build({
   target: "es2022",
   minify: false, // a readable stack in the error groups is worth more than the bytes
   legalComments: "none",
+  define: { __DUTYBOARD_VERSION__: JSON.stringify(pkg.version) },
 });
 
 const { size } = await stat(outfile);

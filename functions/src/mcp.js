@@ -19,9 +19,10 @@
 import { HttpError, json } from "./http.js";
 import { pollDuties, claimDuty, enqueueDuty, checkpointDuty, completeDuty, failDuty, listThread, PRIORITIES, THREAD_KINDS } from "./duties.js";
 import { attachToDuty, listAttachments, MAX_BYTES } from "./attachments.js";
+import { VERSION } from "./version.js";
 
 const PROTOCOL_VERSION = "2025-06-18";
-const SERVER_INFO = { name: "dutyboard", title: "DutyBoard", version: "2.0.0" };
+const SERVER_INFO = { name: "dutyboard", title: "DutyBoard", version: VERSION };
 
 /**
  * The operating protocol, handed to the model at `initialize`.
