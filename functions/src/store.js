@@ -66,6 +66,19 @@ export function makeStore(env, instance, namespace) {
       return { rows: (res.documents || []).map(flat), cursor: res.cursor || null };
     },
 
+    /**
+     * How many rows match, counted only as far as `cap`.
+     *
+     * Keys-only, so it never reads the data column, and bounded, so asking costs the same
+     * whether the true answer is `cap` or a million. That is the whole point: these counts
+     * exist to refuse writes that would grow a collection without bound, and a guard whose
+     * own cost grows without bound is not a guard.
+     */
+    async countAtMost(collection, where, cap) {
+      const { rows } = await store.query(collection, { where, keys_only: true, limit: cap });
+      return rows.length;
+    },
+
     async delete(collection, keys) {
       const res = await env.datastore.delete(target, collection, keys);
       return res.deleted;

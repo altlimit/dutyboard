@@ -3,7 +3,7 @@
 // A project's key IS its slug, because agents name it in configuration and a human has
 // to be able to type it. That makes creation a uniqueness check rather than an auto-id.
 
-import { conflict, forbidden, str, intIn } from "./http.js";
+import { badRequest, conflict, forbidden, str, intIn } from "./http.js";
 import { slugify } from "./ids.js";
 import { requireHuman, resolveProject } from "./identity.js";
 import { liveConfigured, mintLive } from "./live.js";
@@ -16,8 +16,21 @@ const SWEEP_PAGE = 200;
  *  not the thing that needs fixing. */
 const MAX_AGENTS = 10;
 
+/** Boards one person may own. High enough that nobody organising their work honestly will
+ *  meet it, low enough that a script in a loop stops somewhere. */
+const MAX_BOARDS = 100;
+
 export async function createProject(ctx, body) {
   const caller = requireHuman(ctx.caller);
+
+  const owned = await ctx.store.countAtMost(
+    "projects",
+    [{ field: "owner_uid", op: "=", value: caller.uid }],
+    MAX_BOARDS,
+  );
+  if (owned >= MAX_BOARDS) {
+    throw badRequest(`you already have ${MAX_BOARDS} boards, which is the limit — delete one to make another`);
+  }
   const name = str(body.name, "name", { required: true, max: 120 });
   const key = slugify(str(body.project_id ?? body.slug ?? name, "project_id", { max: 60 }));
   const now = Date.now();

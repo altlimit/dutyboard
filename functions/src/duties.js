@@ -51,6 +51,26 @@ const RANK = { immediate_blocker: 0, next: 1, backlog: 2 };
  */
 const agentEvent = (id, activeDutyId, at) => ({ id, active: activeDutyId || null, seen: at });
 
+/**
+ * Bounds that exist to protect the account's bill, not to express a product opinion.
+ *
+ * Everything on this board is written by software running unattended, and our own operating
+ * protocol tells an agent to enqueue whatever it finds rather than absorb it. That is right
+ * up until something loops, and then the only thing between a bad afternoon and a bad
+ * invoice is a number like these. They sit where a person has plainly already lost the
+ * board — nobody triages 500 open duties — so hitting one is a signal, not a limit anyone
+ * should be managing around.
+ *
+ * Each refusal names the number and what to do about it, because the caller is usually an
+ * agent and "quota exceeded" is not something it can act on.
+ */
+const MAX_OPEN_DUTIES = 500;
+const MAX_THREAD_ENTRIES = 200;
+
+/** Statuses that still need someone. A finished board may hold any number of duties; it is
+ *  the UNFINISHED pile that means work is being created faster than it is being done. */
+const UNFINISHED = ["queued", "active", "needs_decision", "blocked"];
+
 /** Terminal and near-terminal states an agent is no longer holding. */
 const FREES_AGENT = new Set(["needs_decision", "blocked", "done", "failed", "queued"]);
 
@@ -195,6 +215,24 @@ export async function claimDuty(ctx, body) {
  */
 export async function enqueueDuty(ctx, body) {
   const project = await resolveProject(ctx.caller, body.project_id, ctx.store);
+
+  // Counted before anything is written, so a loop is refused rather than recorded.
+  const open = await ctx.store.countAtMost(
+    "duties",
+    [
+      { field: "project_id", op: "=", value: project.key },
+      { field: "status", op: "in", value: UNFINISHED },
+    ],
+    MAX_OPEN_DUTIES,
+  );
+  if (open >= MAX_OPEN_DUTIES) {
+    throw badRequest(
+      `this board has ${MAX_OPEN_DUTIES} unfinished duties, which is the limit. Finish or ` +
+        `delete some before adding more. If you are an agent that has been enqueueing ` +
+        `repeatedly, stop and report that instead of retrying.`,
+    );
+  }
+
   const now = Date.now();
   const priority = oneOf(body.priority, "priority", PRIORITIES, "next");
   const agentId = agentIdFrom(ctx, body, { required: false });
@@ -290,6 +328,21 @@ export async function checkpointDuty(ctx, body) {
     metadata: options.length ? { suggested_options: options } : null,
     created_at: now,
   };
+  // One duty's thread is the other unbounded write path: an agent that checkpoints in a
+  // loop grows a single document set forever, and unlike duties nothing else ever prunes it.
+  const entries = await ctx.store.countAtMost(
+    "threads",
+    [{ field: "duty_id", op: "=", value: duty.key }],
+    MAX_THREAD_ENTRIES,
+  );
+  if (entries >= MAX_THREAD_ENTRIES) {
+    throw badRequest(
+      `duty '${duty.key}' already has ${MAX_THREAD_ENTRIES} thread entries, which is the ` +
+        `limit. A duty needing this much discussion should be finished, failed, or split ` +
+        `into smaller ones with /duty/enqueue.`,
+    );
+  }
+
   const ops = [putOp("threads", entryKey, entry)];
 
   let state = duty.status;

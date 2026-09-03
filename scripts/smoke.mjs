@@ -372,6 +372,28 @@ async function main() {
   );
   check("nor write to its thread", theirCheckpoint.status === 404, theirCheckpoint);
 
+  // --- the bounds that protect the bill -----------------------------------
+  //
+  // These exist because agents write here unattended and our own protocol tells them to
+  // enqueue what they find. A cap nobody has ever seen fire is a comment, not a guard, so
+  // one of them is driven to its limit for real. The thread cap is the cheapest to reach;
+  // it exercises the same countAtMost path all four use.
+  const capDuty = (await call("/duty/enqueue", { project_id: projectId, title: "cap probe", brief: "drive the thread cap" }, human)).duty_id;
+  const capStart = Date.now();
+  for (let i = 0; i < 200; i++) {
+    await call("/duty/checkpoint", { duty_id: capDuty, kind: "note", message: `note ${i}` }, human);
+  }
+  const overCap = await call("/duty/checkpoint", { duty_id: capDuty, kind: "note", message: "one too many" }, human, {
+    expectStatus: true,
+  });
+  check(`a thread stops growing at its limit (200 in ${Date.now() - capStart}ms)`, overCap.status === 400, overCap);
+  check("and the refusal says what to do instead", /limit/.test(JSON.stringify(overCap.json)) && /split/.test(JSON.stringify(overCap.json)), overCap.json);
+
+  // The duty itself is untouched — a full thread must not make a duty unfinishable.
+  const stillWorks = await call("/duty/update", { duty_id: capDuty, title: "cap probe (renamed)" }, human, { expectStatus: true });
+  check("a duty with a full thread can still be worked", stillWorks.status === 200, stillWorks);
+  await call("/duty/delete", { duty_id: capDuty, confirm: capDuty }, human);
+
   // --- every endpoint, against a caller who owns none of it ----------------
   //
   // DERIVED from the function's own route table, not from a list here: a new endpoint with

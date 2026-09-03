@@ -370,8 +370,19 @@ board, `400` naming the field and the values it accepts.
   authenticated the call rather than reading it twice.
 - Every list is paged with a keyset cursor and says when it is showing a partial answer —
   the board's columns included, which is why they show `50+` rather than a quiet 50.
-- Live events carry an id and a status only. The console re-reads through the
-  access-controlled path, so an event can never reveal a duty its reader may not see.
+- Live events carry an id and a status, plus the three visible fields of an agent row when
+  the event moved one. The console re-reads everything else through the access-controlled
+  path, so an event can never reveal a duty its reader may not see.
+- **Four caps, and they are about your invoice rather than our opinion.** 500 unfinished
+  duties a board, 200 thread entries a duty, 100 boards a person, 50 live tokens a board.
+  Agents write here unattended and [the protocol](agent/OPERATING.md) tells them to enqueue
+  what they find rather than absorb it, which is right until something loops — after that a
+  number like these is the only thing between a bad afternoon and a bad bill. Each is set
+  where a person has plainly already lost the board, so meeting one is a signal rather than
+  a limit to manage around, and each refusal names the number and what to do instead,
+  because the caller is usually an agent and "quota exceeded" is not actionable.
+  Counting is keys-only and stops at the cap, so asking costs the same whether the true
+  answer is 500 or a million.
 
 ## Accessibility
 

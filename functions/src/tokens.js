@@ -7,14 +7,27 @@
 // The hash is safe to show its owner (it is not reversible), which is what lets the
 // console list and revoke tokens by id without the platform ever holding the secret.
 
-import { notFound, forbidden, str, intIn } from "./http.js";
+import { badRequest, notFound, forbidden, str, intIn } from "./http.js";
 import { mintToken, sha256Hex } from "./ids.js";
 import { requireHuman, resolveProject } from "./identity.js";
 
 /** `POST /tokens/mint` — returns the one and only copy of the token. */
+/** Live tokens per board. A token is a credential; a board accumulating hundreds of them
+ *  is a board nobody is revoking, which is the state this is meant to make visible. */
+const MAX_TOKENS = 50;
+
 export async function createToken(ctx, body) {
   const caller = requireHuman(ctx.caller);
   const project = await resolveProject(ctx.caller, body.project_id, ctx.store);
+
+  const existing = await ctx.store.countAtMost(
+    "tokens",
+    [{ field: "project_id", op: "=", value: project.key }],
+    MAX_TOKENS,
+  );
+  if (existing >= MAX_TOKENS) {
+    throw badRequest(`this board has ${MAX_TOKENS} agent tokens, which is the limit — revoke some before minting more`);
+  }
   const name = str(body.name, "name", { required: true, max: 80 });
   const defaultAgentId = str(body.default_agent_id, "default_agent_id", { max: 64, fallback: "" });
   const now = Date.now();
