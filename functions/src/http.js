@@ -20,6 +20,18 @@ export const forbidden = (msg) => new HttpError(403, "PERMISSION_DENIED", msg ||
 export const notFound = (msg) => new HttpError(404, "NOT_FOUND", msg || "not found");
 /** The single-active-duty invariant and every other "the board moved under you" case. */
 export const conflict = (msg, details) => new HttpError(409, "CONFLICT", msg, details);
+export const tooLarge = (msg) => new HttpError(413, "PAYLOAD_TOO_LARGE", msg);
+
+/**
+ * The biggest body any endpoint here legitimately needs.
+ *
+ * Every field is capped individually — a brief is 4000 characters, a message 4000, eight
+ * options of 200 — so nothing honest comes near this. It exists because `request.text()`
+ * buffers whatever arrives into the isolate's memory before any of those caps can look at
+ * it, and file bytes deliberately do not come through this function at all: an upload is a
+ * signed URL the client PUTs to directly, so there is no legitimate large body to allow for.
+ */
+const MAX_BODY_BYTES = 256 * 1024;
 
 export function json(body, status = 200, headers = {}) {
   return new Response(JSON.stringify(body), {
@@ -47,7 +59,17 @@ export function errorResponse(err, requestId) {
 
 /** Parse a JSON body, tolerating an empty one (a POST with no payload is a valid call). */
 export async function readJson(request) {
+  // Checked before reading, when the header is there — refusing after buffering 100MB is
+  // not much of a refusal. The length is re-checked below because content-length can lie
+  // or be absent on a chunked request.
+  const declared = Number(request.headers.get("content-length"));
+  if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) {
+    throw tooLarge(`body is ${Math.round(declared / 1024)}KB — the limit is ${MAX_BODY_BYTES / 1024}KB`);
+  }
   const text = await request.text();
+  if (text.length > MAX_BODY_BYTES) {
+    throw tooLarge(`body is ${Math.round(text.length / 1024)}KB — the limit is ${MAX_BODY_BYTES / 1024}KB`);
+  }
   if (!text) return {};
   try {
     return JSON.parse(text);

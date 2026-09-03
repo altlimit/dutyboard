@@ -489,6 +489,17 @@ async function main() {
     (initialized.result.instructions || "").slice(0, 120),
   );
 
+  // A body no endpoint here has a legitimate use for. Every field is capped individually,
+  // but request.text() buffers whatever arrives before any of those caps can look at it —
+  // and file bytes deliberately never come through this function, so there is no large body
+  // to allow for.
+  const huge = await fetch(`${API}/duty/enqueue`, {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${human}` },
+    body: JSON.stringify({ project_id: projectId, title: "x".repeat(400000), brief: "y" }),
+  });
+  check("an oversized body is refused before it is parsed", huge.status === 413, huge.status);
+
   // --- the bounds that protect the bill -----------------------------------
   //
   // These exist because agents write here unattended and our own protocol tells them to
