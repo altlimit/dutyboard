@@ -11,6 +11,8 @@
 //
 // It creates a throwaway project and deletes it at the end.
 
+import { ROUTE_PATHS } from "../functions/src/index.js";
+
 const BASE = (process.env.ALTENGINE_URL || "http://127.0.0.1:9191").replace(/\/+$/, "");
 const FN = process.env.DUTYBOARD_FN_INSTANCE || "dutyboard";
 const DS = process.env.DUTYBOARD_DATASTORE || "dutyboard";
@@ -370,6 +372,85 @@ async function main() {
   );
   check("nor write to its thread", theirCheckpoint.status === 404, theirCheckpoint);
 
+  // --- every endpoint, against a caller who owns none of it ----------------
+  //
+  // DERIVED from the function's own route table, not from a list here: a new endpoint with
+  // no entry below fails this suite before it can ship without an ownership check. That is
+  // exactly how /duty/thread went out — it loaded a duty by id and returned its whole
+  // decision log to anyone who asked, and nothing forced the question to be asked again for
+  // each new route.
+  //
+  // Two strangers, because they fail differently and both must. A signed-in person who owns
+  // no part of this board, and an agent token minted on a DIFFERENT board — the second is
+  // the one that matters most, since an agent token is the credential most likely to leak
+  // into a log or a repo.
+  //
+  // EVERY duty-scoped probe gets a FRESH duty. Sharing one target makes the suite lie: the
+  // first version of this shared a duty, /duty/delete ran before /duty/thread, and a
+  // successful delete turned the next probe's leak into an honest 404. A test that hides a
+  // hole because an earlier hole fired first is worse than no test.
+  const freshDuty = async () =>
+    (await call("/duty/enqueue", { project_id: projectId, title: "outsider target", brief: "a duty to probe against" }, human))
+      .duty_id;
+
+  const outsiderArgs = {
+    "/duty/poll": () => ({ project_id: projectId }),
+    "/duty/claim": (d) => ({ duty_id: d }),
+    "/duty/enqueue": () => ({ project_id: projectId, title: "no", brief: "no" }),
+    "/duty/checkpoint": (d) => ({ duty_id: d, message: "no" }),
+    "/duty/complete": (d) => ({ duty_id: d, outcome_summary: "no" }),
+    "/duty/fail": (d) => ({ duty_id: d, reason: "no" }),
+    "/duty/resolve": (d) => ({ duty_id: d, answer: "no" }),
+    "/duty/update": (d) => ({ duty_id: d, title: "no" }),
+    "/duty/delete": (d) => ({ duty_id: d, confirm: d }),
+    "/duty/thread": (d) => ({ duty_id: d }),
+    "/duty/attach": (d) => ({ duty_id: d, name: "x.png", size: 10, content_type: "image/png" }),
+    "/duty/attachments": (d) => ({ duty_id: d }),
+    "/duty/attachment/delete": () => ({ attachment_id: "att_nope" }),
+    "/board/open": () => ({ project_id: projectId }),
+    "/projects/rename": () => ({ project_id: projectId, name: "mine now" }),
+    "/projects/delete": () => ({ project_id: projectId, confirm: projectId }),
+    "/tokens/mint": () => ({ project_id: projectId, name: "no" }),
+    "/tokens/list": () => ({ project_id: projectId }),
+    "/tokens/revoke": () => ({ project_id: projectId, token_id: "tok_nope" }),
+    "/live/token": () => ({ project_id: projectId }),
+    // These two take no target: they act on whoever is calling. An outsider calling them
+    // gets their OWN empty world, which is correct rather than a leak — so they are
+    // excluded deliberately, and named here so the exclusion is a decision on the record.
+    "/projects/create": null,
+    "/projects/list": null,
+  };
+
+  const uncovered = ROUTE_PATHS.filter((p) => !(p in outsiderArgs));
+  check(`every route is in the cross-tenant matrix${uncovered.length ? ` (missing: ${uncovered.join(", ")})` : ""}`, uncovered.length === 0);
+
+  // An agent token on a board of their own — the realistic leaked-credential case.
+  const otherProject = `smoke-outsider-${Date.now()}`;
+  await call("/projects/create", { name: "Outsider board", project_id: otherProject }, other.id_token);
+  const otherAgent = (await call("/tokens/mint", { project_id: otherProject, name: "outsider" }, other.id_token)).token;
+
+  const leaks = [];
+  let probes = 0;
+  for (const path of ROUTE_PATHS) {
+    const build = outsiderArgs[path];
+    if (!build) continue;
+    for (const [who, token] of [["a stranger", other.id_token], ["another board's agent", otherAgent]]) {
+      const res = await call(path, build(await freshDuty()), token, { expectStatus: true });
+      probes++;
+      // 401/403/404 are all correct refusals; which one is a separate design question
+      // (404 where naming a thing would confirm it exists). Anything below 400 is a leak.
+      if (res.status < 400) leaks.push(`${path} answered ${res.status} to ${who}`);
+    }
+  }
+  check(`no endpoint answers a caller who owns nothing here (${probes} probes)${leaks.length ? `: ${leaks.join("; ")}` : ""}`, leaks.length === 0);
+
+  // The board must still be here: every one of those probes was supposed to be refused,
+  // and /projects/delete was among them.
+  const survived = await call("/board/open", { project_id: projectId }, human, { expectStatus: true });
+  check("the board survived every probe", survived.status === 200, survived.status);
+
+  await call("/projects/delete", { project_id: otherProject, confirm: otherProject }, other.id_token);
+
   // --- revocation ---------------------------------------------------------
   const tokenList = await call("/tokens/list", { project_id: projectId }, human);
   check("the console can list tokens", tokenList.tokens.length === 1, tokenList);
@@ -383,8 +464,11 @@ async function main() {
   const wrongConfirm = await call("/projects/delete", { project_id: projectId, confirm: "nope" }, human, { expectStatus: true });
   check("deleting a board needs the id repeated", wrongConfirm.status === 403, wrongConfirm);
 
+  // Three from the walk above, plus one target per cross-tenant probe. Derived rather than
+  // a constant, so the sweep is asserted against what was actually created.
+  const expectedDuties = 3 + probes;
   const removed = await call("/projects/delete", { project_id: projectId, confirm: projectId }, human);
-  check("the board and its rows are swept", removed.removed.duties === 3, removed.removed);
+  check(`the board and its rows are swept (${expectedDuties} duties)`, removed.removed.duties === expectedDuties, removed.removed);
 
   console.log(`\n${failures.length ? "✖" : "✔"} ${passed} passed, ${failures.length} failed`);
   if (failures.length) {

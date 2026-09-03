@@ -83,6 +83,17 @@ const ROUTES = {
 };
 
 /**
+ * Every path this function answers, exported so a test can be DERIVED from the real table
+ * rather than from a list someone has to remember to update.
+ *
+ * The cross-tenant matrix in scripts/smoke.mjs reads this: a route added without an entry
+ * there fails the suite. That is not hypothetical caution — `/duty/thread` shipped with no
+ * ownership check at all and was found by hand, months later, because nothing forced the
+ * question to be asked for each new endpoint.
+ */
+export const ROUTE_PATHS = Object.keys(ROUTES);
+
+/**
  * The path below this function, in both deployments.
  *
  * Hosted, the function name is the first segment (`/board/duty/poll`). Locally there are
