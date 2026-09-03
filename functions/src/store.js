@@ -8,6 +8,10 @@
 
 import { notFound } from "./http.js";
 
+/** Per-isolate memo for ensureUniqueIndex. Keyed by collection+fields, so it survives
+ *  across requests on the same isolate and costs one call per cold start. */
+const ensured = new Map();
+
 export function makeStore(env, instance, namespace) {
   if (!env.datastore) {
     throw new Error("this function has no datastore grant — deploy it with --grants datastore:<instance>=full");
@@ -87,6 +91,34 @@ export function makeStore(env, instance, namespace) {
     /** Atomic multi-collection write — the reason this service is a function at all. */
     async transaction(operations) {
       return env.datastore.transaction(target, operations);
+    },
+
+    /**
+     * Make sure a UNIQUE index exists, once per isolate.
+     *
+     * Auto-indexing creates what a query needs, and what a query needs is never unique — so
+     * an index that exists to REFUSE writes has to be asked for. Doing it here rather than
+     * at provisioning time means an install that predates the constraint gains it on its
+     * next claim, and the runbook does not grow a step whose omission is invisible.
+     *
+     * Returns whether the index is in place, so /health can report it: a constraint that is
+     * silently absent is worse than one that was never claimed to exist.
+     */
+    async ensureUniqueIndex(collection, fields) {
+      const memo = `${collection}:${fields.join(",")}`;
+      if (ensured.has(memo)) return ensured.get(memo);
+      const ok = await env.datastore
+        .createIndex(target, collection, fields, true)
+        .then(() => true)
+        .catch((err) => {
+          // Already there is the common case and is success. Anything else is not: it means
+          // the constraint is NOT enforced, and the caller has to be able to say so.
+          if (/already exists|ALREADY_EXISTS/i.test(String(err && err.message))) return true;
+          console.log(`could not create unique index ${memo}:`, err && err.message);
+          return false;
+        });
+      ensured.set(memo, ok);
+      return ok;
     },
   };
   return store;

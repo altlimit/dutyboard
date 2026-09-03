@@ -141,6 +141,9 @@ export default {
       // the blob instance, it only ever asks this function for an upload URL. The name is
       // deliberately not reported; whether it exists is the useful half.
       const cfg = configure(env);
+      // Memoised per isolate (see store.ensureUniqueIndex), so a monitor polling this every
+      // minute costs one datastore call per cold start and nothing after.
+      const health = makeStore(env, cfg.datastoreInstance, cfg.datastoreNamespace);
       return json({
         ok: true,
         service: "dutyboard",
@@ -149,6 +152,10 @@ export default {
         // where it is deployed, which is exactly what routePath above exists to absorb.
         mcp: "/mcp",
         attachments: !!(env.blob && cfg.blobInstance),
+        // Whether the constraint that stops two agents holding one duty is actually in
+        // place. It is created on demand, so it can fail — and a mutex that is silently
+        // absent is worse than one nobody claimed to have.
+        single_holder: await health.ensureUniqueIndex("agents", ["active_duty_id"]).catch(() => false),
       });
     }
 

@@ -64,7 +64,7 @@ function indexPairs(indexes) {
   const out = [];
   for (const [collection, specs] of Object.entries(indexes)) {
     if (collection.startsWith("_")) continue;
-    for (const spec of specs) out.push([collection, spec.fields]);
+    for (const spec of specs) out.push([collection, spec.fields, spec.unique === true]);
   }
   return out;
 }
@@ -146,8 +146,8 @@ async function provisionLocal({ signup, access, indexes }) {
   });
 
   let created = 0;
-  for (const [collection, fields] of indexPairs(indexes)) {
-    await req("POST", `/admin/datastore/${dsId}/namespaces/_default/collections/${collection}/indexes`, { fields });
+  for (const [collection, fields, unique] of indexPairs(indexes)) {
+    await req("POST", `/admin/datastore/${dsId}/namespaces/_default/collections/${collection}/indexes`, { fields, unique });
     created++;
   }
 
@@ -292,9 +292,10 @@ async function provisionHosted({ signup, access, indexes }) {
   // Indexes have no MCP-shaped ceremony: the data plane takes them directly, and creating
   // one that already exists is a no-op rather than a conflict.
   let created = 0;
-  for (const [collection, fields] of indexPairs(indexes)) {
+  for (const [collection, fields, unique] of indexPairs(indexes)) {
     await v1("POST", `/v1/datastore/${encodeURIComponent(DS)}/ns/_default/col/${encodeURIComponent(collection)}/indexes`, {
       fields,
+      unique,
     });
     created++;
   }

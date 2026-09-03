@@ -152,7 +152,7 @@ taskr "Start All"
 | `npm run build` | Both, into `public/`. |
 | `npm run preview` | Serves `public/` as a static host would, rewrite included, on :4173. |
 | `npm run demo` | Fills a board with a plausible afternoon's work, and prints the sign-in. |
-| `npm run smoke` | 55 assertions over the whole state machine. |
+| `npm run smoke` | The whole state machine end to end, plus a cross-tenant matrix over every endpoint. |
 
 `altengine dev` is the *only* altengine CLI command involved: there is no `altengine apply`
 or `altengine deploy`. Provisioning is HTTP — the emulator's admin API locally, the MCP
@@ -333,10 +333,19 @@ board, `400` naming the field and the values it accepts.
 
 ## The rules the state machine actually enforces
 
-- **One active duty per agent.** A second `claim` is a `409` that names the duty to finish
-  first. The claim is guarded by the agent row *and* confirmed by a read-back, so two
-  agents racing for the same duty end with one of them told it lost — not both believing
-  they won.
+- **One active duty per agent, and one agent per duty.** A second `claim` by the same agent
+  is a `409` naming the duty to finish first — that one is a plain read of the agent row.
+  The other direction is the hard one, and it is enforced by the datastore: a **unique
+  index on `agents.active_duty_id`**, so the second agent to write the same duty id has its
+  whole claim transaction refused and the duty is never modified. Nulls do not collide,
+  which is what makes it usable — any number of agents may be idle.
+
+  This replaced a compare-after-write (claim, then re-read and check you are the one
+  named), which could not work and did not: both claimers wrote, then both read, and
+  whichever read before the other wrote saw itself and walked away believing it had won.
+  Measured at **two in ten** contended claims won twice. `/health` reports `single_holder`
+  so a deployment can say whether the constraint is actually in place, and the smoke suite
+  races three agents for one duty five times over.
 - **Anything that stops being the agent's problem frees the agent, in the same
   transaction.** Parked for a decision, blocked behind a child, finished. Otherwise an
   agent that asked a question would sit idle waiting for an answer, which is the failure

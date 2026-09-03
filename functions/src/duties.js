@@ -182,19 +182,35 @@ export async function claimDuty(ctx, body) {
     });
   }
 
-  const claimed = { ...stripMeta(duty), status: "active", assigned_agent_id: agentId, updated_at: now };
-  await ctx.store.transaction([
-    putOp("duties", duty.key, claimed),
-    putOp("agents", aKey, { ...stripMeta(agent), active_duty_id: duty.key, last_seen_at: now }),
-  ]);
+  // The mutex. A unique index on agents.active_duty_id means two agents cannot both hold
+  // one duty: the second transaction to write that value is refused by the datastore, and
+  // the whole transaction fails, so the duty is not modified either.
+  //
+  // This replaced a compare-after-write, which could not work and did not. Both claimers
+  // wrote, then both read back — and whoever read before the other wrote saw itself and
+  // walked away believing it had won. Two agents in ten got the same duty, measured, which
+  // is the exact failure that check was written to prevent.
+  //
+  // Nulls do not collide, which is what makes this usable: every idle agent has
+  // active_duty_id null, and any number of them may.
+  await ctx.store.ensureUniqueIndex("agents", ["active_duty_id"]);
 
-  // Compare-after-write. Two agents can read `queued` in the same instant; only one of
-  // them is named on the row afterwards, and the other must not walk away thinking it won.
-  const after = await ctx.store.get("duties", duty.key);
-  if (!after || after.assigned_agent_id !== agentId || after.status !== "active") {
-    throw conflict(`duty '${duty.key}' was claimed by another agent`, {
-      assigned_agent_id: after ? after.assigned_agent_id : null,
-    });
+  const claimed = { ...stripMeta(duty), status: "active", assigned_agent_id: agentId, updated_at: now };
+  try {
+    await ctx.store.transaction([
+      putOp("duties", duty.key, claimed),
+      putOp("agents", aKey, { ...stripMeta(agent), active_duty_id: duty.key, last_seen_at: now }),
+    ]);
+  } catch (err) {
+    if (isUniqueViolation(err)) {
+      // Someone else got there first. The duty row was never written — the transaction is
+      // atomic — so there is nothing to undo and nothing for this agent to clean up.
+      const holder = await ctx.store.get("duties", duty.key);
+      throw conflict(`duty '${duty.key}' was claimed by another agent`, {
+        assigned_agent_id: holder ? holder.assigned_agent_id || null : null,
+      });
+    }
+    throw err;
   }
 
   await ctx.publish(project.key, duty.key, {
@@ -203,7 +219,9 @@ export async function claimDuty(ctx, body) {
     status: "active",
     ag: agentEvent(agentId, duty.key, now),
   });
-  return { status: "active", duty_id: duty.key, duty: briefOf(after, { full: true }) };
+  // `claimed` is the row that was just written, minus the envelope stripMeta removed — so
+  // the key comes back from the duty it was built from rather than a re-read.
+  return { status: "active", duty_id: duty.key, duty: briefOf({ ...claimed, key: duty.key }, { full: true }) };
 }
 
 /**
@@ -578,6 +596,13 @@ async function unblockParent(ctx, duty, now, ops) {
     }),
   );
   return parent.key;
+}
+
+/** The datastore's answer when a unique index refuses a write. Matched on both the code and
+ *  the message because this arrives across an RPC boundary and only one of them may survive. */
+function isUniqueViolation(err) {
+  const code = err && (err.code || (err.cause && err.cause.code));
+  return code === "ALREADY_EXISTS" || /unique constraint/i.test(String((err && err.message) || ""));
 }
 
 function agentIdFrom(ctx, body, { required }) {

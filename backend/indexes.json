@@ -33,6 +33,11 @@
     { "fields": ["project_id", "created_at"], "for": "the function: sweeping a board's files when it is deleted" }
   ],
   "agents": [
-    { "fields": ["owner_uid", "project_id", "last_seen_at:desc"], "for": "console: which agents are working this board" }
+    { "fields": ["owner_uid", "project_id", "last_seen_at:desc"], "for": "console: which agents are working this board" },
+    {
+      "fields": ["active_duty_id"],
+      "unique": true,
+      "for": "THE MUTEX, not a query. Two agents cannot both hold one duty because the datastore refuses the second write of the same active_duty_id, which fails that whole claim transaction and leaves the duty untouched. Nulls do not collide, so any number of agents may be idle. The function creates this on demand too (see store.ensureUniqueIndex) — auto-indexing would never make it, because what a query needs is never unique."
+    }
   ]
 }

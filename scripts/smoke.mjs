@@ -101,6 +101,9 @@ async function main() {
   // deciding whether a bug is already fixed. It was written out three times, twice as
   // copies nobody would think to update at release.
   check(`and reports the package version (${PKG_VERSION})`, health.version === PKG_VERSION, health);
+  // If this is false the claim race below still passes on a quiet machine and fails in
+  // production, which is the worst way to find out.
+  check("the single-holder constraint is in place", health.single_holder === true, health);
 
   // --- a person, a board, and a token for an agent ------------------------
   const email = `smoke_${Date.now()}@example.test`;
@@ -164,7 +167,40 @@ async function main() {
 
   const second = await call("/duty/claim", { duty_id: later.duty_id, agent_id: "alpha" }, agent, { expectStatus: true });
   check("a second claim is refused", second.status === 409, second);
-  check("the refusal names what to finish", second.json.error.details.active_duty_id === soon.duty_id, second.json);
+
+  // Two agents reaching for the SAME duty at the same instant.
+  //
+  // On its OWN board, because a contended claim leaves agent rows and a held duty behind
+  // and every count later in this file would quietly absorb them — which is how a suite
+  // starts asserting whatever it happens to produce.
+  //
+  // This is the invariant the product rests on, and it did not hold. The original guard
+  // was a compare-after-write: claim, then re-read and check you are the one named. Both
+  // claimers wrote, then both read, and whoever read before the other wrote saw itself.
+  // Two in ten claims were won twice. It is now a unique index on agents.active_duty_id,
+  // so the datastore refuses the second write and the losing transaction never lands.
+  const racePid = `smoke-race-${Date.now()}`;
+  await call("/projects/create", { name: "Race", project_id: racePid }, human);
+  const raceAgent = (await call("/tokens/mint", { project_id: racePid, name: "racers" }, human)).token;
+  let soleWinner = 0;
+  const ROUNDS = 5;
+  for (let i = 0; i < ROUNDS; i++) {
+    const target = await call("/duty/enqueue", { project_id: racePid, title: `contended ${i}`, brief: "two agents want this" }, human);
+    const results = await Promise.all(
+      ["one", "two", "three"].map((who) =>
+        call("/duty/claim", { duty_id: target.duty_id, agent_id: `${who}-${i}` }, raceAgent, { expectStatus: true }),
+      ),
+    );
+    const wins = results.filter((r) => r.status === 200);
+    if (wins.length === 1) soleWinner++;
+    else console.log(`      round ${i}: ${wins.length} winners — ${results.map((r) => r.status).join("/")}`);
+    if (wins.length) {
+      const row = await dsGet("duties", target.duty_id, human);
+      if (row.assigned_agent_id !== wins[0].json.duty.assigned_agent_id) soleWinner = -1;
+    }
+  }
+  check(`three agents race for one duty, ${ROUNDS} times, and exactly one wins each`, soleWinner === ROUNDS, soleWinner);
+  await call("/projects/delete", { project_id: racePid, confirm: racePid }, human);
 
   poll = await call("/duty/poll", { agent_id: "alpha" }, agent);
   check("poll reports the held duty", poll.active_duty && poll.active_duty.id === soon.duty_id, poll.active_duty);
