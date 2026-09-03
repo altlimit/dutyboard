@@ -1,5 +1,5 @@
 import { createRouter, createWebHashHistory } from "vue-router";
-import { isSignedIn } from "./lib/altengine.js";
+import { isSignedIn, onSessionChange } from "./lib/altengine.js";
 
 const routes = [
   { path: "/", name: "boards", component: () => import("./views/Boards.vue"), meta: { title: "Your boards" } },
@@ -28,6 +28,21 @@ router.beforeEach((to) => {
   if (!to.meta.public && !isSignedIn()) return { name: "signin", query: { next: to.fullPath } };
   if (to.name === "signin" && isSignedIn()) return { name: "boards" };
   return true;
+});
+
+/**
+ * A session that ends while the app is open sends you to sign in.
+ *
+ * The guard above only runs on navigation, and a session does not end on a navigation — it
+ * ends when a refresh fails, mid-page, with the board already on screen. Without this the
+ * app stayed exactly where it was, every call failing, and the way out was to notice the
+ * sign-out button. `next` is kept so signing back in returns to the same board.
+ */
+onSessionChange((s) => {
+  if (s.idToken) return;
+  const current = router.currentRoute.value;
+  if (current.meta.public) return;
+  router.replace({ name: "signin", query: { next: current.fullPath } });
 });
 
 // A route change in a single-page app is a navigation to a screen reader only if the

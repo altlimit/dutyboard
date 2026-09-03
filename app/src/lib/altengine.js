@@ -101,18 +101,43 @@ async function raw(method, url, { body, bearer, headers } = {}) {
   return res.json();
 }
 
-/** An authenticated request that transparently refreshes the id_token once on a 401. */
+/**
+ * An authenticated request that transparently refreshes the id_token once on a 401.
+ *
+ * If the REFRESH fails, the session is over — the refresh token has expired, been revoked,
+ * or the auth instance no longer knows it. Clearing it here is the whole point: the token
+ * left behind is dead, but `isSignedIn()` only asks whether one exists, so the app went on
+ * believing it was signed in and failed every call with a different confusing message, with
+ * no way out but finding the sign-out button. Clearing notifies, and the app navigates.
+ */
 async function authed(method, url, opts = {}) {
   if (!session.idToken) throw new ApiError({ code: "UNAUTHENTICATED", message: "sign in first", status: 401 });
   try {
     return await raw(method, url, { ...opts, bearer: session.idToken });
   } catch (err) {
     if (err instanceof ApiError && err.status === 401 && session.refreshToken) {
-      await refresh();
+      try {
+        await refresh();
+      } catch {
+        clearSession();
+        throw new ApiError({
+          code: "UNAUTHENTICATED",
+          message: "Your session expired. Sign in again.",
+          status: 401,
+        });
+      }
       return raw(method, url, { ...opts, bearer: session.idToken });
     }
     throw err;
   }
+}
+
+/** Forget the session locally. No network call: this is used when the credential is
+ *  already known to be dead, and telling the server to revoke it would only fail. */
+function clearSession() {
+  session = { idToken: null, refreshToken: null, user: null };
+  saveSession(session);
+  notify();
 }
 
 // --- auth -----------------------------------------------------------------
@@ -164,9 +189,7 @@ export async function refresh() {
 
 export async function signOut() {
   const rt = session.refreshToken;
-  session = { idToken: null, refreshToken: null, user: null };
-  saveSession(session);
-  notify();
+  clearSession();
   if (rt) {
     try {
       await raw("POST", `${authBase()}/signout`, { body: { refresh_token: rt } });
