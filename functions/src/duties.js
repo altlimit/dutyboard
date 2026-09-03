@@ -71,6 +71,21 @@ const MAX_THREAD_ENTRIES = 200;
  *  the UNFINISHED pile that means work is being created faster than it is being done. */
 const UNFINISHED = ["queued", "active", "needs_decision", "blocked"];
 
+/**
+ * Who is holding this duty, as a value the datastore can refuse a duplicate of.
+ *
+ * A unique index on `duties.holder` is what stops ONE agent holding TWO duties — the
+ * mirror of the constraint on agents.active_duty_id, and it needs its own because the two
+ * failures are different writes. The board id is in the value because agent ids are only
+ * unique within a board: `alpha` on two boards is two agents, and a bare id would have
+ * them locking each other out.
+ *
+ * Null while the duty is not active, and null does not collide — so any number of duties
+ * may be unheld. `assigned_agent_id` is left alone by all of this: it outlives the claim,
+ * because "last worked by alpha" is worth showing on a finished duty.
+ */
+const holderKey = (projectKey, agentId) => `${projectKey}:${agentId}`;
+
 /** Terminal and near-terminal states an agent is no longer holding. */
 const FREES_AGENT = new Set(["needs_decision", "blocked", "done", "failed", "queued"]);
 
@@ -193,9 +208,18 @@ export async function claimDuty(ctx, body) {
   //
   // Nulls do not collide, which is what makes this usable: every idle agent has
   // active_duty_id null, and any number of them may.
-  await ctx.store.ensureUniqueIndex("agents", ["active_duty_id"]);
+  await Promise.all([
+    ctx.store.ensureUniqueIndex("agents", ["active_duty_id"]),
+    ctx.store.ensureUniqueIndex("duties", ["holder"]),
+  ]);
 
-  const claimed = { ...stripMeta(duty), status: "active", assigned_agent_id: agentId, updated_at: now };
+  const claimed = {
+    ...stripMeta(duty),
+    status: "active",
+    assigned_agent_id: agentId,
+    holder: holderKey(project.key, agentId),
+    updated_at: now,
+  };
   try {
     await ctx.store.transaction([
       putOp("duties", duty.key, claimed),
@@ -203,11 +227,20 @@ export async function claimDuty(ctx, body) {
     ]);
   } catch (err) {
     if (isUniqueViolation(err)) {
-      // Someone else got there first. The duty row was never written — the transaction is
-      // atomic — so there is nothing to undo and nothing for this agent to clean up.
-      const holder = await ctx.store.get("duties", duty.key);
+      // One of the two constraints refused it, and which one is worth saying: either
+      // somebody else took this duty, or this agent already holds another. Re-read to find
+      // out. Nothing was written — the transaction is atomic — so there is nothing to undo.
+      const [now2, mine] = await Promise.all([
+        ctx.store.get("duties", duty.key),
+        ctx.store.get("agents", aKey),
+      ]);
+      if (mine && mine.active_duty_id && mine.active_duty_id !== duty.key) {
+        throw conflict(`agent '${agentId}' already holds duty '${mine.active_duty_id}'`, {
+          active_duty_id: mine.active_duty_id,
+        });
+      }
       throw conflict(`duty '${duty.key}' was claimed by another agent`, {
-        assigned_agent_id: holder ? holder.assigned_agent_id || null : null,
+        assigned_agent_id: now2 ? now2.assigned_agent_id || null : null,
       });
     }
     throw err;
@@ -286,7 +319,7 @@ export async function enqueueDuty(ctx, body) {
       const held = await ctx.store.get("duties", agent.active_duty_id);
       if (held && held.status === "active") {
         duty.parent_id = duty.parent_id || held.key;
-        ops.push(putOp("duties", held.key, { ...stripMeta(held), status: "blocked", blocked_by: id, updated_at: now }));
+        ops.push(putOp("duties", held.key, { ...stripMeta(held), status: "blocked", blocked_by: id, holder: null, updated_at: now }));
         ops.push(putOp("agents", aKey, { ...stripMeta(agent), active_duty_id: null, last_seen_at: now }));
         blocked = held.key;
       }
@@ -367,7 +400,9 @@ export async function checkpointDuty(ctx, body) {
   let freed = null; // set when this checkpoint releases the agent, for the live payload
   if (setStatus && setStatus !== duty.status) {
     state = setStatus;
+    // Leaving `active` releases the holder slot, in the same write that changes the status.
     const next = { ...stripMeta(duty), status: setStatus, updated_at: now };
+    if (setStatus !== "active") next.holder = null;
     if (setStatus === "needs_decision") {
       next.last_question = options.length ? `${message} Options: ${options.join(" / ")}` : message;
       next.last_resolution = null;
@@ -421,7 +456,7 @@ async function finishDuty(ctx, body, terminal) {
   }
 
   const ops = [
-    putOp("duties", duty.key, { ...stripMeta(duty), status: terminal, outcome_summary: summary, updated_at: now }),
+    putOp("duties", duty.key, { ...stripMeta(duty), status: terminal, outcome_summary: summary, holder: null, updated_at: now }),
     putOp("threads", threadId(), {
       duty_id: duty.key,
       project_id: project.key,
@@ -497,6 +532,7 @@ export async function resolveDuty(ctx, body) {
       prio_rank: RANK.immediate_blocker,
       last_resolution: text,
       resolved_at: now,
+      holder: null,
       updated_at: now,
     }),
   ];
@@ -522,7 +558,10 @@ export async function updateDuty(ctx, body) {
   }
   if (body.status != null) {
     next.status = oneOf(body.status, "status", STATUSES);
-    if (next.status !== "active") next.assigned_agent_id = null;
+    if (next.status !== "active") {
+      next.assigned_agent_id = null;
+      next.holder = null;
+    }
   }
 
   const ops = [putOp("duties", duty.key, next)];
@@ -592,6 +631,7 @@ async function unblockParent(ctx, duty, now, ops) {
       priority: "immediate_blocker",
       prio_rank: RANK.immediate_blocker,
       blocked_by: null,
+      holder: null,
       updated_at: now,
     }),
   );

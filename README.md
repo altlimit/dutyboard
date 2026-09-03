@@ -333,19 +333,25 @@ board, `400` naming the field and the values it accepts.
 
 ## The rules the state machine actually enforces
 
-- **One active duty per agent, and one agent per duty.** A second `claim` by the same agent
-  is a `409` naming the duty to finish first — that one is a plain read of the agent row.
-  The other direction is the hard one, and it is enforced by the datastore: a **unique
-  index on `agents.active_duty_id`**, so the second agent to write the same duty id has its
-  whole claim transaction refused and the duty is never modified. Nulls do not collide,
-  which is what makes it usable — any number of agents may be idle.
+- **One active duty per agent, and one agent per duty.** Both directions, and neither is a
+  read-then-check — they are **two unique indexes**, so the datastore refuses the losing
+  write and its whole claim transaction fails with the duty untouched:
 
-  This replaced a compare-after-write (claim, then re-read and check you are the one
-  named), which could not work and did not: both claimers wrote, then both read, and
-  whichever read before the other wrote saw itself and walked away believing it had won.
-  Measured at **two in ten** contended claims won twice. `/health` reports `single_holder`
-  so a deployment can say whether the constraint is actually in place, and the smoke suite
-  races three agents for one duty five times over.
+  | constraint | stops |
+  |---|---|
+  | `agents.active_duty_id` unique | two agents holding one duty |
+  | `duties.holder` unique (`<board>:<agent>` while active, else null) | one agent holding two duties |
+
+  Nulls do not collide, which is the property that makes this work at all: every idle agent
+  and every unheld duty is null, and any number of them may be.
+
+  This replaced a compare-after-write — claim, then re-read and check you are the one named
+  — which could not work and did not. Both claimers write, then both read, and whichever
+  reads before the other writes sees itself and walks away believing it won. Measured:
+  **two in ten** contended claims won twice, and **fourteen in fifteen** for the mirror case
+  where one agent claimed two duties at once. `/health` reports `single_holder`, because a
+  constraint that is silently missing is worse than one nobody claimed to have, and the
+  smoke suite races both directions on a board of its own.
 - **Anything that stops being the agent's problem frees the agent, in the same
   transaction.** Parked for a decision, blocked behind a child, finished. Otherwise an
   agent that asked a question would sit idle waiting for an answer, which is the failure

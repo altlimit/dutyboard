@@ -200,6 +200,26 @@ async function main() {
     }
   }
   check(`three agents race for one duty, ${ROUNDS} times, and exactly one wins each`, soleWinner === ROUNDS, soleWinner);
+
+  // The mirror, which was far worse: ONE agent claiming TWO duties at the same instant.
+  // The unique index on agents.active_duty_id does not catch it — two different duty ids
+  // are two different values — so it needs its own constraint on duties.holder. Before
+  // that, fourteen rounds in fifteen left one agent holding two duties.
+  let heldTwo = 0;
+  for (let i = 0; i < ROUNDS; i++) {
+    const [x, y] = await Promise.all([
+      call("/duty/enqueue", { project_id: racePid, title: `X${i}`, brief: "one" }, human),
+      call("/duty/enqueue", { project_id: racePid, title: `Y${i}`, brief: "two" }, human),
+    ]);
+    const both = await Promise.all([
+      call("/duty/claim", { duty_id: x.duty_id, agent_id: "greedy" }, raceAgent, { expectStatus: true }),
+      call("/duty/claim", { duty_id: y.duty_id, agent_id: "greedy" }, raceAgent, { expectStatus: true }),
+    ]);
+    if (both.filter((r) => r.status === 200).length > 1) heldTwo++;
+    for (const d of [x, y]) await call("/duty/update", { duty_id: d.duty_id, status: "queued" }, human);
+  }
+  check("one agent cannot win two duties at once", heldTwo === 0, `${heldTwo}/${ROUNDS} rounds held two`);
+
   await call("/projects/delete", { project_id: racePid, confirm: racePid }, human);
 
   poll = await call("/duty/poll", { agent_id: "alpha" }, agent);

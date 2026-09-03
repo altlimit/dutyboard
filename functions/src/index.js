@@ -155,7 +155,12 @@ export default {
         // Whether the constraint that stops two agents holding one duty is actually in
         // place. It is created on demand, so it can fail — and a mutex that is silently
         // absent is worse than one nobody claimed to have.
-        single_holder: await health.ensureUniqueIndex("agents", ["active_duty_id"]).catch(() => false),
+        single_holder: await Promise.all([
+          health.ensureUniqueIndex("agents", ["active_duty_id"]),
+          health.ensureUniqueIndex("duties", ["holder"]),
+        ])
+          .then((r) => r.every(Boolean))
+          .catch(() => false),
       });
     }
 
