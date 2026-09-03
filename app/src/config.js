@@ -27,6 +27,10 @@ export const DEFAULTS = Object.freeze({
   channel: env.channel,
   functions: env.functions,
   fn: env.fn,
+  // Usually empty: the function's URL is derived from the two fields above. It is a field
+  // at all because hosted, a functions instance answers on a MINTED subdomain that need
+  // not match its name, and then deriving it is guesswork.
+  api: env.api,
 });
 
 const OVERRIDE_PREFIX = "dutyboard.cfg.";
@@ -98,6 +102,9 @@ function apiUrl() {
 
 export const config = {
   baseUrl,
+  /** The raw override, NOT the resolved URL — the connect form has to be able to show an
+   *  empty box when nobody pinned one, or saving the form would pin the derived value. */
+  apiOverride: override("api") || env.api,
   auth: override("auth") || env.auth,
   datastore: override("datastore") || env.datastore,
   channel: override("channel") || env.channel,

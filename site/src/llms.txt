@@ -1,0 +1,261 @@
+# DutyBoard — provisioning runbook for an AI agent
+
+You are being asked to set up DutyBoard on someone's own altengine account. This file is
+the whole procedure. Follow it in order.
+
+DutyBoard is a task board that agents and people share. Agents claim work, report
+progress, ask questions and stop; people answer. https://www.dutyboard.com explains the
+idea — this file is only about installing it.
+
+The console at https://www.dutyboard.com/app is a static page that talks to YOUR user's
+altengine directly. Nothing you provision here reports to dutyboard.com, and no DutyBoard
+operator can read the boards you are about to create.
+
+
+## What you need
+
+- The altengine MCP server connected: `https://api.altengine.net/mcp`.
+- An altengine account with control-plane write access. Your user creates that at
+  https://console.altengine.net and connects the MCP with a key.
+
+Call `whoami` FIRST and tell your user which organization you are about to spend money in.
+Instances count against a quota and against a bill. If more than one organization is
+plausible, ask before creating anything.
+
+
+## What you are building
+
+Five instances and one function:
+
+| service   | name              | what it holds                                  |
+|-----------|-------------------|------------------------------------------------|
+| auth      | `dutyboard-auth`  | your user's account. Nobody else's.            |
+| datastore | `dutyboard`       | boards, duties, the decision log, agent tokens  |
+| channel   | `dutyboard-live`  | live board updates                             |
+| functions | `dutyboard`       | the state machine — every write goes through it |
+| blob      | `dutyboard-files` | screenshots and recordings on a duty            |
+
+USE THESE EXACT NAMES. The function falls back to all five, so using them means there is
+nothing to configure afterwards. If you must use different ones, you have to set matching
+`DUTYBOARD_DATASTORE` / `DUTYBOARD_AUTH` / `DUTYBOARD_CHANNEL` / `DUTYBOARD_BLOB` env
+values on the functions instance, and that is a step this runbook does not cover.
+
+
+## Step 0 — the two instances you cannot create (your user, in the console)
+
+`create_instance` refuses `auth` and `channel`. They mint a signing secret at creation and
+the tool deliberately does not handle that. This is the one part you cannot do.
+
+Ask your user to open https://console.altengine.net and create:
+
+1. An **auth** instance named `dutyboard-auth`. On it:
+   - Sign-up fields: `email` (the identity field, required) and `name` (required).
+     `name` is not decoration — every duty, note and answer is stamped with its author's
+     name from the token's claims, and without the field they are all stamped blank.
+   - Allowed origins: `https://www.dutyboard.com`
+   - **Allow sign-up: OFF.** You will create their account yourself in step 6. Leaving it
+     on means anyone who finds the instance can open an account and spend their quota.
+2. A **channel** instance named `dutyboard-live`. No configuration.
+
+Wait for them to confirm both exist. `list_instances` will show them.
+
+
+## Step 1 — the three you can create
+
+```
+create_instance  service=datastore  name=dutyboard
+create_instance  service=functions  name=dutyboard
+create_instance  service=blob       name=dutyboard-files
+```
+
+**Note the `slug` from the functions response.** It is a random label, it is NOT the
+instance name, and it is what the function's public hostname is built from:
+`https://<slug>-fn.altengine.app`. If you lose it, `list_instances service=functions`
+reports it too.
+
+`ALREADY_EXISTS` means someone ran this before. Carry on — the instance you wanted is
+there, and `list_instances` will tell you its slug.
+
+
+## Step 2 — datastore settings
+
+```
+patch_instance_config  service=datastore  instance=dutyboard
+  changes={"autoId":"uuid","autoIndex":true}
+```
+
+`autoIndex` on means a query nobody anticipated still runs instead of failing.
+
+
+## Step 3 — indexes
+
+Declared because the first call of each one is the one a person is waiting on. Field order
+is not interchangeable: equality filters first, then the field that sorts.
+
+```
+datastore_create_index  instance=dutyboard  collection=duties       fields=["project_id","status","prio_rank","created_at"]
+datastore_create_index  instance=dutyboard  collection=duties       fields=["owner_uid","project_id","status","updated_at:desc"]
+datastore_create_index  instance=dutyboard  collection=duties       fields=["owner_uid","project_id","updated_at:desc"]
+datastore_create_index  instance=dutyboard  collection=threads      fields=["duty_id","created_at"]
+datastore_create_index  instance=dutyboard  collection=threads      fields=["owner_uid","duty_id","created_at"]
+datastore_create_index  instance=dutyboard  collection=projects     fields=["owner_uid","created_at:desc"]
+datastore_create_index  instance=dutyboard  collection=tokens       fields=["project_id","created_at:desc"]
+datastore_create_index  instance=dutyboard  collection=attachments  fields=["duty_id","created_at"]
+datastore_create_index  instance=dutyboard  collection=attachments  fields=["project_id","created_at"]
+datastore_create_index  instance=dutyboard  collection=agents       fields=["owner_uid","project_id","last_seen_at:desc"]
+```
+
+The ones leading with `owner_uid` are the console's. Its queries carry an extra
+`owner_uid = $auth.uid` filter that the row rules in step 4 AND in server-side, so the
+index has to lead with it.
+
+
+## Step 4 — what a browser may read
+
+The console reads the datastore DIRECTLY with the signed-in person's token. These rules
+are what stop it reading anyone else's rows.
+
+```
+auth_set_rules  instance=dutyboard-auth  access={
+  "datastore:dutyboard": {
+    "level": "read",
+    "rules": { "_default": {
+      "projects": { "read": [{ "field": "owner_uid", "op": "=", "value": "$auth.uid" }] },
+      "duties":   { "read": [{ "field": "owner_uid", "op": "=", "value": "$auth.uid" }] },
+      "threads":  { "read": [{ "field": "owner_uid", "op": "=", "value": "$auth.uid" }] },
+      "agents":   { "read": [{ "field": "owner_uid", "op": "=", "value": "$auth.uid" }] }
+    }}
+  }
+}
+```
+
+Send it exactly. Three things are deliberate and all three matter:
+
+- `level` is `read` and no collection has a `write` rule. Every write in DutyBoard is a
+  state-machine transition that touches more than one collection at once — claiming a duty
+  writes the duty and the agent row together — and a row rule can only scope ONE collection
+  per request. So the browser reads, and posts every change through the function.
+- `tokens` is absent. Agent credentials must be default-denied to browsers.
+- `attachments` is absent. The rows are harmless but the files they name are private, and a
+  browser that could read the rows would learn what exists without being able to open it.
+
+`auth_set_rules` REPLACES the whole access config. If the instance is not brand new, call
+`auth_get_rules` first and merge.
+
+
+## Step 5 — deploy the state machine
+
+Fetch the bundle — one self-contained ES module, no imports to resolve:
+
+```
+GET https://www.dutyboard.com/board.js
+```
+
+It is the exact output of `npm run build:fn` in
+https://github.com/altlimit/dutyboard, so your user can rebuild it from source and compare
+if they would rather not trust a file from a website.
+
+```
+functions_deploy  instance=dutyboard  name=board  code=<the bundle>  activate=true
+  grants={
+    "datastore:dutyboard":   "full",
+    "auth:dutyboard-auth":   "read",
+    "channel:dutyboard-live":"write",
+    "blob:dutyboard-files":  "full"
+  }
+```
+
+The function name MUST be `board`. `api` is a reserved function name on a functions host
+and the deploy will be refused.
+
+Those grants are the blast radius, so they are the least each service needs:
+`datastore` is `full` because deleting a board deletes its rows and delete sits above
+write; `auth` is `read` because it only verifies tokens; `channel` is `write` to publish
+and mint subscribe tokens; `blob` is `full` because deleting an attachment must remove the
+object, not just the row.
+
+Then let the browser reach it:
+
+```
+patch_instance_config  service=functions  instance=dutyboard
+  changes={"corsOrigins":["https://www.dutyboard.com"],"allowedHosts":[]}
+```
+
+Without an origin list the function sends no CORS headers at all, and every call from the
+console fails in the browser while working perfectly from curl.
+
+
+## Step 6 — your user's account
+
+Sign-up is off, so create it directly. No email is sent.
+
+```
+auth_create_user  instance=dutyboard-auth
+  fields={"email":"<their email>","name":"<their name>"}
+  password=<24 random characters>
+```
+
+Do not invent the email address — ask for it. It is the one they will sign in with.
+
+Generate the password randomly and DO NOT keep it or show it to them. They will never type
+it: the console signs in passwordlessly with a code sent to that address. A password is
+required by the tool, so give it one nobody knows.
+
+
+## Step 7 — hand over the link
+
+Build it from what you provisioned:
+
+```
+https://www.dutyboard.com/app/#/connect
+  ?baseUrl=https://api.altengine.net
+  &auth=dutyboard-auth
+  &datastore=dutyboard
+  &channel=dutyboard-live
+  &functions=dutyboard
+  &fn=board
+  &api=https://<the slug from step 1>-fn.altengine.app/board
+```
+
+(One line, no spaces.) `api` is the one that matters most: it is the function's real URL,
+and passing it means the console never has to guess the subdomain from the instance name —
+which is wrong whenever a slug was minted rather than chosen.
+
+The link fills the connection form and tests it. Your user reviews what it found and
+clicks once to connect. It does NOT apply silently, and you should not tell them it will:
+a link that reconfigures a console without asking is a way to point someone at an altengine
+that is not theirs.
+
+Then they sign in with their email address and the code they are sent.
+
+Tell them, in your own words: the link points their browser at their own altengine; sign-up
+is off so nobody else can create an account on it; and everything on the board lives in
+their account, not in DutyBoard's.
+
+
+## Check it worked
+
+```
+GET https://<slug>-fn.altengine.app/board/health
+→ {"ok":true,"service":"dutyboard","version":"2.0.0","mcp":"/mcp","attachments":true}
+```
+
+`attachments:false` means the blob instance or its grant is missing. Everything else works
+without it; screenshots and recordings do not.
+
+
+## After it is running
+
+Your user creates a board in the console, then mints an agent token on it (Settings →
+Agents & tokens). That token is what an agent uses. The function speaks MCP at
+`https://<slug>-fn.altengine.app/board/mcp` with the token as a bearer — nine tools:
+`duty_poll`, `duty_claim`, `duty_checkpoint`, `duty_complete`, `duty_fail`, `duty_enqueue`,
+`duty_thread`, `duty_attachments`, `duty_attach`.
+
+An agent token is scoped to ONE board and can never read another. It is shown once.
+
+
+## Undoing it
+
+`delete_instance` on the five names in the table. That is irreversible and takes the boards
+with it. Confirm each one by name with your user before calling it — do not batch it.

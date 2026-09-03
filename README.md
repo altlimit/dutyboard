@@ -181,11 +181,39 @@ Two things it cannot do, and says so instead of half-succeeding:
   (`dutyboard-auth`, `dutyboard-live`).
 - **Set the auth instance's sign-up form and allowed origins.** Auth config is split across
   four independently validated sections, and the platform refuses to merge them blindly
-  from a tool call. Paste [`backend/signup.json`](backend/signup.json)'s fields, add the
-  origin the console is served from, and leave sign-up open.
+  from a tool call. Paste [`backend/signup.json`](backend/signup.json)'s fields and add the
+  origin the console is served from.
 
 Re-run it afterwards; it checks the instance as it actually is and reports only what is
 still missing.
+
+**On sign-up, decide before you finish.** `allowSignup` is on by default, which is what you
+want for exactly as long as it takes to create your own account — after that it is an open
+door onto your quota. Either turn it off in the console once you have signed up, or leave
+it off from the start and create your account with the MCP's `auth_create_user`, which
+sends no email and does not need the public route. Allowed origins are not a substitute:
+CORS binds browsers, and nothing else.
+
+### Letting an agent install it
+
+Everything above is also written for an agent to do, at
+[dutyboard.com/llms.txt](https://www.dutyboard.com/llms.txt). Give an assistant the
+altengine MCP (`https://api.altengine.net/mcp`) and that URL, and it provisions the rest:
+the three instances it is allowed to create, the datastore settings, all ten indexes, the
+access rules, the function and its grants and CORS, and your account.
+
+You still create the auth and channel instances in the console — the same two, for the same
+reason. Then it hands back a link that fills the console's connection form with what it
+provisioned, so the last step is one click.
+
+The link fills the form; it does not save. A link that silently repointed a console would
+be a tidy way to put someone's sign-in form in front of an auth instance they do not own,
+and "click here to see the board" is how that would arrive.
+
+The function bundle it deploys is served from
+[dutyboard.com/board.js](https://www.dutyboard.com/board.js) — one self-contained ES module,
+byte-identical to `npm run build:fn` from this repo. That is a supply-chain position, so it
+is worth knowing you can rebuild it and compare rather than take it on trust.
 
 ### You do not have to serve the console
 

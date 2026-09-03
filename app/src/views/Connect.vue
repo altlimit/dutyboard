@@ -10,7 +10,10 @@
 // instance being configured here.
 
 import { onMounted, ref } from "vue";
+import { useRoute } from "vue-router";
 import { config, DEFAULTS, clearOverrides, saveOverrides } from "../config.js";
+
+const route = useRoute();
 
 const form = ref({
   baseUrl: config.baseUrl,
@@ -19,7 +22,31 @@ const form = ref({
   channel: config.channel,
   functions: config.functions,
   fn: config.fn,
+  api: config.apiOverride,
 });
+
+/**
+ * A link can fill this in — that is how an agent hands the board over after provisioning
+ * (see /llms.txt). Every field is a name or a URL, and none of them is a secret.
+ *
+ * It FILLS the form. It does not save. A link that silently repointed someone's console
+ * would be a neat way to put their sign-in form in front of an auth instance they do not
+ * own, and "click this to see the board" is exactly how that would arrive. So the values
+ * are shown, tested, and applied by a person who can see what they say yes to.
+ */
+const fromLink = ref(false);
+function readLink() {
+  const q = route.query || {};
+  let any = false;
+  for (const key of Object.keys(form.value)) {
+    const value = q[key];
+    if (typeof value === "string" && value.trim()) {
+      form.value[key] = value.trim();
+      any = true;
+    }
+  }
+  fromLink.value = any;
+}
 
 const checking = ref(false);
 const result = ref(null);
@@ -30,6 +57,10 @@ const isDefault = () =>
 /** Where the function would be reached, given what is in the form. Shown because it is
  *  derived rather than typed, and a surprise here is the whole failure. */
 function apiPreview() {
+  // An explicit URL wins, and hosted it is the only reliable answer: a functions instance
+  // is served from a MINTED subdomain, so `<instance>-fn` is right only when someone chose
+  // a slug matching the name. list_instances reports the real one.
+  if (form.value.api) return form.value.api.replace(/\/+$/, "");
   const base = form.value.baseUrl.replace(/\/+$/, "");
   const local = /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(:|\/|$)/.test(base);
   return local ? `${base}/fn/${form.value.functions}/${form.value.fn}` : `https://${form.value.functions}-fn.altengine.app/${form.value.fn}`;
@@ -98,7 +129,10 @@ function reset() {
   location.reload();
 }
 
-onMounted(check);
+onMounted(() => {
+  readLink();
+  check();
+});
 </script>
 
 <template>
@@ -110,6 +144,11 @@ onMounted(check);
         directly — your boards, duties and agent tokens live in your own instances, and
         nothing about them reaches whoever served you this page.
       </p>
+    </div>
+
+    <div v-if="fromLink" class="notice" role="status">
+      <strong>These came from your link.</strong> Nothing has been saved yet — check that the
+      names below are the ones your agent provisioned, then choose <em>Save and reload</em>.
     </div>
 
     <form class="panel panel--form stack" @submit.prevent="save">
@@ -150,6 +189,17 @@ onMounted(check);
           The state machine will be called at <code>{{ apiPreview() }}</code>. There is no field
           here for the blob instance that stores attachments: this page never names it — it asks
           the function for an upload URL and sends the file to whatever it gets back.
+        </p>
+      </div>
+
+      <div class="field">
+        <label for="c-api">Function URL <span class="muted">(optional)</span></label>
+        <input id="c-api" v-model="form.api" inputmode="url" placeholder="https://abc123-fn.altengine.app/board" />
+        <p class="hint">
+          Overrides the address above. Hosted, a functions instance answers on a subdomain that
+          is generated, not named after it — so if the two do not match, this is where the real
+          URL goes. <code class="mono">list_instances</code> reports it as the instance's
+          <code class="mono">slug</code>.
         </p>
       </div>
 

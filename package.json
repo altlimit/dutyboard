@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "vite",
     "dev:site": "sitegen -serve",
-    "build": "npm run build:site && npm run build:app",
+    "build": "npm run build:site && npm run build:app && npm run build:bundle",
     "build:site": "sitegen -minify -clean",
     "build:app": "vite build",
     "build:fn": "node functions/build.mjs",
@@ -16,7 +16,8 @@
     "deploy": "npm run build:fn && node scripts/deploy.mjs",
     "demo": "node scripts/demo.mjs",
     "preview": "node scripts/serve.mjs",
-    "smoke": "node scripts/smoke.mjs"
+    "smoke": "node scripts/smoke.mjs",
+    "build:bundle": "npm run build:fn && node scripts/publish-bundle.mjs"
   },
   "dependencies": {
     "vue": "^3.5.13",
