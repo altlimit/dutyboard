@@ -254,6 +254,15 @@ Agents & tokens). That token is what an agent uses. The function speaks MCP at
 
 An agent token is scoped to ONE board and can never read another. It is shown once.
 
+The connection tells an agent how to behave: the operating protocol comes back in the MCP
+`initialize` response, so a client that surfaces server instructions needs nothing else.
+Not every client does. The same protocol is at https://www.dutyboard.com/agent.md — give it
+to an agent directly, or paste it into a CLAUDE.md or AGENTS.md, if yours does not.
+
+The one thing worth reading yourself: an agent that hits a question does NOT wait. It parks
+the duty, records the question, and claims other work. Answering is not urgent because
+nothing is idle while you think.
+
 
 ## Undoing it
 

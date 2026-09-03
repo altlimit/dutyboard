@@ -23,6 +23,36 @@ import { attachToDuty, listAttachments, MAX_BYTES } from "./attachments.js";
 const PROTOCOL_VERSION = "2025-06-18";
 const SERVER_INFO = { name: "dutyboard", title: "DutyBoard", version: "2.0.0" };
 
+/**
+ * The operating protocol, handed to the model at `initialize`.
+ *
+ * This is the one place the whole loop can be stated to an agent with no setup on its
+ * side — no file to add, no system prompt to edit. Clients that surface server
+ * instructions put it in front of the model automatically. Not all of them do, which is
+ * why the same protocol is also a file: agent/OPERATING.md in the repo, served at
+ * https://www.dutyboard.com/agent.md for anything that would rather be given a URL.
+ *
+ * Keep it a PROTOCOL, not a tour. Each tool already describes itself in tools/list; what
+ * cannot be said there is when to reach for which, and what never to do — the two things
+ * an agent gets wrong in ways nobody notices until a board is full of half-finished work.
+ */
+const INSTRUCTIONS = `DutyBoard holds your work, the decisions made about it, and the record of what was done — across sessions, and across whatever runs out of context first. Synchronise with it at every boundary. Local execution (edits, tests, commands) is yours to manage alone.
+
+STARTING, AND WHENEVER YOU ARE BETWEEN THINGS
+Call duty_poll before doing anything you were not explicitly asked to do. If it reports an active duty, that is yours already — resume it from its brief and its last checkpoint rather than starting over. Otherwise duty_claim the first runnable duty; the queue is ordered, so do not shop through it. If nothing is runnable, say so and stop.
+
+WHAT YOU FIND ALONG THE WAY
+Do not widen the duty you are on. A discovery that blocks it: duty_enqueue with priority 'immediate_blocker' and spawned_by set to the duty you are holding — yours parks behind it, you claim the new one, and finishing it returns the parent to the front of the queue on its own. A discovery that does not block it: duty_enqueue with 'next' or 'backlog', then carry on with what you were doing.
+
+WHEN YOU DO NOT KNOW
+An ambiguity in the brief, a choice with consequences you cannot take back, a credential you do not have: duty_checkpoint with set_status 'needs_decision', the actual question in message, and suggested_options whenever the answer is a choice between things you can name. THEN POLL AND CLAIM SOMETHING ELSE. Do not wait for the answer, do not guess and continue, and do not ask in your own output and hope someone reads it — a question that is not on the board does not exist. You cannot answer your own question; only a person can.
+
+FINISHING
+Nothing is done because you believe it is done. Verify it, then duty_complete with an outcome_summary saying what changed and where — "Added GitHub OAuth via net/http; session verification in middleware/auth.go", not "completed the auth task". It is the only thing that survives your session. Then poll again. Use duty_fail only for work that genuinely cannot be done; anything a person could unblock is a needs_decision.
+
+SHOWING RATHER THAN DESCRIBING
+duty_attach puts a file on a duty — a screenshot of what you built, a recording of the failure, the log that explains it. duty_attachments reads what is there, including what a person attached for you; if a duty has attachments, look at them before asking about it.`;
+
 const s = (description, extra = {}) => ({ type: "string", description, ...extra });
 
 const TOOLS = [
@@ -197,8 +227,7 @@ async function dispatch(ctx, msg) {
         protocolVersion: PROTOCOL_VERSION,
         capabilities: { tools: { listChanged: false } },
         serverInfo: SERVER_INFO,
-        instructions:
-          "DutyBoard coordinates long-running work between agents and the people who own it. Loop: duty_poll, duty_claim the top runnable duty, work, then duty_complete with a real summary. When you hit an ambiguity or need something only a human can give you, duty_checkpoint with set_status 'needs_decision' and immediately claim the next duty instead of waiting. Report discovered work with duty_enqueue rather than silently widening the duty you are on.",
+        instructions: INSTRUCTIONS,
       });
     case "notifications/initialized":
     case "notifications/cancelled":

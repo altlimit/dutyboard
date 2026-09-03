@@ -29,3 +29,11 @@ try {
 mkdirSync(dirname(to), { recursive: true });
 copyFileSync(from, to);
 console.log(`✔ public/board.js  ${(statSync(to).size / 1024).toFixed(1)} KiB`);
+
+// The operating protocol, at a URL. The MCP handshake carries the same thing, but not
+// every client shows a model what a server said at initialize — and "read this and follow
+// it" needs somewhere to point when the answer is a file rather than a connection.
+const protocol = join(root, "agent", "OPERATING.md");
+const protocolTo = join(root, "public", "agent.md");
+copyFileSync(protocol, protocolTo);
+console.log(`✔ public/agent.md  ${(statSync(protocolTo).size / 1024).toFixed(1)} KiB`);

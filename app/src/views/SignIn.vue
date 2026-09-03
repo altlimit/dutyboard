@@ -1,5 +1,5 @@
 <script setup>
-import { onMounted, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { authConfig, signIn, signUp, passwordlessStart, passwordlessVerify } from "../lib/altengine.js";
 import { config } from "../config.js";
@@ -17,9 +17,25 @@ const busy = ref(false);
 const error = ref("");
 const status = ref("");
 
+/**
+ * What the auth instance actually offers. Read from its own config rather than assumed,
+ * because both of these are per-instance and getting them wrong is silent: an offer to
+ * create an account that the instance will refuse, or a sign-in method that exists and is
+ * never shown.
+ *
+ * The shape is the API's: `allow_signup` at the top, methods nested under `methods`. This
+ * page used to read `cfg.passwordless`, which is never set — so the mailed-code button, the
+ * only way in for an account created by an agent, did not render at all.
+ */
+const canSignUp = computed(() => !cfg.value || cfg.value.allow_signup !== false);
+const canEmailCode = computed(() => !!(cfg.value && cfg.value.methods && cfg.value.methods.passwordless));
+
 onMounted(async () => {
   try {
     cfg.value = await authConfig();
+    // A link straight to the sign-up form on an instance that is closed would otherwise
+    // render a form whose only outcome is a refusal.
+    if (!canSignUp.value && mode.value === "signup") mode.value = "signin";
   } catch (err) {
     error.value = `Could not reach the auth service (${err.message}). Check that altengine is running and that VITE_ALTENGINE_URL points at it.`;
   }
@@ -97,20 +113,19 @@ const doVerifyCode = () =>
       </div>
       <div class="row">
         <button class="primary" type="submit" :disabled="busy">{{ busy ? "Signing in…" : "Sign in" }}</button>
-        <button type="button" class="link" @click="mode = 'signup'">Create an account</button>
-        <button
-          v-if="cfg && cfg.passwordless"
-          type="button"
-          class="link"
-          :disabled="busy || !email"
-          @click="doStartCode"
-        >
+        <button v-if="canSignUp" type="button" class="link" @click="mode = 'signup'">Create an account</button>
+        <button v-if="canEmailCode" type="button" class="link" :disabled="busy || !email" @click="doStartCode">
           Email me a code
         </button>
       </div>
+      <p v-if="!canSignUp" class="hint" style="margin: 0">
+        This altengine is not accepting new accounts. If yours was set up for you, sign in with
+        the email address it was created with — <strong>Email me a code</strong> works without a
+        password.
+      </p>
     </form>
 
-    <form v-else-if="mode === 'signup'" class="panel stack" @submit.prevent="doSignUp">
+    <form v-else-if="mode === 'signup' && canSignUp" class="panel stack" @submit.prevent="doSignUp">
       <h2>Create an account</h2>
       <div class="field">
         <label for="su-name">Your name</label>
