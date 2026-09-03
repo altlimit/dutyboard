@@ -232,7 +232,7 @@ Without an origin list the function sends no CORS headers at all, and every call
 console fails in the browser while working perfectly from curl.
 
 
-## Step 6 — your user's account
+## Step 6 — your user's account, and the way into it
 
 Sign-up is off, so create it directly. No email is sent.
 
@@ -242,16 +242,31 @@ auth_create_user  instance=dutyboard-auth
   password=<24 random characters>
 ```
 
-Do not invent the email address — ask for it. It is the one they will sign in with.
+Do not invent the email address — ask for it.
 
 Generate the password randomly and DO NOT keep it or show it to them. They will never type
-it: the console signs in passwordlessly with a code sent to that address. A password is
-required by the tool, so give it one nobody knows.
+it. Then mint them a way in:
+
+```
+auth_issue_signin_code  instance=dutyboard-auth  identifier=<their email>
+→ { code: "485075", expires_at: …, ttl_seconds: 600 }
+```
+
+That is the same one-time code the instance would have emailed, handed to you instead —
+which matters because a freshly provisioned auth instance usually cannot send mail yet, and
+without this the account you just made would be real, correct and unreachable.
+
+Treat it as a credential. It is single use, it expires in minutes, and it is spent the moment
+the link below is opened. If it expires before they get to it, issue another.
+
+If it comes back saying passwordless sign-in is disabled, step 2 did not take: turn it on and
+try again. If it comes back 409, a code is already outstanding — either they have one, or
+wait for it to expire.
 
 
 ## Step 7 — hand over the link
 
-Build it from what you provisioned:
+One link. It carries where their altengine is AND the code, so there is nothing to type:
 
 ```
 https://www.dutyboard.com/app/#/connect
@@ -262,22 +277,26 @@ https://www.dutyboard.com/app/#/connect
   &functions=dutyboard
   &fn=board
   &api=https://<the slug from step 1>-fn.altengine.app/board
+  &identifier=<their email>
+  &code=<the code from step 6>
 ```
 
-(One line, no spaces.) `api` is the one that matters most: it is the function's real URL,
-and passing it means the console never has to guess the subdomain from the instance name —
-which is wrong whenever a slug was minted rather than chosen.
+(One line, no spaces.) `api` is the one that matters most among the instance fields: it is
+the function's real URL, so the console never has to guess the subdomain from the instance
+name — which is wrong whenever a slug was minted rather than chosen.
 
-The link fills the connection form and tests it. Your user reviews what it found and
-clicks once to connect. It does NOT apply silently, and you should not tell them it will:
-a link that reconfigures a console without asking is a way to point someone at an altengine
-that is not theirs.
+The link fills the connection form and tests it. Your user reviews what it found and clicks
+once; that saves the settings and signs them in with the code. It does NOT apply silently,
+and you should not tell them it will: a link that reconfigures a console without asking is a
+way to point someone at an altengine that is not theirs.
 
-Then they sign in with their email address and the code they are sent.
+Everything after the `#` stays in the browser — it is never sent to any server, not in the
+request and not in a Referer header — which is the only reason it is reasonable to put a
+live code in a URL at all.
 
 Tell them, in your own words: the link points their browser at their own altengine; sign-up
-is off so nobody else can create an account on it; and everything on the board lives in
-their account, not in DutyBoard's.
+is off, so nobody else can create an account on it; the code works once; and everything on
+the board lives in their account, not in DutyBoard's.
 
 
 ## Check it worked

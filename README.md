@@ -219,9 +219,18 @@ is on: the first query needing one creates it and retries, and on an empty colle
 build writes nothing. [`backend/indexes.json`](backend/indexes.json) stays the record of
 what the app asks the datastore for — worth reading, not worth running.
 
+That link can also carry a **one-time sign-in code**, so the person never types a password —
+there isn't one they know. The agent mints it with `auth_issue_signin_code`, which hands back
+the same code the instance would have emailed. That matters because a freshly provisioned
+auth instance usually cannot send mail yet, and without it the account the agent just created
+would be real, correct and unreachable. The code is single use, expires in minutes, and lives
+in the URL **fragment** — never sent to any server, not in the request line and not in a
+Referer header — which is the only reason a live credential in a link is reasonable at all.
+
 The link fills the form; it does not save. A link that silently repointed a console would
 be a tidy way to put someone's sign-in form in front of an auth instance they do not own,
-and "click here to see the board" is how that would arrive.
+and "click here to see the board" is how that would arrive. One click applies the settings
+and, if a code came with it, signs them in.
 
 The function bundle it deploys is served from
 [dutyboard.com/board.js](https://www.dutyboard.com/board.js) — one self-contained ES module,

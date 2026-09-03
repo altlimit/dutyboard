@@ -116,10 +116,18 @@ async function check() {
 
 function save() {
   saveOverrides(form.value);
+  // A sign-in code may be riding on the same link — the agent that provisioned this handed
+  // over one URL, and it has to survive the reload that applying the config requires. It is
+  // single use and minutes long, so carrying it one hop is the whole of its life.
+  const q = route.query || {};
+  const carried =
+    q.code && (q.identifier || q.email)
+      ? `?identifier=${encodeURIComponent(q.identifier || q.email)}&code=${encodeURIComponent(q.code)}`
+      : "";
   // A full reload, not a route change. Every module in the app read the old config when it
   // was imported — the socket, the datastore URLs, the API base — and there is no honest
   // way to swap that underneath them.
-  location.assign(import.meta.env.BASE_URL + "#/signin");
+  location.assign(`${import.meta.env.BASE_URL}#/signin${carried}`);
   location.reload();
 }
 
@@ -149,6 +157,9 @@ onMounted(() => {
     <div v-if="fromLink" class="notice" role="status">
       <strong>These came from your link.</strong> Nothing has been saved yet — check that the
       names below are the ones your agent provisioned, then choose <em>Save and reload</em>.
+      <template v-if="$route.query.code">
+        It also carries a one-time sign-in code, so you will not be asked for a password.
+      </template>
     </div>
 
     <form class="panel panel--form stack" @submit.prevent="save">

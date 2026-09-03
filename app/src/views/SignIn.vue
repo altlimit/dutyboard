@@ -30,12 +30,52 @@ const status = ref("");
 const canSignUp = computed(() => !cfg.value || cfg.value.allow_signup !== false);
 const canEmailCode = computed(() => !!(cfg.value && cfg.value.methods && cfg.value.methods.passwordless));
 
+/**
+ * A sign-in code carried in the link, verified without anyone typing anything.
+ *
+ * This is the last step of an agent-provisioned install: it created the account (so there is
+ * no password anyone knows) and minted a one-time code (so nothing had to be emailed by an
+ * instance that may not be able to send mail). Handing over a link is then the whole of
+ * "here is your board".
+ *
+ * The code rides in the HASH, which browsers do not send to any server — not in the request
+ * line, not in Referer. It is still a credential: single use, minutes long, and consumed the
+ * moment this page loads. If it fails, say so plainly and leave the normal form underneath
+ * rather than a dead end.
+ */
+async function trySignInLink() {
+  const q = route.query || {};
+  const code = typeof q.code === "string" ? q.code.trim() : "";
+  const who = typeof q.identifier === "string" ? q.identifier : typeof q.email === "string" ? q.email : "";
+  if (!code || !who) return false;
+  email.value = who;
+  busy.value = true;
+  status.value = `Signing you in as ${who}…`;
+  try {
+    await passwordlessVerify(who, code);
+    // Drop the code from the URL before navigating: it is spent, and a spent credential in
+    // the address bar is something someone will paste to a colleague and be confused by.
+    router.replace({ name: "signin", query: {} });
+    go();
+    return true;
+  } catch (err) {
+    status.value = "";
+    error.value =
+      `That sign-in link did not work (${err.message}). A link can only be used once and expires ` +
+      `after a few minutes — ask for a new one, or sign in below.`;
+    return false;
+  } finally {
+    busy.value = false;
+  }
+}
+
 onMounted(async () => {
   try {
     cfg.value = await authConfig();
     // A link straight to the sign-up form on an instance that is closed would otherwise
     // render a form whose only outcome is a refusal.
     if (!canSignUp.value && mode.value === "signup") mode.value = "signin";
+    await trySignInLink();
   } catch (err) {
     error.value = `Could not reach the auth service (${err.message}). Check that altengine is running and that VITE_ALTENGINE_URL points at it.`;
   }
