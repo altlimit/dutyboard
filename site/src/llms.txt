@@ -123,7 +123,10 @@ Either way, what matters and why:
   blank. You also cannot create their account in step 6 with a name the instance does not
   collect.
 - **The origin.** Without it the console cannot call the auth instance from a browser at
-  all, and the failure says only "failed to fetch".
+  all, and the failure says only "failed to fetch". Use `https://www.dutyboard.com` unless
+  your user serves the console themselves — then it is wherever THEY serve it from, here and
+  in the function's CORS list in step 5. Getting this wrong is the single most common way an
+  otherwise perfect install does nothing.
 - **Sign-up off.** You create their account in step 6, so the public route is never needed.
   Leaving it on means anyone who finds the instance can open one and spend their quota.
 - **Passwordless on.** It is how they will actually sign in — see step 6.

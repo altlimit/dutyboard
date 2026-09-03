@@ -35,6 +35,9 @@ const TYPES = {
   ".ico": "image/x-icon",
   ".woff2": "font/woff2",
   ".txt": "text/plain; charset=utf-8",
+  // /agent.md is a documented URL, and octet-stream would make a browser download the
+  // operating protocol rather than show it.
+  ".md": "text/plain; charset=utf-8",
   ".xml": "application/xml; charset=utf-8",
   ".map": "application/json; charset=utf-8",
 };

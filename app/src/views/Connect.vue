@@ -240,8 +240,11 @@ onMounted(() => {
     </form>
 
     <p class="small muted">
-      Not set up yet? <a :href="'https://github.com/altlimit/dutyboard#deploying-to-hosted-altengine'">Provision it in one command</a>,
-      then come back here. Or
+      Not set up yet? Give an agent your altengine connection and
+      <a href="/llms.txt">dutyboard.com/llms.txt</a> — it provisions everything and hands back a
+      link that fills this form in. Or do it
+      <a :href="'https://github.com/altlimit/dutyboard#deploying-to-hosted-altengine'">in one command</a>
+      yourself, then come back here. Or
       <router-link :to="{ name: 'signin' }">go back to signing in</router-link>.
     </p>
   </div>

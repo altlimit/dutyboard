@@ -7,5 +7,6 @@
   "image": "/img/og.png",
   "locale": "en_US",
   "appUrl": "/app/",
-  "repoUrl": "https://github.com/altlimit/dutyboard"
+  "repoUrl": "https://github.com/altlimit/dutyboard",
+  "llmsUrl": "/llms.txt"
 }
