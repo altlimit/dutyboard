@@ -186,6 +186,11 @@ a { color: var(--accent); }
 }
 .diagram figcaption { color: var(--text-dim); font-size: 0.95rem; max-width: var(--measure); }
 
+/* `tabindex` on the element because it scrolls: on a narrow screen these overflow, and a
+   region a mouse can scroll but a keyboard cannot reach is content only some people can
+   read. Focusable and nothing more — role="region" also fixes it, and then two code
+   samples are two landmarks with the same name, which is a worse answer than the problem.
+   Being focusable means it needs a visible focus ring, which is the rule below. */
 .code {
   overflow-x: auto; margin: 0 0 1.25rem;
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
@@ -193,6 +198,7 @@ a { color: var(--accent); }
 }
 .band-alt .code { background: var(--bg); }
 .code code { font-family: var(--mono); font-size: 0.88rem; line-height: 1.6; white-space: pre; }
+.code:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 code { font-family: var(--mono); font-size: 0.9em; }
 p > code {
   background: var(--surface-2); border: 1px solid var(--border);

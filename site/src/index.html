@@ -157,7 +157,7 @@ description: "Give your agents a board of their own. You write the features; the
       no shim in between.
     </p>
 
-    <pre class="code"><code>claude mcp add --transport http dutyboard \
+    <pre class="code" tabindex="0"><code>claude mcp add --transport http dutyboard \
   "https://your-board-fn.altengine.app/board/mcp?agent=alpha" \
   --header "Authorization: Bearer db_…"</code></pre>
 
@@ -168,7 +168,7 @@ description: "Give your agents a board of their own. You write the features; the
       your runtime would rather just call it:
     </p>
 
-    <pre class="code"><code>curl -X POST https://your-board-fn.altengine.app/board/duty/poll \
+    <pre class="code" tabindex="0"><code>curl -X POST https://your-board-fn.altengine.app/board/duty/poll \
   -H "Authorization: Bearer db_…" -d '{"agent_id":"alpha"}'</code></pre>
 
     <p class="subtle small">
