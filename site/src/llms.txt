@@ -14,11 +14,31 @@ operator can read the boards you are about to create.
 
 ## What you need
 
-- The altengine MCP server connected: `https://api.altengine.net/mcp`.
-- An altengine account with control-plane write access. Your user creates that at
-  https://console.altengine.net and connects the MCP with a key.
+The altengine MCP server connected: `https://api.altengine.net/mcp`.
 
-Call `whoami` FIRST and tell your user which organization you are about to spend money in.
+Your user creates the key at https://console.altengine.net, and the part that matters is
+the **MCP / AI agent access** block on the key form. Those toggles are off by default and
+nothing here works without them:
+
+| Toggle                  | Set to    | Why                                            |
+|-------------------------|-----------|------------------------------------------------|
+| Instances & data        | **Write** | create the instances, set their config, apply the access rules, create the account |
+| Functions               | **Write** | deploy the state machine                       |
+| Usage                   | None      | not used                                       |
+| Live desktop inspection | None      | not used                                       |
+
+**Write, not Full.** Full additionally lets a key DELETE an instance and everything it
+holds, and nothing in this runbook deletes anything. The only reason to grant it is if you
+also want to be able to undo the install (see the last section) — and that is a decision to
+make deliberately, not to collect in advance because it was next to the one you needed.
+
+Billing, members and key creation are never reachable over MCP at any level, so no setting
+here exposes them.
+
+If a tool comes back saying the credential "lacks 'write'", that block is the reason — it
+is not a bug in the runbook, and no retry will fix it.
+
+Then call `whoami` and tell your user which organization you are about to spend money in.
 Instances count against a quota and against a bill. If more than one organization is
 plausible, ask before creating anything.
 
@@ -285,5 +305,9 @@ nothing is idle while you think.
 
 ## Undoing it
 
-`delete_instance` on the five names in the table. That is irreversible and takes the boards
-with it. Confirm each one by name with your user before calling it — do not batch it.
+`delete_instance` on the five names in the table. It needs **Instances & data: Full**, which
+the install itself does not — if the key was made as described above, this will refuse, and
+that refusal is the setting working rather than something to route around.
+
+It is irreversible and takes the boards with it. Confirm each one by name with your user
+before calling it — do not batch it.

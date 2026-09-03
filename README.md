@@ -166,9 +166,15 @@ console would sign you up and then get 403 on every read.
 ### Deploying to hosted altengine
 
 ```bash
-export ALTENGINE_KEY=ak_…          # control access to instances + functions, data access to the rest
+export ALTENGINE_KEY=ak_…
 npm run provision -- --hosted
 ```
+
+That key needs the **MCP / AI agent access** toggles on the key form, which are off by
+default: `Instances & data: Write` and `Functions: Write`. Not Full — nothing here deletes
+an instance, and Full is what lets a key do that. `Usage` and `Live desktop inspection`
+stay None. A key without them fails with "lacks 'write'", which reads like a bug in the
+script and is not one.
 
 That creates the instances, sets the datastore's config, declares the indexes, applies the
 access rules, sets the function's CORS origins, deploys the function, and builds `public/`.
@@ -198,7 +204,8 @@ CORS binds browsers, and nothing else.
 
 Everything above is also written for an agent to do, at
 [dutyboard.com/llms.txt](https://www.dutyboard.com/llms.txt). Give an assistant the
-altengine MCP (`https://api.altengine.net/mcp`) and that URL, and it provisions the rest:
+altengine MCP (`https://api.altengine.net/mcp`) and that URL — with a key scoped the same
+way as above — and it provisions the rest:
 the instances, the datastore settings, the access rules, the function with its grants and
 CORS, and your account.
 
