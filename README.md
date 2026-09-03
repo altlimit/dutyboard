@@ -352,6 +352,12 @@ board, `400` naming the field and the values it accepts.
   where one agent claimed two duties at once. `/health` reports `single_holder`, because a
   constraint that is silently missing is worse than one nobody claimed to have, and the
   smoke suite races both directions on a board of its own.
+
+  If `single_holder` comes back `false`, the index could not be created — almost always
+  because existing rows already violate it, which on a deployment that ran the old code is
+  exactly what the bug left behind. Find them (`agents` sharing an `active_duty_id`), free
+  all but one, and the next claim creates the index. Until then claims still work; they are
+  just not protected, which is why the flag exists rather than a silent retry.
 - **Anything that stops being the agent's problem frees the agent, in the same
   transaction.** Parked for a decision, blocked behind a child, finished. Otherwise an
   agent that asked a question would sit idle waiting for an answer, which is the failure
