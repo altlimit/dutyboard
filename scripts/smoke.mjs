@@ -10,6 +10,16 @@
 // the MCP surface. It asserts, so a regression fails here rather than in an agent's loop.
 //
 // It creates a throwaway project and deletes it at the end.
+//
+// It also creates THREE end-user accounts and does not delete them — nothing in this API
+// can, and deleting a user is a control-plane action needing a key this script has no
+// business holding. On a laptop they vanish with the emulator's data directory. Anywhere
+// else they are real accounts that accumulate one set per run, so `npm run smoke` is a
+// development tool and the warning below says so at the moment it would matter.
+//
+// It will usually refuse to run against a properly configured deployment anyway: sign-up
+// should be off there (see README), and these accounts are made through the public
+// sign-up route.
 
 import { ROUTE_PATHS } from "../functions/src/index.js";
 
@@ -19,6 +29,12 @@ const DS = process.env.DUTYBOARD_DATASTORE || "dutyboard";
 const AUTH = process.env.DUTYBOARD_AUTH || "dutyboard-auth";
 const FN_NAME = process.env.DUTYBOARD_FN_NAME || "board";
 const API = process.env.DUTYBOARD_API || (BASE.includes("altengine.net") ? `https://${FN}-fn.altengine.app/${FN_NAME}` : `${BASE}/fn/${FN}/${FN_NAME}`);
+
+const LOCAL = /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(:|\/|$)/.test(BASE);
+if (!LOCAL) {
+  console.log(`!  ${BASE} is not a local emulator.`);
+  console.log(`   This run will leave three end-user accounts behind on '${AUTH}' that it cannot delete.\n`);
+}
 
 let passed = 0;
 const failures = [];

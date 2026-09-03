@@ -22,7 +22,33 @@ const API =
   (BASE.includes("altengine.net") ? `https://${FN}-fn.altengine.app/${FN_NAME}` : `${BASE}/fn/${FN}/${FN_NAME}`);
 
 const EMAIL = process.env.DUTYBOARD_DEMO_EMAIL || "demo@dutyboard.test";
-const PASSWORD = process.env.DUTYBOARD_DEMO_PASSWORD || "dutyboard-demo-account";
+const DEFAULT_PASSWORD = "dutyboard-demo-account";
+const PASSWORD = process.env.DUTYBOARD_DEMO_PASSWORD || DEFAULT_PASSWORD;
+
+// This script creates a real account with a password printed in a public repository. On a
+// laptop that is a convenience; on a deployment anyone can reach it is a published
+// credential for a real board, and the person who ran it would have no reason to think so.
+//
+// So: local by default, and remote only when someone has said both that they mean it and
+// what the password should be instead. Refusing here is worth more than the two seconds it
+// costs, because the failure it prevents is silent and permanent.
+const LOCAL = /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(:|\/|$)/.test(BASE);
+if (!LOCAL) {
+  const problems = [];
+  if (process.env.DUTYBOARD_DEMO_REMOTE !== "yes") {
+    problems.push("set DUTYBOARD_DEMO_REMOTE=yes to confirm you mean this deployment");
+  }
+  if (!process.env.DUTYBOARD_DEMO_PASSWORD) {
+    problems.push("set DUTYBOARD_DEMO_PASSWORD to something that is not in the repository");
+  }
+  if (problems.length) {
+    console.error(`✖ refusing to seed a demo account on ${BASE}`);
+    console.error(`  This creates ${EMAIL} with a password anyone can read in scripts/demo.mjs.`);
+    for (const p of problems) console.error(`  - ${p}`);
+    process.exit(1);
+  }
+  console.log(`!  seeding a demo account on ${BASE} — remember to delete ${EMAIL} afterwards\n`);
+}
 
 async function authCall(path, body) {
   const res = await fetch(`${BASE}/v1/auth/${encodeURIComponent(AUTH)}${path}`, {
