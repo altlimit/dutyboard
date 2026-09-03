@@ -1,0 +1,109 @@
+# Publish dutyboard.com — marketing site, console and board.js — to an altengine static
+# instance.
+#
+# The whole product is a static build talking to altengine from the browser, so the deploy is
+# the same shape: no server, no image, one directory uploaded and one pointer moved. See
+# scripts/deploy-site.mjs for the three calls it makes.
+#
+# IT SKIPS UNTIL IT IS CONFIGURED. With no ALTENGINE_KEY secret the job says what is missing
+# and passes, rather than painting main red on every push for a deploy nobody has set up yet.
+# That also covers the current state of things: the hosted platform's static service is not
+# live at api.altengine.net, so there is nothing to point this at until it is.
+#
+# What to set, once there is:
+#   secret ALTENGINE_KEY            an API key with `write` on the static instance — that
+#                                   level and no more: deploying is not a reason to hold a
+#                                   key that can read the datastore your customers' boards
+#                                   are in.
+#   var    ALTENGINE_STATIC_INSTANCE  the static instance name (default: dutyboard-site)
+#   var    VITE_API_URL             the deployed function's URL. Hosted, a functions instance
+#                                   answers on a MINTED subdomain that need not match its
+#                                   name, so the console cannot derive it and this is not
+#                                   optional in practice.
+#   var    VITE_ALTENGINE_URL       only to point the published console somewhere other than
+#                                   https://api.altengine.net.
+
+name: deploy site
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# One deploy at a time, and never cancelled: activation is the last of three calls, and a run
+# killed between the upload and the activate leaves a deployment nothing points at — harmless,
+# but it means the push that triggered it never went live.
+concurrency:
+  group: deploy-site
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+
+      # The marketing half is built by sitegen, which is a Go binary rather than an npm
+      # dependency — so `npm ci` does not bring it and `npm run build` would fail here on
+      # `build:site` alone. Pinned: this job publishes a website, and "whatever the site
+      # generator does this week" is not a thing to find out during a deploy. Bump
+      # deliberately.
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+      - run: |
+          go install github.com/altlimit/sitegen@v1.0.38
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      # Is there anything to deploy WITH? Secrets are not readable from an `if:`, so the check
+      # is a step that sets an output rather than a condition on the job.
+      - id: gate
+        env:
+          KEY: ${{ secrets.ALTENGINE_KEY }}
+        run: |
+          if [ -z "$KEY" ]; then
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Marketing site, then console, then board.js — in that order, because build:site cleans
+      # public/ first and doing it the other way round deletes the app.
+      #
+      # THE CONSOLE BAKES IN WHERE IT POINTS. Built with nothing set, it defaults to the local
+      # emulator (app/src/config.js), which for a published page is a console that talks to a
+      # machine the visitor does not have. The default here is the hosted API for that reason.
+      - name: Build
+        env:
+          VITE_ALTENGINE_URL: ${{ vars.VITE_ALTENGINE_URL || 'https://api.altengine.net' }}
+          VITE_API_URL: ${{ vars.VITE_API_URL }}
+          VITE_AUTH_INSTANCE: ${{ vars.VITE_AUTH_INSTANCE }}
+          VITE_DATASTORE_INSTANCE: ${{ vars.VITE_DATASTORE_INSTANCE }}
+          VITE_CHANNEL_INSTANCE: ${{ vars.VITE_CHANNEL_INSTANCE }}
+          VITE_FUNCTIONS_INSTANCE: ${{ vars.VITE_FUNCTIONS_INSTANCE }}
+        run: |
+          npm run build
+          echo "console built against ${VITE_ALTENGINE_URL}${VITE_API_URL:+, api ${VITE_API_URL}}"
+
+      # Hashes the build, uploads only what the platform does not already have, then activates.
+      # Unchanged assets are never re-uploaded, so a one-page change is a one-page deploy.
+      - name: Deploy to altengine static
+        if: steps.gate.outputs.ready == 'true'
+        env:
+          ALTENGINE_KEY: ${{ secrets.ALTENGINE_KEY }}
+          ALTENGINE_URL: ${{ vars.ALTENGINE_URL || 'https://api.altengine.net' }}
+          DUTYBOARD_STATIC_INSTANCE: ${{ vars.ALTENGINE_STATIC_INSTANCE || 'dutyboard-site' }}
+        run: npm run deploy:site
+
+      # Not a failure: the build above still proves the site compiles, which is what a push to
+      # main can prove without a key.
+      - name: Nothing to deploy to
+        if: steps.gate.outputs.ready != 'true'
+        run: |
+          echo "::notice::Built, not deployed — set the ALTENGINE_KEY secret to publish."
+          echo "See the header of .github/workflows/deploy-site.yml for the secret and vars this needs."

@@ -57,10 +57,15 @@ The console is a single-page app. Every path under `/app` has to serve
 /app/*  →  /app/index.html   (200, not a redirect)
 ```
 
-Until the static service that does this is available, the router uses hash URLs
-(`/app/#/b/my-board`), which need no rewrite and work on any static host. Switching is one
-line in [`app/src/router.js`](app/src/router.js): `createWebHashHistory()` →
-`createWebHistory("/app/")`.
+So the router uses hash URLs (`/app/#/b/my-board`), which need no rewrite and work on any
+static host. Switching is one line in [`app/src/router.js`](app/src/router.js):
+`createWebHashHistory()` → `createWebHistory("/app/")`.
+
+That line stays as it is even on a host that *can* rewrite. altengine's static service has
+an `spa` flag, and what it does is serve the **root** `index.html` for any unmatched path —
+which here would answer `/app/b/my-board` with the marketing page, at 200. One flag cannot
+say "the marketing site owns `/` and the console owns `/app/*`", and a wrong page with the
+right status is worse than a 404. Hash URLs are what a mixed site gets.
 
 ## How it is built
 
@@ -151,6 +156,7 @@ taskr "Start All"
 | `npm run dev:site` | The marketing site, watched, on :8888. |
 | `npm run build` | Both, into `public/`. |
 | `npm run preview` | Serves `public/` as a static host would, rewrite included, on :4173. |
+| `npm run deploy:site` | Uploads `public/` to an altengine **static** instance and makes it live. |
 | `npm run demo` | Fills a board with a plausible afternoon's work, and prints the sign-in. |
 | `npm run smoke` | The whole state machine end to end, plus a cross-tenant matrix over every endpoint. |
 
@@ -199,6 +205,39 @@ door onto your quota. Either turn it off in the console once you have signed up,
 it off from the start and create your account with the MCP's `auth_create_user`, which
 sends no email and does not need the public route. Allowed origins are not a substitute:
 CORS binds browsers, and nothing else.
+
+### Publishing the site itself
+
+The whole product is a static build talking to altengine from the browser, so it can be
+hosted on altengine too — no server, no image, no sixth thing to run:
+
+```bash
+npm run build
+ALTENGINE_KEY=ak_… npm run deploy:site      # DUTYBOARD_STATIC_INSTANCE=dutyboard-site
+```
+
+[`scripts/deploy-site.mjs`](scripts/deploy-site.mjs) makes three calls: it sends a manifest
+of every file's path, size and sha256; uploads only the ones the platform says it does not
+already have; then activates. Files are content-addressed, so a redeploy that changed one
+page uploads one page — and activation is a pointer move, which is why a rollback is the
+same call with an older deployment id and costs nothing.
+
+`--dry-run` hashes the build and reports what would upload without a key. `--no-activate`
+uploads without publishing. The key needs **write** on the static instance and nothing more:
+deploying a website is not a reason to hold a key that can read the datastore your boards
+are in.
+
+[`.github/workflows/deploy-site.yml`](.github/workflows/deploy-site.yml) does the same on a
+push to `main`. **It skips until it is configured** — with no `ALTENGINE_KEY` secret it
+builds, says what is missing, and passes, rather than painting `main` red for a deploy
+nobody set up. It also passes `VITE_ALTENGINE_URL` at build time, because a console built
+with nothing set points at `http://127.0.0.1:9191` — a published page talking to a machine
+the visitor does not have.
+
+Not deployable yet: `api.altengine.net` answers `/v1/static/…` with "no such data-plane
+endpoint", so the service exists in the platform's source and not on the host. The script
+says exactly that rather than reporting it as a bad instance name. `npm run preview` is the
+stand-in until then.
 
 ### Letting an agent install it
 

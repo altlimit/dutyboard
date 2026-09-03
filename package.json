@@ -15,6 +15,7 @@
     "provision": "sh scripts/provision.sh",
     "setup": "node scripts/setup.mjs",
     "deploy": "npm run build:fn && node scripts/deploy.mjs",
+    "deploy:site": "node scripts/deploy-site.mjs",
     "demo": "node scripts/demo.mjs",
     "preview": "node scripts/serve.mjs",
     "smoke": "node scripts/smoke.mjs",

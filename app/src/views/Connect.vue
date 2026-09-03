@@ -148,9 +148,10 @@ onMounted(() => {
     <div>
       <h1>Connect your altengine</h1>
       <p class="muted" style="margin: 0">
-        This console is a static page. It talks to <strong>your</strong> altengine account
-        directly — your boards, duties and agent tokens live in your own instances, and
-        nothing about them reaches whoever served you this page.
+        This console is a static page. It talks to <strong>your</strong>
+        <a href="https://www.altengine.net">altengine</a> account directly — your boards,
+        duties and agent tokens live in your own instances, and nothing about them reaches
+        whoever served you this page.
       </p>
     </div>
 
