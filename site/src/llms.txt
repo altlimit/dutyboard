@@ -64,25 +64,49 @@ name, and the function's public hostname is built from it:
 reports it too.
 
 
-## Step 2 — the auth instance's sign-up form (your user, in the console)
+## Step 2 — the auth instance's sign-up form and origins
 
-This is the one thing you cannot do. `patch_instance_config` refuses `auth`: its config is
-split across several independently-validated sections, and the tool will not merge them
-blindly. Creating the instance is yours; configuring it is not.
+Try it yourself first. Read the config, then send it back changed — `patch_instance_config`
+merges only at the TOP level, so a partial `settings` object would drop every field you did
+not mention:
 
-Ask your user to open `dutyboard-auth` in https://console.altengine.net and set:
+```
+get_instance_config  service=auth  instance=dutyboard-auth
+```
 
-- **Sign-up fields:** `email` (the identity field, required) and `name` (required).
-  `name` is not decoration — every duty, note and answer is stamped with its author's name
-  from the token's claims, and without the field they are all stamped blank. You also cannot
-  create their account in step 6 with a name the instance does not collect.
-- **Allowed origins:** `https://www.dutyboard.com`. Without this the console cannot call the
-  auth instance from a browser at all, and the failure says only "failed to fetch".
-- **Allow sign-up: OFF.** You create their account yourself in step 6, so the public route
-  is never needed. Leaving it on means anyone who finds the instance can open an account and
-  spend their quota.
+```
+patch_instance_config  service=auth  instance=dutyboard-auth  changes={
+  "settings": { ...everything get_instance_config returned under settings, plus:
+    "allowSignup": false,
+    "passwordlessEnabled": true,
+    "allowedOrigins": ["https://www.dutyboard.com"]
+  },
+  "signup": {
+    "identityField": "email",
+    "fields": [
+      { "key": "email", "type": "email",  "required": true, "label": "Email" },
+      { "key": "name",  "type": "string", "required": true, "label": "Your name" }
+    ]
+  }
+}
+```
 
-Wait for them to confirm before continuing — steps 4 and 6 both depend on it.
+If that is refused with "auth config must be edited in the console", you are on an altengine
+that does not expose it yet. Ask your user to set the same three things on `dutyboard-auth`
+in https://console.altengine.net, and wait for them to confirm before going on — steps 4 and
+6 both depend on it.
+
+Either way, what matters and why:
+
+- **`name` in the sign-up fields.** Not decoration: every duty, note and answer is stamped
+  with its author's name from the token's claims, and without the field they are all stamped
+  blank. You also cannot create their account in step 6 with a name the instance does not
+  collect.
+- **The origin.** Without it the console cannot call the auth instance from a browser at
+  all, and the failure says only "failed to fetch".
+- **Sign-up off.** You create their account in step 6, so the public route is never needed.
+  Leaving it on means anyone who finds the instance can open one and spend their quota.
+- **Passwordless on.** It is how they will actually sign in — see step 6.
 
 
 ## Step 3 — datastore settings

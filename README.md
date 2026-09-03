@@ -202,10 +202,10 @@ altengine MCP (`https://api.altengine.net/mcp`) and that URL, and it provisions 
 the instances, the datastore settings, the access rules, the function with its grants and
 CORS, and your account.
 
-The one step left with you is the auth instance's sign-up form and allowed origins, in the
-console — creating that instance is automatic, configuring it is not. Then the agent hands
-back a link that fills the console's connection form with what it provisioned, so the last
-step is one click.
+The only step that may fall to you is the auth instance's sign-up form and allowed origins.
+The agent tries it over MCP and asks you to do it in the console if that altengine does not
+expose auth config yet. Then it hands back a link that fills the console's connection form
+with what it provisioned, so the last step is one click.
 
 It does not declare indexes, and neither should you when starting from nothing. Auto-index
 is on: the first query needing one creates it and retries, and on an empty collection that
