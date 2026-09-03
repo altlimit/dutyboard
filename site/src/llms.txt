@@ -244,8 +244,8 @@ auth_create_user  instance=dutyboard-auth
 
 Do not invent the email address — ask for it.
 
-Generate the password randomly and DO NOT keep it or show it to them. They will never type
-it. Then mint them a way in:
+Generate the password randomly and hold on to it until the next call succeeds — see the
+fallback below. Then mint them a way in:
 
 ```
 auth_issue_signin_code  instance=dutyboard-auth  identifier=<their email>
@@ -262,6 +262,14 @@ the link below is opened. If it expires before they get to it, issue another.
 If it comes back saying passwordless sign-in is disabled, step 2 did not take: turn it on and
 try again. If it comes back 409, a code is already outstanding — either they have one, or
 wait for it to expire.
+
+**If the tool does not exist on this altengine**, it predates the feature. Fall back: give
+your user the password you generated, over whatever channel you are already talking on, and
+tell them to sign in with it at the link in step 7 and change it. Say plainly that you are
+handing them a password you generated, because you are. Once you have done that, forget it —
+do not repeat it later, and do not write it into a duty, a note or a file.
+
+Only then is it safe to discard the password: if the code worked, nobody needs it again.
 
 
 ## Step 7 — hand over the link
