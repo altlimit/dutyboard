@@ -208,6 +208,10 @@ const dsCol = (collection) =>
  *  so there is nothing to add here and no way to ask for someone else's rows. */
 export const query = (collection, req = {}) => authed("POST", `${dsCol(collection)}/query`, { body: req });
 
+/** Grouped counts, scoped by the same row rules as a query — so the board can say how many
+ *  duties a column really holds without reading them. */
+export const aggregate = (collection, req = {}) => authed("POST", `${dsCol(collection)}/aggregate`, { body: req });
+
 /** Point-read by key. Only rows you may read come back. */
 export const getDocs = (collection, keys) =>
   authed("POST", `${dsCol(collection)}/documents/get`, { body: { keys } });

@@ -386,10 +386,16 @@ board, `400` naming the field and the values it accepts.
   agents and a channel token, then two queries — the working set (everything not done, read
   whole and sorted into columns in the browser) and the top of `done`. Only `done` grows
   without end, so only `done` pages.
+- A column showing only part of itself says how big it really is, and one grouped-count
+  aggregate answers for every column at once. It is asked for **only when something is
+  actually truncated** — on a board that fits, the rows on screen are the count and a
+  second query would buy nothing. So a small board opens in three requests and a board of
+  260 duties in nine, which is where the extra reads are worth their keep.
 - `last_used_at` on a token is stamped at most once a minute, and reuses the row that
   authenticated the call rather than reading it twice.
 - Every list is paged with a keyset cursor and says when it is showing a partial answer —
-  the board's columns included, which is why they show `50+` rather than a quiet 50.
+  the board's columns included — and when one is truncated it shows the real total rather
+  than a quiet `12+`.
 - Live events carry an id and a status, plus the three visible fields of an agent row when
   the event moved one. The console re-reads everything else through the access-controlled
   path, so an event can never reveal a duty its reader may not see.

@@ -7,7 +7,7 @@ import DutyCard from "./DutyCard.vue";
 
 const props = defineProps({
   col: { type: Object, required: true },
-  state: { type: Object, required: true }, // { rows, cursor, loading }
+  state: { type: Object, required: true }, // { rows, cursor, loading, total }
   projectId: { type: String, required: true },
   // Standalone: the phone layout, where the chips are the heading and the hint is worth
   // showing rather than hiding from everyone but a screen reader.
@@ -25,7 +25,7 @@ const more = computed(() => !!props.state.cursor);
   <section class="column" :aria-labelledby="`col-${col.key}`">
     <div v-if="!standalone" class="column__head">
       <h2 :id="`col-${col.key}`" class="column__title">{{ col.label }}</h2>
-      <span class="column__count">{{ state.rows.length }}{{ state.cursor ? "+" : "" }}</span>
+      <span class="column__count">{{ state.total ?? state.rows.length }}{{ state.total == null && state.cursor ? "+" : "" }}</span>
     </div>
     <h2 v-else :id="`col-${col.key}`" class="sr-only">{{ col.label }}</h2>
 

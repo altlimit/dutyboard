@@ -1,6 +1,6 @@
 <script setup>
 import { computed, onUnmounted, ref, watch } from "vue";
-import { api, query, subscribeLive } from "../lib/altengine.js";
+import { aggregate, api, query, subscribeLive } from "../lib/altengine.js";
 import { STATUS_COLUMNS, PRIORITIES, ago, columnOrder, sortColumn } from "../lib/duties.js";
 import BoardColumn from "../components/BoardColumn.vue";
 
@@ -76,7 +76,7 @@ let refreshTimer = null;
 const resetColumns = () => {
   paged.value = false;
   columns.value = Object.fromEntries(
-    STATUS_COLUMNS.map((c) => [c.key, { rows: [], cursor: null, loading: true }]),
+    STATUS_COLUMNS.map((c) => [c.key, { rows: [], cursor: null, loading: true, total: null }]),
   );
 };
 resetColumns();
@@ -156,7 +156,9 @@ async function loadAgents() {
  *  approximation of a sort the server would have done — hence no cursor either.
  *  `done` is not touched: it is loaded separately. */
 function bucketLive(rows) {
-  for (const key of LIVE_STATUSES) columns.value[key] = { rows: [], cursor: null, loading: false };
+  for (const key of LIVE_STATUSES) {
+    columns.value[key] = { rows: [], cursor: null, loading: false, total: columns.value[key].total };
+  }
   for (const duty of rows) {
     const col = columns.value[duty.status];
     if (col && duty.status !== "done") col.rows.push(duty);
@@ -208,6 +210,37 @@ async function refresh(keys, { agents = true } = {}) {
   if (all || keys.has("done")) jobs.push(loadColumn("done"));
   if (agents) jobs.push(loadAgents());
   await Promise.all(jobs);
+  await loadTotals();
+}
+
+/**
+ * The real size of each column, when the rows on screen are not all of them.
+ *
+ * A truncated column used to read `12+`, which on a board of 260 duties says almost
+ * nothing. One grouped count answers for every column at once, and it is only asked for
+ * when something is actually truncated — on a board that fits, the rows ARE the count and
+ * a second query would be waste. `done` is always truncated by design, so this is also how
+ * a board says how much it has finished.
+ */
+async function loadTotals() {
+  const truncated = STATUS_COLUMNS.some((c) => columns.value[c.key].cursor);
+  if (!truncated) {
+    for (const c of STATUS_COLUMNS) columns.value[c.key].total = null;
+    return;
+  }
+  try {
+    const res = await aggregate("duties", {
+      where: [{ field: "project_id", op: "=", value: props.projectId }],
+      group: ["status"],
+      metrics: [{ fn: "count", as: "n" }],
+    });
+    const byStatus = Object.fromEntries((res.groups || []).map((g) => [g.group.status, g.metrics.n]));
+    for (const c of STATUS_COLUMNS) columns.value[c.key].total = byStatus[c.key] ?? 0;
+  } catch {
+    // Counts are a nicety. A board that cannot get them shows `12+`, which is what it
+    // always showed, rather than an error over something nobody asked for.
+    for (const c of STATUS_COLUMNS) columns.value[c.key].total = null;
+  }
 }
 
 /** The whole board: the working set, and the top of `done`.
