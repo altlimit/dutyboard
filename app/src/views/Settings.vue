@@ -19,6 +19,39 @@ const fresh = ref(null);
 const copied = ref(false);
 const confirmDelete = ref("");
 
+/**
+ * Indexing finished work, from the one page where you would look for it.
+ *
+ * The board offers this too, but only when a search comes back empty — and that is the
+ * wrong shape for the case it exists for. A board whose recent duties are indexed and whose
+ * older history is not returns SOME results, so the offer never appears, and the history
+ * you are missing stays missing with nothing to suggest otherwise. This is where a board's
+ * maintenance lives, so it belongs here as well.
+ */
+const searchable = ref(false);
+const reindexing = ref(false);
+const reindexed = ref(null);
+
+async function reindex() {
+  reindexing.value = true;
+  error.value = "";
+  reindexed.value = null;
+  try {
+    let total = 0;
+    let cursor;
+    do {
+      const res = await api("/board/reindex", { project_id: props.projectId, cursor });
+      total += res.indexed;
+      cursor = res.more ? res.cursor : null;
+    } while (cursor);
+    reindexed.value = total;
+  } catch (err) {
+    error.value = err.message;
+  } finally {
+    reindexing.value = false;
+  }
+}
+
 const mcpUrl = computed(() => `${config.api}/mcp${agentIdOf(fresh.value) ? `?agent=${agentIdOf(fresh.value)}` : ""}`);
 const agentIdOf = (t) => (t && t.default_agent_id) || "";
 
@@ -31,7 +64,14 @@ async function load() {
   loading.value = true;
   error.value = "";
   try {
-    tokens.value = (await api("/tokens/list", { project_id: props.projectId })).tokens;
+    const [list, board] = await Promise.all([
+      api("/tokens/list", { project_id: props.projectId }),
+      // Only to learn whether this deployment has search. Same call the board itself makes,
+      // so it is a warm path rather than an extra endpoint invented for one boolean.
+      api("/board/open", { project_id: props.projectId }).catch(() => ({})),
+    ]);
+    tokens.value = list.tokens;
+    searchable.value = board.search === true;
   } catch (err) {
     error.value = err.message;
   } finally {
@@ -187,6 +227,27 @@ onMounted(load);
           </tbody>
         </table>
       </div>
+    </section>
+
+    <section v-if="searchable" aria-labelledby="reindex-h" class="panel stack">
+      <h2 id="reindex-h" style="margin: 0">Searching finished work</h2>
+      <p class="muted small" style="margin: 0">
+        Duties are indexed as they finish, so anything completed from now on is findable from
+        the board's search box and by an agent calling <code class="mono">duty_search</code>.
+        Work that finished <em>before</em> search was switched on is not in the index — index
+        it once and it stays that way.
+      </p>
+      <div class="row">
+        <button type="button" :disabled="reindexing" @click="reindex">
+          {{ reindexing ? "Indexing…" : "Index finished duties" }}
+        </button>
+        <span v-if="reindexed !== null" class="small muted">
+          Indexed {{ reindexed }} finished {{ reindexed === 1 ? "duty" : "duties" }}.
+        </span>
+      </div>
+      <p class="hint" style="margin: 0">
+        Safe to run more than once — a duty already in the index is replaced, not duplicated.
+      </p>
     </section>
 
     <section aria-labelledby="danger-h" class="panel stack" style="border-color: var(--danger)">
