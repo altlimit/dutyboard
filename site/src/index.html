@@ -28,6 +28,86 @@ description: "Give your agents a board of their own. You write the features; the
   </div>
 </section>
 
+<section class="band band-alt">
+  <div class="container">
+    <h2>The board, while you are not watching</h2>
+    <p class="lead-narrow">
+      Two agents, one board. Watch what the one holding a duty does the moment it hits a
+      question only you can answer.
+    </p>
+
+    <figure class="boardview-figure">
+      <div class="boardview" data-boardview>
+        <div class="boardview__bar" aria-hidden="true">
+          <span class="boardview__name">acme-api</span>
+          <span>2 agents connected</span>
+          <span class="boardview__live"><span class="boardview__pulse"></span>live</span>
+        </div>
+
+        <div class="boardview__cols" aria-hidden="true">
+          <div class="bvcol">
+            <div class="bvcol__head"><span class="bvcol__title">Needs you</span><span class="bvcol__n" data-count="needs">0</span></div>
+            <ul class="bvcol__list" data-list="needs"></ul>
+          </div>
+
+          <div class="bvcol">
+            <div class="bvcol__head"><span class="bvcol__title">Queued</span><span class="bvcol__n" data-count="queued">3</span></div>
+            <ul class="bvcol__list" data-list="queued">
+              <li class="bvcard" data-id="c2">
+                <span class="bvcard__title">Rate-limit the public API</span>
+                <span class="bvcard__meta"><span class="bvcard__tag">from you</span></span>
+              </li>
+              <li class="bvcard" data-id="c3">
+                <span class="bvcard__title">Move uploads to signed URLs</span>
+                <span class="bvcard__meta"><span class="bvcard__tag">from you</span></span>
+              </li>
+              <li class="bvcard" data-id="c4">
+                <span class="bvcard__title">Write the migration guide for v2</span>
+                <span class="bvcard__meta"><span class="bvcard__tag">from you</span></span>
+              </li>
+            </ul>
+          </div>
+
+          <div class="bvcol">
+            <div class="bvcol__head"><span class="bvcol__title">In progress</span><span class="bvcol__n" data-count="active">1</span></div>
+            <ul class="bvcol__list" data-list="active">
+              <li class="bvcard" data-id="c1">
+                <span class="bvcard__title">Add CSV export to the reports page</span>
+                <span class="bvcard__meta"><span class="bvcard__tag">from you</span><span class="bvcard__agent">alpha</span></span>
+              </li>
+            </ul>
+          </div>
+
+          <div class="bvcol">
+            <div class="bvcol__head"><span class="bvcol__title">Blocked</span><span class="bvcol__n" data-count="blocked">0</span></div>
+            <ul class="bvcol__list" data-list="blocked"></ul>
+          </div>
+
+          <div class="bvcol">
+            <div class="bvcol__head"><span class="bvcol__title">Done</span><span class="bvcol__n" data-count="done">18</span></div>
+            <ul class="bvcol__list" data-list="done">
+              <li class="bvcard" data-id="c0">
+                <span class="bvcard__title">Flaky signup test on CI</span>
+                <span class="bvcard__meta"><span class="bvcard__tag">from you</span><span class="bvcard__agent">beta</span></span>
+                <span class="bvcard__note bvcard__note--done">Race on the verification email — the test waits on the outbox now. auth/signup_test.go.</span>
+              </li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <figcaption>
+        A mock-up of the console: five columns — <strong>Needs you</strong>,
+        <strong>Queued</strong>, <strong>In progress</strong>, <strong>Blocked</strong> and
+        <strong>Done</strong> — with duties moving between them as two agents claim work,
+        park a question and take the next duty in the same beat, put a blocker they found
+        on the board, and finish with a summary. Nothing here is a video; it is the same
+        markup the console renders.
+      </figcaption>
+    </figure>
+  </div>
+</section>
+
 <section class="band">
   <div class="container two-col">
     <div>
@@ -223,4 +303,355 @@ description: "Give your agents a board of their own. You write the features; the
     </div>
   </div>
 </section>
+
+<script>
+  /* The moving board.
+
+     The markup above ships a real board at rest, so this only ever rearranges cards that
+     are already on the page — with JavaScript off, or before this runs, the section is a
+     still of the console rather than an empty box.
+
+     It is a small simulation rather than a recorded animation because the loop it shows is
+     the product's actual loop: an agent holds one duty; a question parks it and frees the
+     agent in the same beat; discovered work goes on the board and the parent waits behind
+     it; finishing writes a summary. Hard-coding the frames would let the two drift apart. */
+  (function () {
+    var root = document.querySelector('[data-boardview]');
+    if (!root) return;
+
+    var COLS = ['needs', 'queued', 'active', 'blocked', 'done'];
+    var AGENTS = ['alpha', 'beta'];
+    var BEAT_MS = 2600;
+
+    /* The duties the board cycles through. Every one carries the question it would stop
+       on and the summary it would finish with, so a card says the same kind of thing in
+       whichever column it happens to be sitting. */
+    var POOL = [
+      {
+        title: 'Add CSV export to the reports page',
+        question: 'Every column, or only what is on screen?',
+        outcome: 'Streams straight off the query — 50k rows in 1.2s. reports/export.go, one new route.',
+        child: { title: 'Bump the csv lib past the quoting bug', outcome: 'v1.4.2. Commas inside quoted fields fixed, three tests added.' }
+      },
+      {
+        title: 'Wire the search index up to the board',
+        question: 'Index the outcome summaries too, or titles only?',
+        outcome: 'Titles and summaries, 8ms p95. search/index.go plus the reindex job.',
+        child: { title: 'Reindex job has no backoff', outcome: 'Exponential, capped at five minutes. Stops it hammering a cold instance.' }
+      },
+      {
+        title: 'Rate-limit the public API',
+        question: 'Per token, or per IP for unauthenticated calls?',
+        outcome: '60/min per token, sliding window in the datastore. middleware/limit.go.',
+        child: { title: 'The staging bucket has no lifecycle rule', outcome: '30-day expiry set. 4 GB reclaimed on the first sweep.' }
+      },
+      {
+        title: 'Move uploads to signed URLs',
+        question: 'Keep the old proxy route for one release, or cut it now?',
+        outcome: 'Direct to blob storage, proxy kept behind a flag. Two handlers gone.',
+        child: { title: 'Signed URL expiry is not configurable', outcome: 'Now a board setting, default fifteen minutes.' }
+      },
+      {
+        title: 'Write the migration guide for v2',
+        question: 'Cover the removed webhook fields, or link the changelog?',
+        outcome: 'docs/migrating-v2.md — the four breaking changes, before and after.',
+        child: { title: 'Changelog is missing the v1.9 entries', outcome: 'Backfilled from the tags. Six releases documented.' }
+      },
+      {
+        title: 'Flaky signup test on CI',
+        question: 'Fix the race, or quarantine it until the rewrite?',
+        outcome: 'Race on the verification email — the test waits on the outbox now. auth/signup_test.go.',
+        child: { title: 'CI runner is a release behind', outcome: 'Pinned to the current image. The build is 40s faster.' }
+      },
+      {
+        title: 'Cache the board summary endpoint',
+        question: 'Stale-while-revalidate, or a hard 30s TTL?',
+        outcome: 'Stale-while-revalidate at 30s. p95 down from 210ms to 14ms.',
+        child: { title: 'Summary endpoint sends no cache headers', outcome: 'Cache-Control and ETag set. Six polls in ten are a 304 now.' }
+      },
+      {
+        title: 'Tell me when a duty needs me',
+        question: 'Email, or push to the phone?',
+        outcome: 'Web push, batched at five minutes so a busy hour is one buzz. notify/digest.go.',
+        child: { title: 'The digest has no unsubscribe link', outcome: 'One click, signed token, no login. Meets the spec.' }
+      },
+      {
+        title: 'Prune attachments for deleted duties',
+        question: 'Delete on the spot, or keep them for 30 days?',
+        outcome: '30-day grace, then a nightly sweep. 12 GB back on the first run.',
+        child: { title: 'Blob deletes are not idempotent', outcome: 'A missing key is a no-op now, so the sweep can safely retry.' }
+      },
+      {
+        title: 'Show which agent last touched a duty',
+        question: 'On the card, or only on the duty page?',
+        outcome: 'Both — the card carries the id, the page carries the whole thread.',
+        child: { title: 'Agent ids are not validated on connect', outcome: 'Now [a-z0-9-] up to 32. Two malformed tokens rejected.' }
+      }
+    ];
+
+    var lists = {}, counts = {};
+    COLS.forEach(function (k) {
+      lists[k] = root.querySelector('[data-list="' + k + '"]');
+      counts[k] = root.querySelector('[data-count="' + k + '"]');
+    });
+
+    function card(id, col, src, o) {
+      o = o || {};
+      return {
+        id: id, col: col, src: src, title: o.title || src.title,
+        agent: o.agent || null, origin: o.origin || 'you', blocker: !!o.blocker,
+        note: o.note || null, noteKind: o.noteKind || null, blockedBy: null
+      };
+    }
+
+    /* Ids match the markup above, so the first render adopts those elements instead of
+       replacing them and the board never flickers on load. */
+    var cards = [
+      card('c0', 'done', POOL[5], { agent: 'beta', note: POOL[5].outcome, noteKind: 'done' }),
+      card('c1', 'active', POOL[0], { agent: 'alpha' }),
+      card('c2', 'queued', POOL[2], {}),
+      card('c3', 'queued', POOL[3], {}),
+      card('c4', 'queued', POOL[4], {})
+    ];
+    var seq = 5, pool = 1, doneTotal = 18;
+
+    /* Order in this array is order on the board, so "goes to the top of its column" is
+       just "goes to the front of the list". */
+    function front(c) { cards.splice(cards.indexOf(c), 1); cards.unshift(c); }
+    function inCol(k) { return cards.filter(function (c) { return c.col === k; }); }
+
+    function idleAgent() {
+      return AGENTS.filter(function (a) {
+        return !inCol('active').some(function (c) { return c.agent === a; });
+      })[0] || null;
+    }
+
+    /* The next duty nobody is looking at, so two cards on screen never share a title.
+       The pool is deliberately longer than the board is tall — ten entries against the
+       nine or so slots the columns hold — because the alternative to finding a free one
+       is handing back a title that is already sitting two columns over. */
+    function nextEntry() {
+      var n, e;
+      for (n = 0; n < POOL.length; n++) {
+        e = POOL[(pool + n) % POOL.length];
+        if (!cards.some(function (c) { return c.src === e; })) {
+          pool = (pool + n + 1) % POOL.length;
+          return e;
+        }
+      }
+      // Nothing free: repeat something that is only in Done, where a repeat reads as
+      // history rather than as the same duty listed twice.
+      for (n = 0; n < POOL.length; n++) {
+        e = POOL[(pool + n) % POOL.length];
+        if (cards.every(function (c) { return c.src !== e || c.col === 'done'; })) {
+          pool = (pool + n + 1) % POOL.length;
+          return e;
+        }
+      }
+      pool = (pool + 1) % POOL.length;
+      return POOL[pool];
+    }
+
+    // --- the beats. Each returns the cards it moved, or false if it had nothing to do.
+    function claim() {
+      var a = idleAgent(), d = inCol('queued')[0];
+      if (!a || !d) return false;
+      d.col = 'active'; d.agent = a; d.note = null; d.noteKind = null;
+      return [d];
+    }
+
+    function ask() {
+      var d = inCol('active').filter(function (c) { return c.src.question; })[0];
+      if (!d) return false;
+      d.col = 'needs'; d.note = d.src.question; d.noteKind = 'ask';
+      front(d);
+      var moved = [d];
+      // The whole point of the page: the same write that parks the question frees the
+      // agent, so it is holding the next duty before you have finished reading it.
+      var next = inCol('queued')[0];
+      if (next) { next.col = 'active'; next.agent = d.agent; moved.push(next); }
+      return moved;
+    }
+
+    function discover() {
+      var d = inCol('active').filter(function (c) { return c.src.child; })[0];
+      if (!d) return false;
+      var kid = card('c' + seq++, 'queued', d.src.child, { origin: 'agent', blocker: true });
+      cards.unshift(kid);
+      d.col = 'blocked'; d.blockedBy = kid.id;
+      d.note = 'Waiting on: ' + kid.title; d.noteKind = 'wait';
+      return [kid, d];
+    }
+
+    function finish() {
+      var active = inCol('active');
+      if (!active.length) return false;
+      // Whatever something else is waiting behind goes first — that is what a blocker is.
+      var d = active.filter(function (c) {
+        return inCol('blocked').some(function (p) { return p.blockedBy === c.id; });
+      })[0] || active[0];
+      d.col = 'done'; d.note = d.src.outcome; d.noteKind = 'done';
+      front(d);
+      doneTotal++;
+      var moved = [d];
+      inCol('blocked').forEach(function (p) {
+        if (p.blockedBy !== d.id) return;
+        p.col = 'queued'; p.blockedBy = null; p.note = null; p.noteKind = null;
+        front(p);
+        moved.push(p);
+      });
+      return moved;
+    }
+
+    function answer() {
+      var d = inCol('needs')[0];
+      if (!d) return false;
+      // An answered duty resumes at the front of the queue rather than the back of it.
+      d.col = 'queued'; d.note = null; d.noteKind = null;
+      front(d);
+      return [d];
+    }
+
+    /* One cycle. Answering is last on purpose: it is the beat that empties Needs you, and
+       a board with two empty columns in the middle of it reads as a board with nothing
+       happening. Asking second and answering eighth means the question is sitting there
+       for six of the eight beats — which is also closer to the truth, since the whole
+       point is that it waits for you rather than the work waiting for it. */
+    var BEATS = [claim, ask, discover, claim, finish, claim, finish, answer];
+
+    function refill() {
+      while (inCol('queued').length < 3) {
+        cards.push(card('c' + seq++, 'queued', nextEntry(), {}));
+      }
+    }
+
+    // Anything past the third done card is below the clip, so dropping it is invisible.
+    function trim() {
+      inCol('done').slice(3).forEach(function (c) { cards.splice(cards.indexOf(c), 1); });
+    }
+
+    // --- rendering
+    var els = {};
+    Array.prototype.forEach.call(root.querySelectorAll('.bvcard'), function (el) {
+      els[el.getAttribute('data-id')] = el;
+    });
+    var hot = [];
+
+    function esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;'); }
+
+    function paint(el, c) {
+      var s = [c.title, c.agent, c.origin, c.blocker, c.note, c.noteKind].join('|');
+      if (el.__sig === s) return;
+      el.__sig = s;
+      var h = '<span class="bvcard__title">' + esc(c.title) + '</span><span class="bvcard__meta">';
+      if (c.blocker) h += '<span class="bvcard__tag bvcard__tag--blocker">blocker</span>';
+      h += '<span class="bvcard__tag">' + (c.origin === 'agent' ? 'from an agent' : 'from you') + '</span>';
+      if (c.agent) h += '<span class="bvcard__agent">' + esc(c.agent) + '</span>';
+      h += '</span>';
+      if (c.note) h += '<span class="bvcard__note bvcard__note--' + c.noteKind + '">' + esc(c.note) + '</span>';
+      el.innerHTML = h;
+    }
+
+    /* FLIP: note where every card is, move them all in the DOM, then hold each one at the
+       position it used to be in and let go a frame later. The browser does the travelling,
+       which is why a card crossing three columns costs nothing to animate. */
+    function render(animate, moved) {
+      var first = {}, id;
+      if (animate) {
+        for (id in els) first[id] = els[id].getBoundingClientRect();
+      }
+
+      var live = {};
+      COLS.forEach(function (k) {
+        var rows = inCol(k);
+        rows.forEach(function (c, i) {
+          live[c.id] = true;
+          var el = els[c.id];
+          if (!el) {
+            el = document.createElement('li');
+            el.className = 'bvcard is-in';
+            el.setAttribute('data-id', c.id);
+            els[c.id] = el;
+          }
+          paint(el, c);
+          var at = lists[k].children[i];
+          if (at !== el) lists[k].insertBefore(el, at || null);
+        });
+        counts[k].textContent = k === 'done' ? doneTotal : rows.length;
+      });
+
+      Object.keys(els).forEach(function (k) {
+        if (live[k]) return;
+        if (els[k].parentNode) els[k].parentNode.removeChild(els[k]);
+        delete els[k];
+      });
+
+      hot.forEach(function (k) { if (els[k]) els[k].classList.remove('is-hot'); });
+      hot = (moved || []).map(function (c) { return c.id; });
+      hot.forEach(function (k) { if (els[k]) els[k].classList.add('is-hot'); });
+
+      if (!animate) {
+        for (id in els) els[id].classList.remove('is-in');
+        return;
+      }
+
+      // Read every new position before writing a single transform, so the whole board
+      // costs one layout rather than one per card.
+      var invert = [];
+      for (id in els) {
+        var f = first[id];
+        if (!f) continue;
+        var l = els[id].getBoundingClientRect();
+        var dx = f.left - l.left, dy = f.top - l.top;
+        if (dx || dy) invert.push([els[id], dx, dy]);
+      }
+      invert.forEach(function (x) {
+        x[0].style.transition = 'none';
+        x[0].style.transform = 'translate(' + x[1] + 'px, ' + x[2] + 'px)';
+      });
+      requestAnimationFrame(function () {
+        invert.forEach(function (x) { x[0].style.transition = ''; x[0].style.transform = ''; });
+        for (var k in els) els[k].classList.remove('is-in');
+      });
+    }
+
+    // --- the runner
+    var beat = 0, timer = null, running = false;
+
+    function tick() {
+      // A beat with nothing to do hands over to the next one rather than costing a turn.
+      var moved = false;
+      for (var n = 0; n < BEATS.length && !moved; n++) moved = BEATS[beat++ % BEATS.length]();
+      refill();
+      trim();
+      render(true, moved || []);
+      timer = setTimeout(tick, BEAT_MS);
+    }
+
+    function start() { if (running) return; running = true; timer = setTimeout(tick, BEAT_MS); }
+    function stop() { running = false; clearTimeout(timer); }
+
+    render(false, []);
+
+    /* A board that moves when nobody asked it to is a board somebody has to look away
+       from. It stays still for anyone who asked for less motion, and while it is off
+       screen or its tab is in the background. */
+    if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+
+    var visible = true, onScreen = true;
+    function sync() { if (visible && onScreen) start(); else stop(); }
+
+    document.addEventListener('visibilitychange', function () {
+      visible = !document.hidden;
+      sync();
+    });
+    if (window.IntersectionObserver) {
+      new IntersectionObserver(function (entries) {
+        onScreen = entries[0].isIntersecting;
+        sync();
+      }, { threshold: 0.2 }).observe(root);
+    }
+    sync();
+  })();
+</script>
 {{end}}

@@ -220,3 +220,131 @@ p > code {
 .footer-links { display: flex; flex-wrap: wrap; gap: 1.25rem; }
 .footer-links a { color: var(--text-dim); text-decoration: none; font-size: 0.93rem; }
 .footer-links a:hover { color: var(--text); }
+
+/* --- the board, moving -------------------------------------------------- */
+/*
+   A mock-up of the console that plays the loop the page describes, because "the agent
+   parks the question and takes the next duty in the same breath" is a sentence, and the
+   thing it describes is a movement.
+
+   It is a picture, so the board itself is aria-hidden and the figcaption carries the
+   meaning. It is also inert without JavaScript: the markup ships a plausible board at
+   rest, and the script only ever moves cards that are already there.
+
+   The tokens are the console's, deliberately — someone who opens the app after seeing
+   this should recognise what they are looking at: panel on the page colour, cards on the
+   surface colour, exactly as the real board stacks them. Which is why it lives on a
+   `band-alt` — on a plain band the panel and the page would be the same colour. */
+.boardview {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.boardview-figure { margin: 0; }
+.boardview-figure figcaption {
+  margin-top: 0.9rem; color: var(--text-dim); font-size: 0.93rem; max-width: var(--measure);
+}
+
+.boardview__bar {
+  display: flex; align-items: center; gap: 0.5rem;
+  padding: 0.6rem 0.9rem;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  font-size: 0.85rem; color: var(--text-dim);
+}
+.boardview__name { font-weight: 620; color: var(--text); letter-spacing: -0.01em; }
+.boardview__live { margin-left: auto; display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.78rem; }
+.boardview__pulse {
+  width: 7px; height: 7px; border-radius: 50%; background: var(--ok);
+  animation: bv-pulse 2.4s ease-in-out infinite;
+}
+@keyframes bv-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.2; } }
+
+/* A window onto a board that carries on below the fold — same as the real one, which
+   scrolls. The mask is what stops a card being half-drawn at the bottom edge. */
+.boardview__cols {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 0.6rem;
+  padding: 0.8rem;
+  height: 23rem;
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(to bottom, #000 84%, transparent);
+  mask-image: linear-gradient(to bottom, #000 84%, transparent);
+}
+
+.bvcol { min-width: 0; }
+.bvcol__head {
+  display: flex; align-items: baseline; gap: 0.35rem;
+  padding: 0 0.15rem 0.35rem; margin-bottom: 0.55rem;
+  border-bottom: 1px solid var(--border);
+}
+.bvcol__title { font-size: 0.8rem; font-weight: 620; letter-spacing: -0.01em; }
+.bvcol__n { margin-left: auto; font-size: 0.75rem; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.bvcol__list { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.45rem; align-content: start; }
+
+.bvcard {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  padding: 0.5rem 0.55rem;
+  transition:
+    transform 0.55s cubic-bezier(0.2, 0.7, 0.2, 1),
+    opacity 0.35s ease,
+    border-color 0.5s ease,
+    box-shadow 0.5s ease;
+}
+/* The one frame a card exists before it is allowed to settle. */
+.bvcard.is-in { opacity: 0; transform: translateY(-10px) scale(0.96); }
+/* The card that just moved, so the eye knows where to look on a board with nine of them. */
+.bvcard.is-hot { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+
+.bvcard__title { display: block; font-size: 0.8rem; line-height: 1.35; font-weight: 560; }
+.bvcard__meta {
+  display: flex; flex-wrap: wrap; gap: 0.3rem; align-items: center;
+  margin-top: 0.35rem; font-size: 0.7rem; color: var(--text-dim);
+}
+.bvcard__tag {
+  border: 1px solid var(--border-strong); border-radius: 999px;
+  padding: 0.05em 0.45em; white-space: nowrap;
+}
+.bvcard__tag--blocker {
+  background: color-mix(in srgb, var(--warn) 14%, transparent);
+  color: var(--warn); border-color: currentColor; font-weight: 620;
+}
+.bvcard__agent { font-family: var(--mono); font-size: 0.68rem; }
+.bvcard__note {
+  margin-top: 0.4rem; padding-left: 0.45rem;
+  font-size: 0.72rem; line-height: 1.4; color: var(--text);
+  border-left: 2px solid var(--warn);
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+}
+.bvcard__note--done { border-left-color: var(--ok); }
+.bvcard__note--wait { border-left-color: var(--border-strong); color: var(--text-dim); }
+
+/* Narrow screens get the real board's answer to the same problem, which is to stop
+   pretending five columns fit and let the thing be swiped. You land on Needs you and
+   Queued, where the story starts, with the edge of the third column showing — the half a
+   card at the margin is the only affordance a horizontal strip needs.
+
+   It is not made focusable, unlike the code samples above, which scroll for the same
+   reason. Those carry content and a keyboard has to be able to reach them; this is a
+   picture, its figcaption says everything it says, and a focus stop inside an aria-hidden
+   region is a worse answer than the one it fixes. */
+@media (max-width: 880px) {
+  .boardview__cols {
+    grid-template-columns: repeat(5, 9.5rem);
+    height: 20rem;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scroll-snap-type: x proximity;
+    overscroll-behavior-x: contain;
+  }
+  .bvcol { scroll-snap-align: start; }
+  .bvcard { padding: 0.45rem 0.5rem; }
+  .bvcard__title { font-size: 0.75rem; }
+  .bvcard__note { font-size: 0.68rem; }
+}
