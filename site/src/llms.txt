@@ -45,7 +45,7 @@ plausible, ask before creating anything.
 
 ## What you are building
 
-Five instances and one function:
+Six instances and one function:
 
 | service   | name              | what it holds                                  |
 |-----------|-------------------|------------------------------------------------|
@@ -54,10 +54,12 @@ Five instances and one function:
 | channel   | `dutyboard-live`  | live board updates                             |
 | functions | `dutyboard`       | the state machine — every write goes through it |
 | blob      | `dutyboard-files` | screenshots and recordings on a duty            |
+| search    | `dutyboard-search`| finished work, so an agent can ask whether something was done before |
 
 USE THESE EXACT NAMES. The function falls back to all five, so using them means there is
 nothing to configure afterwards. If you must use different ones, you have to set matching
-`DUTYBOARD_DATASTORE` / `DUTYBOARD_AUTH` / `DUTYBOARD_CHANNEL` / `DUTYBOARD_BLOB` env
+`DUTYBOARD_DATASTORE` / `DUTYBOARD_AUTH` / `DUTYBOARD_CHANNEL` / `DUTYBOARD_BLOB` /
+`DUTYBOARD_SEARCH` env
 values on the functions instance, and that is a step this runbook does not cover.
 
 
@@ -69,6 +71,7 @@ create_instance  service=channel    name=dutyboard-live
 create_instance  service=datastore  name=dutyboard
 create_instance  service=functions  name=dutyboard
 create_instance  service=blob       name=dutyboard-files
+create_instance  service=search     name=dutyboard-search
 ```
 
 If auth or channel come back refused with "must be created in the console", you are talking
@@ -203,7 +206,8 @@ functions_deploy  instance=dutyboard  name=board  code=<the bundle>  activate=tr
     "datastore:dutyboard":   "full",
     "auth:dutyboard-auth":   "read",
     "channel:dutyboard-live":"write",
-    "blob:dutyboard-files":  "full"
+    "blob:dutyboard-files":  "full",
+    "search:dutyboard-search":"full"
   }
 ```
 
@@ -214,7 +218,8 @@ Those grants are the blast radius, so they are the least each service needs:
 `datastore` is `full` because deleting a board deletes its rows and delete sits above
 write; `auth` is `read` because it only verifies tokens; `channel` is `write` to publish
 and mint subscribe tokens; `blob` is `full` because deleting an attachment must remove the
-object, not just the row.
+object, not just the row; `search` is `full` for the same reason, since deleting a board has
+to remove its documents.
 
 Then let the browser reach it:
 
@@ -279,20 +284,22 @@ their account, not in DutyBoard's.
 
 ```
 GET https://<slug>-fn.altengine.app/board/health
-→ {"ok":true,"service":"dutyboard","version":"2.0.0","mcp":"/mcp","attachments":true}
+→ {"ok":true,"service":"dutyboard","version":"2.0.0","mcp":"/mcp","attachments":true,
+   "search":true,"single_holder":true}
 ```
 
-`attachments:false` means the blob instance or its grant is missing. Everything else works
-without it; screenshots and recordings do not.
+`attachments:false` means the blob instance or its grant is missing, and `search:false` the
+same for search. Everything else works without either; screenshots, and asking whether
+something has been done before, do not.
 
 
 ## After it is running
 
 Your user creates a board in the console, then mints an agent token on it (Settings →
 Agents & tokens). That token is what an agent uses. The function speaks MCP at
-`https://<slug>-fn.altengine.app/board/mcp` with the token as a bearer — nine tools:
+`https://<slug>-fn.altengine.app/board/mcp` with the token as a bearer — ten tools:
 `duty_poll`, `duty_claim`, `duty_checkpoint`, `duty_complete`, `duty_fail`, `duty_enqueue`,
-`duty_thread`, `duty_attachments`, `duty_attach`.
+`duty_thread`, `duty_search`, `duty_attachments`, `duty_attach`.
 
 An agent token is scoped to ONE board and can never read another. It is shown once.
 

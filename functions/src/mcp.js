@@ -19,6 +19,7 @@
 import { HttpError, json, readBoundedText } from "./http.js";
 import { pollDuties, claimDuty, enqueueDuty, checkpointDuty, completeDuty, failDuty, listThread, PRIORITIES, THREAD_KINDS } from "./duties.js";
 import { attachToDuty, listAttachments, MAX_BYTES, MAX_INLINE_BYTES } from "./attachments.js";
+import { searchDuties } from "./searching.js";
 import { VERSION } from "./version.js";
 
 const PROTOCOL_VERSION = "2025-06-18";
@@ -50,6 +51,9 @@ An ambiguity in the brief, a choice with consequences you cannot take back, a cr
 
 FINISHING
 Nothing is done because you believe it is done. Verify it, then duty_complete with an outcome_summary saying what changed and where — "Added GitHub OAuth via net/http; session verification in middleware/auth.go", not "completed the auth task". It is the only thing that survives your session. Then poll again. Use duty_fail only for work that genuinely cannot be done; anything a person could unblock is a needs_decision.
+
+BEFORE STARTING SOMETHING THAT SOUNDS FAMILIAR
+duty_search looks through the duties already finished on this board — their titles, briefs and outcome summaries. The board remembers work you have no memory of, done by other agents or by you in a session that is gone. Search before you rebuild something, and when you need to know HOW a thing was done: the outcome summary usually says, and the duty_id it gives you opens the full thread.
 
 SHOWING RATHER THAN DESCRIBING
 duty_attach puts a file on a duty — a screenshot of what you built, a recording of the failure, the log that explains it. duty_attachments reads what is there, including what a person attached for you; if a duty has attachments, look at them before asking about it.`;
@@ -173,6 +177,24 @@ const TOOLS = [
       required: ["duty_id"],
     },
     handler: listThread,
+  },
+  {
+    name: "duty_search",
+    title: "Search finished work",
+    description:
+      "Search the duties on this board that are already FINISHED, by their title, brief and outcome summary. Use it before starting something that sounds familiar, and when you need to know how a thing was done rather than that it was: the outcome summary of the duty that did it is usually the answer, and the duty_id lets you read its full thread. Open duties are not in here — duty_poll is what shows you those. The query is App Engine Search syntax: bare words, \"a phrase\", ~stemmed, title:word, AND / OR, -excluded. Indexing is not instant: a duty you have just completed may take a moment to become findable, so an empty result immediately after finishing something means nothing.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: s('What to look for. e.g. `rate limit`, `~authenticate`, `"webhook signature"`, `title:migration`.'),
+        project_id: s("Which board. Defaults to the one this token is scoped to."),
+        status: s("Restrict to duties that finished one way.", { enum: ["done", "failed", "any"], default: "done" }),
+        limit: { type: "integer", description: "How many results (1-25, default 10).", minimum: 1, maximum: 25 },
+        cursor: s("Continue a previous search from where it stopped."),
+      },
+      required: ["query"],
+    },
+    handler: searchDuties,
   },
   {
     name: "duty_attachments",

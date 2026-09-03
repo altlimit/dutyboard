@@ -315,12 +315,14 @@ only when you first try it hosted.
 | `/duty/complete` | agent | `active` → `done`. Requires an outcome summary. |
 | `/duty/fail` | agent | `→ failed`, with a reason. |
 | `/duty/thread` | both | The decision log for one duty. |
+| `/duty/search` | both | Finished duties matching a query, with their outcome summaries. |
 | `/duty/attach` | both | Reserve a file on a duty; answers with a URL to PUT the bytes to. |
 | `/duty/attachments` | both | The files on a duty, each with a short-lived signed URL. |
 | `/duty/attachment/delete` | both | Remove a file, and the object behind it. |
 | `/duty/resolve` | human | Answer a question; re-queue at the front. |
 | `/duty/update` · `/duty/delete` | human | Edit or remove a duty. |
 | `/board/open` | human | The board, its agents and a channel token — one call, for the console. |
+| `/board/reindex` | human | Index work finished before search was turned on. Resumable. |
 | `/projects/*` | human | `create`, `list`, `rename`, `delete`. |
 | `/tokens/*` | human | `mint`, `list`, `revoke`. |
 | `/live/token` | human | A subscribe-only channel token for one board. |
@@ -375,7 +377,13 @@ board, `400` naming the field and the values it accepts.
 - **Only a human resolves.** An agent posting `kind: "resolution"` is refused, or the
   decision log stops meaning what it says.
 - **`outcome_summary` is required to complete.** It is the only record that survives the
-  agent's session.
+  agent's session — and now the only one that can be *found*: finished duties are indexed
+  into a search instance, so an agent can ask "have we done this before, and how?" before
+  rebuilding something. Open duties are deliberately not indexed; the board already shows
+  those. The board is pinned with a **facet refinement**, not a query-string prefix, so
+  nothing a caller writes in a query can widen it to another board — including `-nothing`,
+  which matches everything. Search is optional: `/health` reports it, and a deployment
+  without a search instance works in every other way.
 
 ## Costs and bounds
 

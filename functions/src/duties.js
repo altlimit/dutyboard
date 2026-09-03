@@ -33,6 +33,7 @@ import { dutyId, threadId } from "./ids.js";
 import { putOp } from "./store.js";
 import { resolveProject, projectOfDuty, requireHuman, authorOf } from "./identity.js";
 import { sweepAttachments } from "./attachments.js";
+import { indexFinished, unindexDuties } from "./searching.js";
 
 export const STATUSES = ["queued", "active", "needs_decision", "blocked", "done", "failed"];
 export const PRIORITIES = ["immediate_blocker", "next", "backlog"];
@@ -494,6 +495,11 @@ async function finishDuty(ctx, body, terminal) {
   });
   if (parent) await ctx.publish(project.key, parent, { t: "duty", id: parent, status: "queued" });
 
+  // After the transaction, never inside it: making a duty findable must not be able to fail
+  // finishing one. This is the moment the outcome summary exists, which is the whole reason
+  // a finished duty is worth finding.
+  await indexFinished(ctx, duty, project, terminal, summary);
+
   return { ok: true, status: terminal, duty_id: duty.key, unblocked_duty_id: parent };
 }
 
@@ -602,6 +608,7 @@ export async function deleteDuty(ctx, body) {
   // And its files. Leaving the objects behind would be a slow leak nobody can see: the
   // rows that named them are gone, so nothing would ever list them again.
   await sweepAttachments(ctx, { field: "duty_id", value: duty.key });
+  await unindexDuties(ctx, [duty.key]);
   await ctx.store.delete("duties", [duty.key]);
   await ctx.publish(project.key, duty.key, { t: "duty", id: duty.key, status: "deleted" });
   return { ok: true, deleted: duty.key };

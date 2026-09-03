@@ -40,6 +40,7 @@ const AUTH = process.env.DUTYBOARD_AUTH || "dutyboard-auth";
 const CHANNEL = process.env.DUTYBOARD_CHANNEL || "dutyboard-live";
 const FN = process.env.DUTYBOARD_FN_INSTANCE || "dutyboard";
 const BLOB = process.env.DUTYBOARD_BLOB || "dutyboard-files";
+const SEARCH = process.env.DUTYBOARD_SEARCH || "dutyboard-search";
 // Where the console is served from, so the function will answer its calls. CORS is
 // enforced in both deployments, so this is not a local-only convenience.
 const PORT = process.env.DUTYBOARD_PORT || "5173";
@@ -168,6 +169,7 @@ async function provisionLocal({ signup, access, indexes }) {
   console.log(`    datastore  ${DS}           auto-index on, ${created} indexes declared`);
   console.log(`    channel    ${CHANNEL}      live board updates`);
   console.log(`    blob       ${BLOB}     attachments (created on first use)`);
+  console.log(`    search     ${SEARCH}    finding finished work (created on first use)`);
   console.log(`    functions  ${FN}           CORS: ${CONSOLE_ORIGINS.join(", ")}`);
   console.log(`\n  Next:  npm run deploy   (ALTENGINE_URL=${BASE} ALTENGINE_KEY=dev)`);
   console.log(`         npm run dev`);
@@ -255,6 +257,7 @@ async function provisionHosted({ signup, access, indexes }) {
     ["datastore", DS],
     ["functions", FN],
     ["blob", BLOB],
+    ["search", SEARCH],
   ]) {
     if (exists(service, name)) {
       console.log(`  ${service.padEnd(10)} ${name} — already there`);

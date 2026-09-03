@@ -338,6 +338,27 @@ input[aria-invalid="true"], textarea[aria-invalid="true"] { border-color: var(--
    Below it, one column at a time behind a row of status chips. A phone showing five
    columns side by side is showing none of them; sideways scrolling to find the one you
    wanted is worse than choosing it. */
+/* The board's search box. Sized so it does not crowd the two buttons beside it on a
+   laptop, and given the whole row on a phone, where those buttons wrap anyway. */
+.board-search { display: flex; gap: 0.4rem; }
+
+/* Search results are not board cards, even though they look like them. A card on the board
+   is a glance — three lines of question and stop, because a tall card pushes a column off
+   the screen. A result is the opposite: the outcome summary IS the answer you searched for,
+   so it is shown whole, and the cards are as wide as the panel rather than as wide as a
+   column. */
+.hits { list-style: none; margin-inline: 0; margin-bottom: 0; padding: 0; display: grid; gap: 0.6rem; }
+@media (min-width: 60rem) {
+  .hits { grid-template-columns: repeat(auto-fill, minmax(24rem, 1fr)); }
+}
+.hits .duty__ask {
+  display: block;
+  -webkit-line-clamp: none;
+  overflow: visible;
+  font-size: 0.88rem;
+}
+.board-search input { min-width: 12rem; }
+
 .board {
   display: grid;
   grid-template-columns: repeat(var(--cols, 5), minmax(0, 1fr));
@@ -550,6 +571,12 @@ th { font-size: 0.85rem; color: var(--text-dim); font-weight: 600; }
   /* Board controls become full-width rows rather than a cramped huddle in the corner. */
   .board-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; width: 100%; }
   .board-actions > *, .page-action { width: 100%; justify-content: center; }
+  /* The search box gets its own row above the buttons. `board-actions` is a GRID at this
+     width, so a flex-basis on the form does nothing — it needs a column span. Typing a
+     query into a 100px box is not searching. */
+  .board-search { grid-column: 1 / -1; order: -1; }
+  .board-search input { min-width: 0; flex: 1; }
+  .board-search button { width: auto; flex: 0 0 auto; }
 
   /* Two rows, not three: brand, theme and sign-out on one; the nav on its own. The
      signed-in name goes — it is the one thing here that tells you nothing you did not

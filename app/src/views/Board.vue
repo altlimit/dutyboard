@@ -55,6 +55,70 @@ const columns = ref({});
  *  runs at setup time and would hit the temporal dead zone. */
 const paged = ref(false);
 const agents = ref([]);
+
+/**
+ * Searching finished work.
+ *
+ * Only offered when the deployment has it — `/board/open` says so, rather than the page
+ * finding out by making a call that fails. The results are their own view rather than a
+ * sixth column: what you are looking for is not on this board's columns at all, it is
+ * something that was finished and forgotten, and putting it in a column would imply it is
+ * live work.
+ */
+const searchable = ref(false);
+const searchQuery = ref("");
+const searching = ref(false);
+const hits = ref(null);
+const reindexing = ref(false);
+const reindexed = ref(0);
+
+/**
+ * Index work that finished before search was turned on.
+ *
+ * Offered exactly where someone hits the problem — an empty result on a board that plainly
+ * has finished duties — because that is the only moment the explanation makes sense. Every
+ * board that existed before this feature has an empty index once, and a search that answers
+ * "nothing" for the whole history you turned it on to reach is worse than no search.
+ */
+async function reindex() {
+  reindexing.value = true;
+  error.value = "";
+  reindexed.value = 0;
+  try {
+    let cursor;
+    do {
+      const res = await api("/board/reindex", { project_id: props.projectId, cursor });
+      reindexed.value += res.indexed;
+      cursor = res.more ? res.cursor : null;
+    } while (cursor);
+    await runSearch();
+  } catch (err) {
+    error.value = err.message;
+  } finally {
+    reindexing.value = false;
+  }
+}
+
+async function runSearch() {
+  const q = searchQuery.value.trim();
+  if (!q) return clearSearch();
+  searching.value = true;
+  error.value = "";
+  try {
+    const res = await api("/duty/search", { project_id: props.projectId, query: q, limit: 25 });
+    hits.value = res.hits || [];
+  } catch (err) {
+    error.value = err.message;
+    hits.value = null;
+  } finally {
+    searching.value = false;
+  }
+}
+
+function clearSearch() {
+  searchQuery.value = "";
+  hits.value = null;
+}
 const error = ref("");
 const liveState = ref("connecting");
 const showForm = ref(false);
@@ -267,6 +331,7 @@ async function openBoard() {
     const res = await api("/board/open", { project_id: props.projectId });
     board.value = res.project || null;
     agents.value = res.agents || [];
+    searchable.value = res.search === true;
     connect(res.live || null);
   } catch (err) {
     error.value = err.message;
@@ -398,6 +463,17 @@ onUnmounted(() => {
         </p>
       </div>
       <div class="row board-actions">
+        <form v-if="searchable" class="board-search" role="search" @submit.prevent="runSearch">
+          <label class="sr-only" for="b-search">Search finished duties</label>
+          <input
+            id="b-search"
+            v-model="searchQuery"
+            type="search"
+            placeholder="Search finished work…"
+            :disabled="searching"
+          />
+          <button type="submit" :disabled="searching || !searchQuery.trim()">{{ searching ? "…" : "Search" }}</button>
+        </form>
         <button type="button" @click="loadAll">Refresh</button>
         <button class="primary" type="button" @click="showForm = !showForm" :aria-expanded="showForm">
           {{ showForm ? "Cancel" : "Add duty" }}
@@ -451,8 +527,49 @@ onUnmounted(() => {
       </p>
     </section>
 
+    <section v-if="hits" class="panel stack" aria-labelledby="hits-h">
+      <div class="panel__head">
+        <h2 id="hits-h">
+          {{ hits.length }} finished {{ hits.length === 1 ? "duty" : "duties" }} matching
+          <span class="mono">{{ searchQuery }}</span>
+        </h2>
+        <button type="button" @click="clearSearch">Back to the board</button>
+      </div>
+      <div v-if="!hits.length" class="stack">
+        <p class="muted small" style="margin: 0">
+          Nothing. Only finished duties are searchable, and one that has just finished takes a
+          moment to appear.
+        </p>
+        <p v-if="reindexed" class="muted small" style="margin: 0">
+          Indexed {{ reindexed }} finished {{ reindexed === 1 ? "duty" : "duties" }}. If this is
+          still empty, nothing on this board matches.
+        </p>
+        <p v-else class="small" style="margin: 0">
+          Work finished before search was turned on is not in the index yet.
+          <button type="button" class="link" :disabled="reindexing" @click="reindex">
+            {{ reindexing ? "Indexing…" : "Index this board's finished duties" }}
+          </button>
+        </p>
+      </div>
+      <ul v-else class="hits">
+        <li v-for="h in hits" :key="h.duty_id">
+          <router-link class="boardcard" :to="{ name: 'duty', params: { projectId, dutyId: h.duty_id } }">
+            <strong>{{ h.title }}</strong>
+            <span class="chips">
+              <span class="badge" :class="h.status === 'failed' ? 'badge--immediate_blocker' : ''">{{ h.status }}</span>
+              <span v-if="h.agent_id" class="nowrap">{{ h.agent_id }}</span>
+              <span v-if="h.finished_at" class="nowrap">{{ ago(h.finished_at) }}</span>
+            </span>
+            <span v-if="h.outcome_summary" class="duty__ask" style="border-left-color: var(--ok)">
+              {{ h.outcome_summary }}
+            </span>
+          </router-link>
+        </li>
+      </ul>
+    </section>
+
     <!-- Wide: every column at once, sharing the window. -->
-    <div v-if="wide" class="board" :style="{ '--cols': shownColumns.length }">
+    <div v-if="wide && !hits" class="board" :style="{ '--cols': shownColumns.length }">
       <BoardColumn
         v-for="col in shownColumns"
         :key="col.key"
@@ -463,8 +580,10 @@ onUnmounted(() => {
       />
     </div>
 
-    <!-- Narrow: one column, chosen. -->
-    <template v-else>
+    <!-- Narrow: one column, chosen. `v-else-if` and not `v-else`: with search results on
+         screen neither layout should render, and `v-else` would put the phone layout on a
+         desktop the moment the wide branch went false. -->
+    <template v-else-if="!hits">
       <div class="chips" role="group" aria-label="Show a status">
         <button
           v-for="col in shownColumns"
@@ -476,7 +595,10 @@ onUnmounted(() => {
           @click="picked = col.key"
         >
           {{ col.label }}
-          <span class="chip__n">{{ count(col.key) }}{{ columns[col.key].cursor ? "+" : "" }}</span>
+          <span class="chip__n">
+            {{ columns[col.key].total ?? count(col.key)
+            }}{{ columns[col.key].total == null && columns[col.key].cursor ? "+" : "" }}
+          </span>
         </button>
       </div>
 

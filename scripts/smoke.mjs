@@ -571,6 +571,62 @@ async function main() {
   });
   check("an oversized body is refused before it is parsed", huge.status === 413, huge.status);
 
+  // --- finished work is findable -------------------------------------------
+  //
+  // The point of outcome_summary is that it outlives the session that wrote it, and until
+  // now nothing could reach it: duty_poll returns only runnable work and duty_thread needs
+  // an id you do not have. Indexing is not synchronous, so this waits rather than asserting
+  // on the first try — a flaky test here would be worse than none.
+  if (health.search) {
+    let found = null;
+    for (let i = 0; i < 20 && !found; i++) {
+      const res = await call("/duty/search", { project_id: projectId, query: "composite index" }, agent);
+      found = (res.hits || [])[0] || null;
+      if (!found) await new Promise((r) => setTimeout(r, 250));
+    }
+    check("a finished duty can be found by words from its outcome", !!found, found);
+    check(
+      "and the hit carries the summary, not just an id",
+      found && /composite index/.test(found.outcome_summary || "") && !!found.title,
+      found,
+    );
+
+    const openOne = await call("/duty/search", { project_id: projectId, query: "docs" }, agent);
+    check(
+      "an unfinished duty is not in the index",
+      !(openOne.hits || []).some((h) => h.status !== "done" && h.status !== "failed"),
+      openOne.hits,
+    );
+
+    // The board is pinned by a FACET, outside the query string, so nothing the caller writes
+    // can widen it. A query string prefix would have made this a way to read another board.
+    // Work finished before search existed. Every board that predates the feature has an
+    // empty index once, and a search that answers "nothing" for the whole history you
+    // turned it on to reach is worse than no search at all.
+    const backfill = await call("/board/reindex", { project_id: projectId }, human);
+    check(
+      `a board can be reindexed (${backfill.indexed} finished duties)`,
+      backfill.indexed >= 1 && backfill.more === false,
+      backfill,
+    );
+    const agentReindex = await call("/board/reindex", { project_id: projectId }, agent, { expectStatus: true });
+    check("but only by a person, not an agent", agentReindex.status === 403, agentReindex);
+
+    const nosy = `smoke-nosy-${Date.now()}`;
+    await call("/projects/create", { name: "Nosy", project_id: nosy }, human);
+    const nosyToken = (await call("/tokens/mint", { project_id: nosy, name: "nosy" }, human)).token;
+    const escapes = [`project_id="${projectId}"`, `index OR project_id="${projectId}"`, "-nonexistent"];
+    const leaked = [];
+    for (const q of escapes) {
+      const res = await call("/duty/search", { query: q }, nosyToken);
+      if ((res.hits || []).length) leaked.push(q);
+    }
+    check(`no query escapes its board (${escapes.length} tried)`, leaked.length === 0, leaked);
+    await call("/projects/delete", { project_id: nosy, confirm: nosy }, human);
+  } else {
+    check("search is optional and this deployment says it is off", health.search === false, health);
+  }
+
   // --- the bounds that protect the bill -----------------------------------
   //
   // These exist because agents write here unattended and our own protocol tells them to
@@ -625,10 +681,12 @@ async function main() {
     "/duty/update": (d) => ({ duty_id: d, title: "no" }),
     "/duty/delete": (d) => ({ duty_id: d, confirm: d }),
     "/duty/thread": (d) => ({ duty_id: d }),
+    "/duty/search": () => ({ project_id: projectId, query: "anything" }),
     "/duty/attach": (d) => ({ duty_id: d, name: "x.png", size: 10, content_type: "image/png" }),
     "/duty/attachments": (d) => ({ duty_id: d }),
     "/duty/attachment/delete": () => ({ attachment_id: "att_nope" }),
     "/board/open": () => ({ project_id: projectId }),
+    "/board/reindex": () => ({ project_id: projectId }),
     "/projects/rename": () => ({ project_id: projectId, name: "mine now" }),
     "/projects/delete": () => ({ project_id: projectId, confirm: projectId }),
     "/tokens/mint": () => ({ project_id: projectId, name: "no" }),

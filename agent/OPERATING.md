@@ -60,6 +60,25 @@ duty_checkpoint(
   set_status="needs_decision")
 ```
 
+## Before you build something that sounds familiar
+
+**`duty_search`** looks through the duties already finished on this board — their titles,
+briefs and outcome summaries. The board remembers work you have no memory of: done by
+another agent, or by you in a session that no longer exists.
+
+Search when a duty sounds like something that has been done, and when you need to know
+*how* it was done rather than *that* it was. The outcome summary usually answers it
+outright, and the `duty_id` it hands back opens the whole thread if it does not.
+
+```
+duty_search(query="rate limit")
+duty_search(query="~authenticate")
+duty_search(query='"webhook signature"')
+```
+
+Only finished duties are in there — `duty_poll` is what shows you live work — and indexing
+is not instant, so an empty result immediately after finishing something means nothing.
+
 ## Report what you find, do not absorb it
 
 When you discover work that is not this duty, **`duty_enqueue`** it rather than quietly

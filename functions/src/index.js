@@ -39,6 +39,7 @@ import {
   listThread,
 } from "./duties.js";
 import { handleMcp } from "./mcp.js";
+import { reindexBoard, searchConfigured, searchDuties } from "./searching.js";
 import { VERSION } from "./version.js";
 
 
@@ -53,6 +54,7 @@ function configure(env) {
     authInstance: env.DUTYBOARD_AUTH || "dutyboard-auth",
     channelInstance: env.DUTYBOARD_CHANNEL || "dutyboard-live",
     blobInstance: env.DUTYBOARD_BLOB || "dutyboard-files",
+    searchInstance: env.DUTYBOARD_SEARCH || "dutyboard-search",
   };
 }
 
@@ -69,10 +71,12 @@ const ROUTES = {
   "/duty/update": updateDuty,
   "/duty/delete": deleteDuty,
   "/duty/thread": listThread,
+  "/duty/search": searchDuties,
   "/duty/attach": attachToDuty,
   "/duty/attachments": listAttachments,
   "/duty/attachment/delete": deleteAttachment,
   "/board/open": openBoard,
+  "/board/reindex": reindexBoard,
   "/projects/create": createProject,
   "/projects/list": listProjects,
   "/projects/rename": renameProject,
@@ -164,6 +168,9 @@ export default {
         // where it is deployed, which is exactly what routePath above exists to absorb.
         mcp: "/mcp",
         attachments: !!(env.blob && cfg.blobInstance),
+        // Whether finished work is findable. Optional like the others: a board without it
+        // works, it just cannot answer "have we done this before".
+        search: !!(env.search && cfg.searchInstance),
         // Whether the constraint that stops two agents holding one duty is actually in
         // place. It is created on demand, so it can fail — and a mutex that is silently
         // absent is worse than one nobody claimed to have.

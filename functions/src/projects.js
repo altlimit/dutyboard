@@ -8,6 +8,7 @@ import { slugify } from "./ids.js";
 import { requireHuman, resolveProject } from "./identity.js";
 import { liveConfigured, mintLive } from "./live.js";
 import { sweepAttachments } from "./attachments.js";
+import { searchConfigured, unindexDuties } from "./searching.js";
 
 const SWEEP_PAGE = 200;
 
@@ -105,6 +106,10 @@ export async function openBoard(ctx, body) {
     project: { project_id: project.key, name: project.name, created_at: project.created_at },
     agents,
     live,
+    // Whether this deployment can search finished work. Reported here rather than probed
+    // separately: the console needs it to decide whether to offer a search box at all, and
+    // it already has to make this call before it can draw anything.
+    search: searchConfigured(ctx),
   };
 }
 
@@ -163,9 +168,14 @@ async function sweep(ctx, collection, projectId) {
       keys_only: true,
     });
     if (!rows.length) return total;
-    await ctx.store.delete(collection, rows.map((r) => r.key));
-    total += rows.length;
-    if (rows.length < SWEEP_PAGE) return total;
+    const keys = rows.map((r) => r.key);
+    // A finished duty is also a search document. Unindexing it HERE, from the same page of
+    // keys the delete uses, is the only place that list exists — a search index has no
+    // delete-by-query, and once these rows are gone nothing could enumerate them again.
+    if (collection === "duties") await unindexDuties(ctx, keys);
+    await ctx.store.delete(collection, keys);
+    total += keys.length;
+    if (keys.length < SWEEP_PAGE) return total;
   }
 }
 
