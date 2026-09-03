@@ -1,0 +1,40 @@
+# What can be checked without an altengine.
+#
+# The suite that matters most — scripts/smoke.mjs, 83 assertions including the cross-tenant
+# matrix — needs a running altengine to talk to, so it is a local and pre-deploy gate rather
+# than a step here. Writing a pipeline that pretends otherwise would mean a green tick that
+# proves less than it looks like it proves.
+#
+# What IS here catches the things that break a deploy: a bundle that grew past the platform
+# cap, a bundle carrying an import the functions service will not resolve, a console that no
+# longer compiles.
+
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+
+      # Bundles the function and asserts what the platform requires of it: under 1MB, no
+      # unresolved imports, a default export. See functions/build.mjs.
+      - run: npm run build:fn
+
+      # The console. Fails on a template error, a bad import, or a component that no longer
+      # compiles — none of which the function build would notice.
+      - run: npm run build:app
+
+      # Every script parses. They are not imported by either build, so a syntax error in one
+      # would otherwise surface the first time someone ran a release step.
+      - run: for f in scripts/*.mjs functions/build.mjs; do node --check "$f"; done

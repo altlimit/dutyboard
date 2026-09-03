@@ -40,4 +40,21 @@ if (size > MAX_BYTES) {
   console.error(`✖ bundle is ${(size / 1024).toFixed(0)} KiB — the limit is 1024 KiB`);
   process.exit(1);
 }
+
+// The platform resolves NO imports. A bundle carrying one deploys fine and then fails at
+// the first request, in production, with a module error — so it is checked here, where the
+// answer is a filename instead of an incident. esbuild only leaves an import behind for
+// something it could not bundle (a bare specifier it was told to keep external, a URL), and
+// that is exactly the mistake worth catching.
+const code = await readFile(outfile, "utf8");
+const leftover = [...code.matchAll(/^\s*(?:import\s[^;]*?from\s*|import\s*)["']([^"']+)["']/gm)].map((m) => m[1]);
+if (leftover.length) {
+  console.error(`✖ bundle still imports: ${[...new Set(leftover)].join(", ")}`);
+  console.error(`  The functions service resolves no imports — everything must be inlined.`);
+  process.exit(1);
+}
+if (!/export\s*\{[^}]*\bas default\b|export default/.test(code)) {
+  console.error("✖ bundle has no default export — the service expects `export default { fetch }`");
+  process.exit(1);
+}
 console.log(`✔ functions/dist/bundle.js  ${(size / 1024).toFixed(1)} KiB`);
