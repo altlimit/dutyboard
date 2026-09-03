@@ -426,6 +426,34 @@ async function main() {
   const mine = await dsQuery("duties", { where: [{ field: "project_id", op: "=", value: projectId }], limit: 50 }, human);
   check("the console can read its own duties", mine.status === 200 && mine.docs.length === 3, mine);
 
+  // The board must show what the agent will take. These are two different queries against
+  // two different orderings — the console reads the datastore directly, the scheduler runs
+  // in the function — and for a while they disagreed: the column was newest-first while the
+  // agent took highest-priority-oldest, under a hint that said "highest priority first".
+  const nextForAgent = await call("/duty/poll", { agent_id: "alpha", limit: 1 }, agent);
+  const queuedColumn = await dsQuery(
+    "duties",
+    {
+      where: [
+        { field: "project_id", op: "=", value: projectId },
+        { field: "status", op: "=", value: "queued" },
+      ],
+      order: [
+        { field: "prio_rank", dir: "asc" },
+        { field: "created_at", dir: "asc" },
+      ],
+      limit: 1,
+    },
+    human,
+  );
+  const topOfColumn = (queuedColumn.docs[0] || {}).key;
+  const agentsNext = (nextForAgent.runnable_duties[0] || {}).id;
+  check(
+    "the top of the Queued column is the duty an agent claims next",
+    !!agentsNext && topOfColumn === agentsNext,
+    { column: topOfColumn, agent: agentsNext },
+  );
+
   const myThreads = await dsQuery(
     "threads",
     { where: [{ field: "duty_id", op: "=", value: soon.duty_id }], order: [{ field: "created_at", dir: "asc" }], limit: 50 },

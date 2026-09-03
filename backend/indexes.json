@@ -21,6 +21,7 @@
       "for": "THE OTHER HALF OF THE MUTEX. `holder` is '<project>:<agent>' while a duty is active and null otherwise, so one agent cannot hold two duties: the second claim's transaction is refused outright. The board is in the value because agent ids are only unique within a board. Nulls do not collide, so any number of duties may be unheld."
     },
     { "fields": ["owner_uid", "project_id", "status", "updated_at:desc"], "for": "console: one board column, most recently touched first" },
+    { "fields": ["owner_uid", "project_id", "status", "prio_rank", "created_at"], "for": "console: the Queued column, in the order the scheduler will take them — the same order as the index above it, so the top of that column is the duty an agent claims next" },
     { "fields": ["owner_uid", "project_id", "updated_at:desc"], "for": "console: whole-board activity" }
   ],
   "threads": [

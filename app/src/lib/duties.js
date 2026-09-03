@@ -3,13 +3,54 @@
 // Status is shown as a word, never as a colour alone — the colours here are an accent on
 // text that already says the same thing.
 
+/**
+ * How each column is ordered, and why it is not all the same.
+ *
+ * `queued` is ordered exactly as the SCHEDULER orders it — priority rank, then oldest —
+ * because the top of that column is a promise: it is the duty an agent will actually claim
+ * next. It used to be newest-first like everything else, and on a busy board that made the
+ * column a plausible-looking lie. The agent would take duty 0 while the board showed 245 at
+ * the top, and the hint above it said "highest priority first".
+ *
+ * `needs_decision` is oldest-first because the question waiting longest is the one that has
+ * been blocking someone longest, and newest-first buries it.
+ *
+ * Everything else is most-recently-touched, which is what "what is happening" means.
+ */
+const ORDERS = {
+  queued: [
+    { field: "prio_rank", dir: "asc" },
+    { field: "created_at", dir: "asc" },
+  ],
+  needs_decision: [{ field: "updated_at", dir: "asc" }],
+};
+const RECENT_FIRST = [{ field: "updated_at", dir: "desc" }];
+
+/** The `order` clause for one column's query. */
+export const columnOrder = (status) => ORDERS[status] || RECENT_FIRST;
+
+/** The same ordering, applied to rows already in hand — the working set arrives as one
+ *  query in a single order and has to be sorted per column after it is bucketed. */
+export function sortColumn(status, rows) {
+  const order = columnOrder(status);
+  return rows.sort((a, b) => {
+    for (const { field, dir } of order) {
+      const av = a[field] ?? 0;
+      const bv = b[field] ?? 0;
+      if (av === bv) continue;
+      return (av < bv ? -1 : 1) * (dir === "desc" ? -1 : 1);
+    }
+    return 0;
+  });
+}
+
 export const STATUS_COLUMNS = [
   {
     key: "needs_decision",
     label: "Needs you",
     hint: "An agent asked a question and moved on. Answer to put the duty back in the queue.",
   },
-  { key: "queued", label: "Queued", hint: "Waiting for an agent to claim it, highest priority first." },
+  { key: "queued", label: "Queued", hint: "Waiting for an agent to claim it, in the order an agent will take them." },
   { key: "active", label: "In progress", hint: "Claimed by an agent right now." },
   { key: "blocked", label: "Blocked", hint: "Waiting on a child duty an agent spawned." },
   { key: "done", label: "Done", hint: "Finished, with a permanent outcome summary." },

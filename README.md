@@ -362,7 +362,10 @@ board, `400` naming the field and the values it accepts.
   trip and the parent sits in `blocked` forever.
 - **The queue is priority, then FIFO.** `immediate_blocker` → `next` → `backlog`, and
   oldest-first within each. A resolution raises its duty to `immediate_blocker`, which is
-  what "back at the top" means.
+  what "back at the top" means. **The Queued column is ordered the same way**, so the card
+  at the top of it is the duty an agent will actually claim next — the board and the
+  scheduler are asserted to agree. `Needs you` is oldest-first for the same reason:
+  the question waiting longest is the one that has been blocking someone longest.
 - **Only a human resolves.** An agent posting `kind: "resolution"` is refused, or the
   decision log stops meaning what it says.
 - **`outcome_summary` is required to complete.** It is the only record that survives the

@@ -1,7 +1,7 @@
 <script setup>
 import { computed, onUnmounted, ref, watch } from "vue";
 import { api, query, subscribeLive } from "../lib/altengine.js";
-import { STATUS_COLUMNS, PRIORITIES, ago } from "../lib/duties.js";
+import { STATUS_COLUMNS, PRIORITIES, ago, columnOrder, sortColumn } from "../lib/duties.js";
 import BoardColumn from "../components/BoardColumn.vue";
 
 const props = defineProps({ projectId: { type: String, required: true } });
@@ -96,7 +96,7 @@ async function loadColumn(status, { append = false } = {}) {
         { field: "project_id", op: "=", value: props.projectId },
         { field: "status", op: "=", value: status },
       ],
-      order: [{ field: "updated_at", dir: "desc" }],
+      order: columnOrder(status),
       limit,
       cursor: append ? col.cursor || undefined : undefined,
     });
@@ -147,15 +147,21 @@ async function loadAgents() {
   }
 }
 
-/** Sort the working set into its columns. Rows arrive newest-first, so each column comes
- *  out newest-first without sorting again, and every one of them is complete — hence no
- *  cursor. `done` is not touched: it is loaded separately. */
+/** Sort the working set into its columns.
+ *
+ *  The rows arrive in ONE order — newest-first, which is what the single query asked for —
+ *  and the columns do not all want that. `queued` wants the scheduler's order so its top is
+ *  the duty an agent will claim next; `needs_decision` wants the longest-waiting question
+ *  first. Every column here is complete, so sorting in the browser is exact rather than an
+ *  approximation of a sort the server would have done — hence no cursor either.
+ *  `done` is not touched: it is loaded separately. */
 function bucketLive(rows) {
   for (const key of LIVE_STATUSES) columns.value[key] = { rows: [], cursor: null, loading: false };
   for (const duty of rows) {
     const col = columns.value[duty.status];
     if (col && duty.status !== "done") col.rows.push(duty);
   }
+  for (const key of LIVE_STATUSES) sortColumn(key, columns.value[key].rows);
 }
 
 /** The working set — one query, or one per column once it no longer fits in one.
