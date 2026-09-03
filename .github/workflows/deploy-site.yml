@@ -26,8 +26,8 @@
 name: deploy site
 
 on:
-  push:
-    branches: [main]
+  # push:
+  #   branches: [main]
   workflow_dispatch:
 
 # One deploy at a time, and never cancelled: activation is the last of three calls, and a run
