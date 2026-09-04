@@ -29,6 +29,11 @@ const showPriority = computed(() => d.value.priority === "immediate_blocker");
     </span>
 
     <span v-if="d.status === 'needs_decision' && d.last_question" class="duty__ask">{{ d.last_question }}</span>
+    <!-- Work that was delivered and came back. Worth seeing from the board: a queued card
+         that looks new is a different thing from one somebody has already had to reject. -->
+    <span v-else-if="d.reopen_note && d.status === 'queued'" class="duty__ask" style="border-left-color: var(--danger)">
+      {{ d.reopen_note }}
+    </span>
     <span v-else-if="d.status === 'done' && d.outcome_summary" class="duty__ask" style="border-left-color: var(--ok)">
       {{ d.outcome_summary }}
     </span>

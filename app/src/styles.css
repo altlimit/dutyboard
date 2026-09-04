@@ -485,6 +485,8 @@ video.file__shot { width: 7rem; }
 .entry__body { white-space: pre-wrap; }
 .options { display: flex; gap: 0.4rem; flex-wrap: wrap; margin-top: 0.5rem; }
 .entry--note { border-left: 3px solid var(--border-strong); }
+/* Sent back: the same red as `failed`, because that is what it says about the work. */
+.entry--reopen { border-left: 3px solid var(--danger); }
 /* The newest entry first, and the composer above the list — so writing a note and reading
    the last thing that happened are the same place on the screen, not opposite ends of it. */
 .composer textarea { min-height: 3.2rem; }

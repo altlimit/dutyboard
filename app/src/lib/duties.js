@@ -53,7 +53,7 @@ export const STATUS_COLUMNS = [
   { key: "queued", label: "Queued", hint: "Waiting for an agent to claim it, in the order an agent will take them." },
   { key: "active", label: "In progress", hint: "Claimed by an agent right now." },
   { key: "blocked", label: "Blocked", hint: "Waiting on a child duty an agent spawned." },
-  { key: "done", label: "Done", hint: "Finished, with a permanent outcome summary." },
+  { key: "done", label: "Done", hint: "Finished, with a permanent outcome summary. Open one to send it back if it did not work." },
   // `whenUsed`: rendered only while it has something in it. Failure is a real state an
   // agent can reach and it must be visible when it happens — but on most boards it never
   // does, and a permanently empty column costs every other column a share of the width.
@@ -90,6 +90,7 @@ export const THREAD_KIND_LABELS = {
   resolution: "Your answer",
   checkpoint: "Checkpoint",
   note: "Note",
+  reopen: "Sent back",
 };
 
 /** Relative time, for a board where "3m ago" is more useful than a timestamp. */

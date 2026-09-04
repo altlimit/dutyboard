@@ -22,6 +22,7 @@ const notice = ref("");
 const loading = ref(true);
 const answer = ref("");
 const note = ref("");
+const sendBack = ref("");
 const posting = ref(false);
 const editing = ref(false);
 const edit = ref({ title: "", brief: "", priority: "next", status: "queued" });
@@ -32,6 +33,9 @@ let refreshTimer = null;
 const flat = (doc) => ({ ...doc.data, key: String(doc.key) });
 
 const needsAnswer = computed(() => duty.value && duty.value.status === "needs_decision");
+
+/** Finished, one way or the other — the only state a duty can be sent back from. */
+const finished = computed(() => duty.value && (duty.value.status === "done" || duty.value.status === "failed"));
 
 /** The options an agent offered, if it offered any — answering with one click is the
  *  difference between a question answered in seconds and one answered tomorrow.
@@ -164,6 +168,15 @@ const resolve = (text) =>
     "Answered. The duty is back at the front of the queue with your answer attached.",
   );
 
+/** Done was wrong. The note is required, and it is the whole point: it goes on the record
+ *  and rides the row, so the next agent to claim this reads why it came back before it
+ *  reads the brief. */
+const reopen = () =>
+  act(async () => {
+    await api("/duty/reopen", { duty_id: props.dutyId, note: sendBack.value });
+    sendBack.value = "";
+  }, "Back in the queue, at the front, with your note attached.");
+
 /** A person's own entry on the record. Not an answer to anything — a note goes on a duty
  *  in any state, and does not move it.
  *
@@ -269,7 +282,11 @@ onUnmounted(() => {
             <select id="e-status" v-model="edit.status">
               <option v-for="s in ALL_STATUSES" :key="s" :value="s">{{ statusLabel(s) }}</option>
             </select>
-            <p class="hint">Moving a duty off "In progress" releases whichever agent was holding it.</p>
+            <p class="hint">
+              Moving a duty off "In progress" releases whichever agent was holding it. To send
+              finished work back, use <strong>Did not work?</strong> instead — it records why,
+              and that note is the first thing the next agent reads.
+            </p>
           </div>
           <div class="row">
             <button class="primary" type="submit" :disabled="posting">Save</button>
@@ -286,6 +303,47 @@ onUnmounted(() => {
         <div class="panel__head"><h2>Outcome</h2></div>
         <p class="prose">{{ duty.outcome_summary }}</p>
       </div>
+
+      <!-- Why it came back. Shown while it is unfinished again — once it is completed a
+           second time the Outcome panel above is the current answer, and this would be two
+           panels arguing about the same duty. -->
+      <div v-if="duty.reopen_note && !finished" class="panel" style="border-left: 3px solid var(--danger)">
+        <div class="panel__head">
+          <h2>Sent back</h2>
+          <span v-if="duty.reopen_count > 1" class="badge">{{ duty.reopen_count }} times</span>
+        </div>
+        <p class="prose">{{ duty.reopen_note }}</p>
+        <p v-if="duty.previous_outcome" class="muted small" style="margin: 0">
+          Previously reported as {{ duty.reopened_from === "failed" ? "failed" : "done" }}:
+          “{{ duty.previous_outcome }}”
+        </p>
+      </div>
+
+      <!-- Done is an agent's claim, not a fact. This is how you disagree with it. -->
+      <form v-if="finished" class="panel stack" @submit.prevent="reopen">
+        <h2 class="section-h">Did not work?</h2>
+        <p class="muted small" style="margin: 0">
+          Send it back to the front of the queue with a note saying what is wrong. The note
+          goes on the record and is the first thing the next agent reads — along with what
+          this attempt claimed it had done.
+        </p>
+        <div class="field">
+          <label for="send-back">What is wrong</label>
+          <textarea
+            id="send-back"
+            v-model="sendBack"
+            maxlength="4000"
+            required
+            rows="3"
+            placeholder="The export button still 500s on a board with no duties."
+          ></textarea>
+        </div>
+        <div>
+          <button class="primary" type="submit" :disabled="posting || !sendBack.trim()">
+            {{ posting ? "Sending…" : "Send back to the queue" }}
+          </button>
+        </div>
+      </form>
 
       <p v-if="duty.parent_id" class="small muted rel">
         Spawned from

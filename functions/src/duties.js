@@ -12,9 +12,9 @@
 //        │         └─────┬─────┘ checkpoint└──────────────────┘
 //        │ enqueue       │ complete / fail
 //        │ (immediate)   ▼
-//        │         ┌───────────┐
-//        ▼         │ done/failed│
-//   ┌─────────┐    └─────┬─────┘
+//        │         ┌────────────┐  reopen   back to `queued`, carrying the note that says
+//        ▼         │ done/failed├─────────► why — the one way out of a terminal state, and
+//   ┌─────────┐    └─────┬──────┘           only a human may take it
 //   │ blocked │◄─────────┘  the child finishing puts its blocked parent back in the queue
 //   └─────────┘
 //
@@ -504,6 +504,104 @@ async function finishDuty(ctx, body, terminal) {
 }
 
 /**
+ * `POST /duty/reopen` — done was wrong. Back to the queue, with a note saying why.
+ *
+ * The one transition out of a terminal state, and the reason it exists is that `done` is an
+ * agent's claim, not a fact. Something ships, you use it, it does not work — and until now
+ * the only moves were to edit the status by hand, which says nothing about what went wrong
+ * and leaves the duty findable in search as finished work, or to file a new duty, which
+ * starts a fresh history for the same job and loses the thread that explains it.
+ *
+ * The note is REQUIRED. A duty that comes back with no reason is worse than one that never
+ * came back: the next agent to claim it re-reads an outcome summary saying the work is done,
+ * and has nothing to tell it otherwise. So the note goes on the thread AND onto the row,
+ * where `poll` and `claim` carry it into the agent's context without a thread fetch.
+ *
+ * HUMAN ONLY, like resolve. An agent that finds a problem in finished work enqueues a duty
+ * for it — that is what the operating protocol tells it to do, and it keeps the board's
+ * history honest: reopening is a verdict on somebody's work, and the person whose board it
+ * is gets to pass it. It is also the one thing here that could loop: an agent able to
+ * revive its own failures could churn a board forever, and no cap makes that behaviour
+ * anything but a bug.
+ */
+export async function reopenDuty(ctx, body) {
+  requireHuman(ctx.caller);
+  const duty = await loadDuty(ctx, body.duty_id);
+  const project = projectOfDuty(ctx.caller, duty);
+  const now = Date.now();
+  const note = str(body.note ?? body.reason, "note", { required: true, max: 4000 });
+
+  if (duty.status !== "done" && duty.status !== "failed") {
+    throw conflict(`duty '${duty.key}' is ${duty.status}, so there is nothing to reopen`, { status: duty.status });
+  }
+
+  // Reopening moves a duty from the finished pile back into the unfinished one, so it is
+  // held to the same bound as creating one. Counted before anything is written.
+  const open = await ctx.store.countAtMost(
+    "duties",
+    [
+      { field: "project_id", op: "=", value: project.key },
+      { field: "status", op: "in", value: UNFINISHED },
+    ],
+    MAX_OPEN_DUTIES,
+  );
+  if (open >= MAX_OPEN_DUTIES) {
+    throw badRequest(
+      `this board already has ${MAX_OPEN_DUTIES} unfinished duties, which is the limit. ` +
+        `Finish or delete some before sending this one back.`,
+    );
+  }
+
+  // Front of the queue by default: work that was delivered and does not work is the most
+  // urgent thing on most boards, and it is why somebody is looking at this screen.
+  const priority = oneOf(body.priority, "priority", PRIORITIES, "immediate_blocker");
+  const terminal = duty.status;
+
+  const ops = [
+    putOp("threads", threadId(), {
+      duty_id: duty.key,
+      project_id: project.key,
+      owner_uid: project.owner_uid,
+      ...authorOf(ctx.caller),
+      kind: "reopen",
+      message: note,
+      metadata: { reopened_from: terminal },
+      created_at: now,
+    }),
+    putOp("duties", duty.key, {
+      ...stripMeta(duty),
+      status: "queued",
+      priority,
+      prio_rank: RANK[priority],
+      // What it claimed, kept — but not as `outcome_summary`, which on this board means
+      // "this is finished and here is what happened". Leaving it there would put an outcome
+      // on a queued duty and show a green Outcome panel above a duty nobody has redone.
+      outcome_summary: null,
+      previous_outcome: duty.outcome_summary || duty.previous_outcome || null,
+      reopen_note: note,
+      reopened_from: terminal,
+      reopened_at: now,
+      // Not a cap, a signal. Nothing refuses the fourth reopen — a person doing this is
+      // paying attention by definition — but a duty that keeps coming back is worth being
+      // able to see is coming back, on the duty and in the thread.
+      reopen_count: (duty.reopen_count || 0) + 1,
+      holder: null,
+      updated_at: now,
+    }),
+  ];
+
+  await ctx.store.transaction(ops);
+  await ctx.publish(project.key, duty.key, { t: "duty", id: duty.key, status: "queued" });
+
+  // Out of the finished index, best-effort like everything else search does. It is not
+  // finished any more, and a search for completed work that returns something sitting in
+  // the queue is how an agent concludes a thing is done when it is not.
+  await unindexDuties(ctx, [duty.key]);
+
+  return { ok: true, status: "queued", duty_id: duty.key, priority, reopened_from: terminal, reopen_count: (duty.reopen_count || 0) + 1 };
+}
+
+/**
  * `POST /duty/resolve` — the human half of the loop.
  *
  * Appends the resolution to the thread and puts the duty back at the top of the queue
@@ -583,6 +681,15 @@ export async function updateDuty(ctx, body) {
 
   await ctx.store.transaction(ops);
   await ctx.publish(project.key, duty.key, { t: "duty", id: duty.key, status: next.status });
+
+  // The status dropdown can also move a duty out of `done`, without a note and without
+  // meaning to — `/duty/reopen` is the path that says why, but this one exists and has to
+  // leave the same world behind it. A duty that is no longer finished must not still be in
+  // the index of finished work.
+  const wasTerminal = duty.status === "done" || duty.status === "failed";
+  const isTerminal = next.status === "done" || next.status === "failed";
+  if (wasTerminal && !isTerminal) await unindexDuties(ctx, [duty.key]);
+
   return { ok: true, duty_id: duty.key, status: next.status };
 }
 
@@ -709,6 +816,18 @@ function briefOf(duty, { full = false } = {}) {
     out.unblocked_context = {
       last_question: duty.last_question || null,
       human_resolution: duty.last_resolution,
+    };
+  }
+  // A duty that was finished and came back. This is the difference between an agent
+  // redoing the work from the brief and an agent reading what the last attempt claimed,
+  // then the one line saying why that was wrong — which is the whole reason the note is
+  // required and lives on the row rather than only on the thread.
+  if (duty.reopen_note) {
+    out.reopened = {
+      note: duty.reopen_note,
+      previously: duty.reopened_from || "done",
+      previous_outcome: duty.previous_outcome || null,
+      times: duty.reopen_count || 1,
     };
   }
   if (full) {

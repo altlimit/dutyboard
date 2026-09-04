@@ -52,6 +52,9 @@ An ambiguity in the brief, a choice with consequences you cannot take back, a cr
 FINISHING
 Nothing is done because you believe it is done. Verify it, then duty_complete with an outcome_summary saying what changed and where — "Added GitHub OAuth via net/http; session verification in middleware/auth.go", not "completed the auth task". It is the only thing that survives your session. Then poll again. Use duty_fail only for work that genuinely cannot be done; anything a person could unblock is a needs_decision.
 
+WORK THAT COMES BACK
+A duty may arrive carrying 'reopened'. It was finished — by you, or by an agent whose session is gone — and a person then used the result and it did not work. 'note' is why, and it is the most important line in that duty; 'previous_outcome' is what the last attempt claimed, which is a lead rather than a fact. Read the note before the brief and duty_thread before you rewrite anything: repeating what has already been tried is the failure mode here. You cannot send a duty back yourself, only a person can — if you find a problem in finished work that is not the duty you hold, duty_enqueue it.
+
 BEFORE STARTING SOMETHING THAT SOUNDS FAMILIAR
 duty_search looks through the duties already finished on this board — their titles, briefs and outcome summaries. The board remembers work you have no memory of, done by other agents or by you in a session that is gone. Search before you rebuild something, and when you need to know HOW a thing was done: the outcome summary usually says, and the duty_id it gives you opens the full thread.
 
@@ -65,7 +68,7 @@ const TOOLS = [
     name: "duty_poll",
     title: "Poll the board",
     description:
-      "Your whole view of the board in one call: the duty you are currently holding (if any) and the top of the runnable queue, highest priority first. A duty that was parked for a human decision comes back with unblocked_context carrying the question and the answer, so you never need to read a thread to resume. Call this at the start of a work loop and whenever you finish something.",
+      "Your whole view of the board in one call: the duty you are currently holding (if any) and the top of the runnable queue, highest priority first. A duty that was parked for a human decision comes back with unblocked_context carrying the question and the answer, so you never need to read a thread to resume. A duty that was FINISHED and sent back by a person comes back with `reopened` — what they said is wrong, and what the last attempt claimed it had done. Call this at the start of a work loop and whenever you finish something.",
     inputSchema: {
       type: "object",
       properties: {
@@ -79,7 +82,7 @@ const TOOLS = [
     name: "duty_claim",
     title: "Claim a duty",
     description:
-      "Take a queued duty and mark it active for you. You may hold only one active duty at a time — claiming while you already hold one fails and names the duty to finish first. Returns the full brief, so there is no need to fetch it separately.",
+      "Take a queued duty and mark it active for you. You may hold only one active duty at a time — claiming while you already hold one fails and names the duty to finish first. Returns the full brief, so there is no need to fetch it separately — including `reopened` if this duty was finished before and a person sent it back, in which case read that note before the brief.",
     inputSchema: {
       type: "object",
       properties: {

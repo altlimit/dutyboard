@@ -14,6 +14,23 @@ record of what was done — across sessions, and across whatever runs out of con
 4. **`duty_complete`** with a real `outcome_summary`.
 5. Poll again.
 
+## Work that comes back
+
+A duty you claim may arrive with `reopened`. That means it was finished — by you, or by an
+agent whose session is gone — and a person then used the result and it did not work.
+
+- `note` is why it came back. It is the most important line in the duty.
+- `previous_outcome` is what the last attempt claimed it had done. Treat it as a lead, not
+  as fact: something in it is wrong, and the note usually says which part.
+- `times` is how often this has happened. More than once means the obvious reading of the
+  brief has already been tried and did not hold.
+
+Read the note before the brief, and read `duty_thread` before you rewrite anything — the
+previous attempt's checkpoints are in there, and repeating them is the failure mode here.
+
+You cannot send a duty back yourself; only a person can. If you find a problem in work that
+is already finished and is not the duty you are holding, `duty_enqueue` it.
+
 ## Show, do not describe
 
 Some things are not worth a paragraph. **`duty_attach`** puts a file on a duty — a

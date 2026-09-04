@@ -25,9 +25,9 @@ blockers and outcomes only. A poll answers in a couple of hundred tokens.
        │ duty_enqueue  │ duty_complete    ▲ duty_checkpoint
        │ (immediate)   ▼                    (agent keeps working
        │         ┌───────────┐               on something else)
-       ▼         │   done    │
-  ┌─────────┐    └─────┬─────┘
-  │ blocked │◄─────────┘
+       ▼         │   done    │──────► back to `queued` when a person says it did not
+  ┌─────────┐    └─────┬─────┘         work, carrying the note that says why
+  │ blocked │◄─────────┘                (duty/reopen)
   └─────────┘   finishing the child re-queues its blocked parent
 ```
 
@@ -368,6 +368,7 @@ only when you first try it hosted.
 | `/duty/attachments` | both | The files on a duty, each with a short-lived signed URL. |
 | `/duty/attachment/delete` | both | Remove a file, and the object behind it. |
 | `/duty/resolve` | human | Answer a question; re-queue at the front. |
+| `/duty/reopen` | human | `done`/`failed` → `queued`, with a required note saying why. |
 | `/duty/update` · `/duty/delete` | human | Edit or remove a duty. |
 | `/board/open` | human | The board, its agents and a channel token — one call, for the console. |
 | `/board/reindex` | human | Index work finished before search was turned on. Resumable. |
@@ -424,6 +425,16 @@ board, `400` naming the field and the values it accepts.
   the question waiting longest is the one that has been blocking someone longest.
 - **Only a human resolves.** An agent posting `kind: "resolution"` is refused, or the
   decision log stops meaning what it says.
+- **Done is a claim, not a fact — and only a person may overturn it.** `/duty/reopen`
+  takes a finished duty back to the front of the queue, and the note saying why is
+  **required**: without it the next agent reads an outcome summary asserting the work is
+  done and has nothing to tell it otherwise. The note goes on the thread *and* onto the
+  row, so `poll` and `claim` hand it over as `reopened` — alongside `previous_outcome`,
+  what the last attempt claimed, kept but no longer presented as an outcome. The duty
+  leaves the finished search index, because a search for completed work that returns
+  something sitting in the queue is how an agent concludes a thing is done when it is not.
+  Agents cannot reopen: it is a verdict on somebody's work, and it is the one transition
+  that could loop if the thing being judged could take it.
 - **`outcome_summary` is required to complete.** It is the only record that survives the
   agent's session — and now the only one that can be *found*: finished duties are indexed
   into a search instance, so an agent can ask "have we done this before, and how?" before

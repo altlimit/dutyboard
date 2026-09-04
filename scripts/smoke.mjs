@@ -278,6 +278,70 @@ async function main() {
   const noSummary = await call("/duty/complete", { duty_id: later.duty_id, agent_id: "alpha" }, agent, { expectStatus: true });
   check("completing without a summary is refused", noSummary.status === 400, noSummary);
 
+  // --- done was wrong -----------------------------------------------------
+  //
+  // `done` is an agent's claim, not a fact. The transition back exists because the
+  // alternatives are worse: editing the status by hand says nothing about what went wrong
+  // and leaves the duty in the finished index, and a new duty starts a second history for
+  // the same job. What is asserted here is that the REASON survives — on the thread, on the
+  // row, and in what the next agent to claim it is handed.
+  const shipped = await call(
+    "/duty/enqueue",
+    { project_id: projectId, title: "Ship the CSV export", brief: "A button on the board that downloads every duty." },
+    human,
+  );
+  await call("/duty/claim", { duty_id: shipped.duty_id, agent_id: "alpha" }, agent);
+  await call(
+    "/duty/complete",
+    { duty_id: shipped.duty_id, agent_id: "alpha", outcome_summary: "Added GET /export.csv and a button on the board." },
+    agent,
+  );
+
+  const agentReopen = await call("/duty/reopen", { duty_id: shipped.duty_id, note: "mine now" }, agent, { expectStatus: true });
+  check("an agent cannot send a duty back", agentReopen.status === 403, agentReopen);
+
+  const noNote = await call("/duty/reopen", { duty_id: shipped.duty_id }, human, { expectStatus: true });
+  check("and a person cannot send one back without saying why", noNote.status === 400, noNote);
+
+  const sentBack = await call(
+    "/duty/reopen",
+    { duty_id: shipped.duty_id, note: "The button 500s on a board with no duties." },
+    human,
+  );
+  check("a finished duty can be sent back", sentBack.status === "queued", sentBack);
+  check("it goes to the front of the queue", sentBack.priority === "immediate_blocker", sentBack);
+  check("and it remembers which way it had finished", sentBack.reopened_from === "done", sentBack);
+
+  const backRow = await dsGet("duties", shipped.duty_id, human);
+  check("the outcome it claimed is no longer presented as one", backRow.outcome_summary === null, backRow.outcome_summary);
+  check("but it is kept", /export\.csv/.test(backRow.previous_outcome || ""), backRow.previous_outcome);
+
+  const backThread = await call("/duty/thread", { duty_id: shipped.duty_id }, human);
+  const reopenEntry = (backThread.entries || []).find((e) => e.kind === "reopen");
+  check("the reason is on the record", !!reopenEntry && /500s/.test(reopenEntry.message), reopenEntry);
+  check("attributed to the person who sent it back", reopenEntry && reopenEntry.author_type === "human", reopenEntry);
+
+  // The part that matters most: an agent that claims this must not read an outcome summary
+  // saying the work is done and nothing saying otherwise.
+  poll = await call("/duty/poll", { agent_id: "alpha" }, agent);
+  const backInQueue = poll.runnable_duties.find((d) => d.id === shipped.duty_id);
+  check("it is runnable again", !!backInQueue, titles(poll));
+  check("and it carries why it came back", backInQueue && /500s/.test(backInQueue.reopened?.note || ""), backInQueue);
+  check(
+    "along with what the last attempt claimed",
+    backInQueue && /export\.csv/.test(backInQueue.reopened?.previous_outcome || ""),
+    backInQueue && backInQueue.reopened,
+  );
+
+  const twice = await call("/duty/reopen", { duty_id: shipped.duty_id, note: "again" }, human, { expectStatus: true });
+  check("a duty that is already queued cannot be sent back", twice.status === 409, twice);
+
+  // Round two, because the count is the only way to see a duty that keeps coming back.
+  await call("/duty/claim", { duty_id: shipped.duty_id, agent_id: "alpha" }, agent);
+  await call("/duty/complete", { duty_id: shipped.duty_id, agent_id: "alpha", outcome_summary: "Fixed the empty case." }, agent);
+  const again = await call("/duty/reopen", { duty_id: shipped.duty_id, note: "Still 500s, now on a board with one duty." }, human);
+  check("sending it back a second time is counted", again.reopen_count === 2, again);
+
   // The write answers with what it wrote, so a caller never has to re-read the thread to
   // find out what it just said.
   const noted = await call("/duty/checkpoint", { duty_id: later.duty_id, agent_id: "alpha", kind: "note", message: "a note" }, agent);
@@ -467,7 +531,7 @@ async function main() {
   };
 
   const mine = await dsQuery("duties", { where: [{ field: "project_id", op: "=", value: projectId }], limit: 50 }, human);
-  check("the console can read its own duties", mine.status === 200 && mine.docs.length === 3, mine);
+  check("the console can read its own duties", mine.status === 200 && mine.docs.length === 4, mine);
 
   // The board must show what the agent will take. These are two different queries against
   // two different orderings — the console reads the datastore directly, the scheduler runs
@@ -598,6 +662,17 @@ async function main() {
       openOne.hits,
     );
 
+    // A duty that was sent back is not finished work any more. Leaving it indexed is how an
+    // agent searching for "have we done this" finds a duty sitting in the queue, reads an
+    // outcome summary for work that did not hold, and concludes it is done.
+    let stillIndexed = true;
+    for (let i = 0; i < 20 && stillIndexed; i++) {
+      const res = await call("/duty/search", { project_id: projectId, query: "export" }, agent);
+      stillIndexed = (res.hits || []).some((h) => h.duty_id === shipped.duty_id);
+      if (stillIndexed) await new Promise((r) => setTimeout(r, 250));
+    }
+    check("a duty sent back leaves the finished index", !stillIndexed);
+
     // The board is pinned by a FACET, outside the query string, so nothing the caller writes
     // can widen it. A query string prefix would have made this a way to read another board.
     // Work finished before search existed. Every board that predates the feature has an
@@ -611,6 +686,18 @@ async function main() {
     );
     const agentReindex = await call("/board/reindex", { project_id: projectId }, agent, { expectStatus: true });
     check("but only by a person, not an agent", agentReindex.status === 403, agentReindex);
+
+    // /duty/reopen is the path that records WHY, but the console's status dropdown can move
+    // a duty out of `done` too, and it has to leave the same world behind it. This is the
+    // duty the two checks above just found and reindexed, moved by hand.
+    await call("/duty/update", { duty_id: blocker.duty_id, status: "queued" }, human);
+    let byHand = true;
+    for (let i = 0; i < 20 && byHand; i++) {
+      const res = await call("/duty/search", { project_id: projectId, query: "composite index" }, agent);
+      byHand = (res.hits || []).some((h) => h.duty_id === blocker.duty_id);
+      if (byHand) await new Promise((r) => setTimeout(r, 250));
+    }
+    check("and editing a duty out of done also takes it out of the index", !byHand);
 
     const nosy = `smoke-nosy-${Date.now()}`;
     await call("/projects/create", { name: "Nosy", project_id: nosy }, human);
@@ -678,6 +765,7 @@ async function main() {
     "/duty/complete": (d) => ({ duty_id: d, outcome_summary: "no" }),
     "/duty/fail": (d) => ({ duty_id: d, reason: "no" }),
     "/duty/resolve": (d) => ({ duty_id: d, answer: "no" }),
+    "/duty/reopen": (d) => ({ duty_id: d, note: "no" }),
     "/duty/update": (d) => ({ duty_id: d, title: "no" }),
     "/duty/delete": (d) => ({ duty_id: d, confirm: d }),
     "/duty/thread": (d) => ({ duty_id: d }),
@@ -743,9 +831,9 @@ async function main() {
   const wrongConfirm = await call("/projects/delete", { project_id: projectId, confirm: "nope" }, human, { expectStatus: true });
   check("deleting a board needs the id repeated", wrongConfirm.status === 403, wrongConfirm);
 
-  // Three from the walk above, plus one target per cross-tenant probe. Derived rather than
+  // Four from the walk above, plus one target per cross-tenant probe. Derived rather than
   // a constant, so the sweep is asserted against what was actually created.
-  const expectedDuties = 3 + probes;
+  const expectedDuties = 4 + probes;
   const removed = await call("/projects/delete", { project_id: projectId, confirm: projectId }, human);
   check(`the board and its rows are swept (${expectedDuties} duties)`, removed.removed.duties === expectedDuties, removed.removed);
 
