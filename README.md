@@ -213,7 +213,7 @@ hosted on altengine too — no server, no image, no sixth thing to run:
 
 ```bash
 npm run build
-ALTENGINE_KEY=ak_… npm run deploy:site      # DUTYBOARD_STATIC_INSTANCE=dutyboard-site
+ALTENGINE_KEY=ak_… npm run deploy:site      # DUTYBOARD_STATIC_INSTANCE=dutyboard
 ```
 
 [`scripts/deploy-site.mjs`](scripts/deploy-site.mjs) makes three calls: it sends a manifest
@@ -234,10 +234,48 @@ nobody set up. It also passes `VITE_ALTENGINE_URL` at build time, because a cons
 with nothing set points at `http://127.0.0.1:9191` — a published page talking to a machine
 the visitor does not have.
 
-Not deployable yet: `api.altengine.net` answers `/v1/static/…` with "no such data-plane
-endpoint", so the service exists in the platform's source and not on the host. The script
-says exactly that rather than reporting it as a bad instance name. `npm run preview` is the
-stand-in until then.
+**The site's canonical host is one value**: `url` in
+[`site/data/site.json`](site/data/site.json). The page's canonical link, its Open Graph
+URL, `robots.txt` and `sitemap.xml` are all built from it — the last two used to hard-code
+`www.dutyboard.com`, which published a sitemap for a domain that does not resolve onto a
+host that does. Point it at wherever the site actually lives before building.
+
+**Two hosted names are not what you would guess**, and both were found the hard way:
+
+- **The subdomain is minted, not the instance name.** A functions instance called
+  `dutyboard` answers on `https://<random>-fn.altengine.app`, and a static instance called
+  `dutyboard` is served from `https://<random>-web.altengine.app`. `npm run deploy` asks the
+  platform where the function landed rather than guessing — it used to print
+  `<instance>-fn.altengine.app`, which 404s, and that is the exact string a person copies
+  into `VITE_API_URL`. The subdomain can be renamed in the console; it cannot be chosen over
+  the API.
+- **The console's auth instance must be the instance ID hosted.** Sign-in carries no API
+  key, so the platform has no org in which to resolve a name and answers `404 auth instance
+  not found`. `VITE_DATASTORE_INSTANCE` and `VITE_CHANNEL_INSTANCE` stay names, because
+  those calls carry an identity token that names the org.
+
+The live deployment, built and published with exactly the commands above:
+
+```bash
+VITE_ALTENGINE_URL=https://api.altengine.net \
+VITE_API_URL=https://45kxiyroiq4dr91k-fn.altengine.app/board \
+VITE_AUTH_INSTANCE=c48ec5c3-4045-4a1d-8012-84dd2568c111 \
+VITE_DATASTORE_INSTANCE=dutyboard VITE_CHANNEL_INSTANCE=dutyboard-live \
+VITE_FUNCTIONS_INSTANCE=dutyboard npm run build
+ALTENGINE_KEY=… DUTYBOARD_STATIC_INSTANCE=dutyboard npm run deploy:site
+```
+
+| | |
+| --- | --- |
+| site + console | <https://www.dutyboard.com/> |
+| the `board` function | `https://45kxiyroiq4dr91k-fn.altengine.app/board` |
+| instances | `dutyboard` (datastore, functions, static), `dutyboard-auth`, `dutyboard-live`, `dutyboard-files`, `dutyboard-search` |
+
+Sign-up is **off** on that auth instance: accounts are made with the MCP's
+`auth_create_user` and handed a one-time code by `auth_issue_signin_code`, so the public
+sign-up route is not a door onto someone else's quota. Both origins lists — the auth
+instance's and the function's CORS — name that site and nothing else, so pointing a local
+console at this backend means adding its origin first.
 
 ### Letting an agent install it
 

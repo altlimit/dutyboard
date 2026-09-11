@@ -10,6 +10,9 @@
 
 const env = {
   baseUrl: import.meta.env.VITE_ALTENGINE_URL || "http://127.0.0.1:9191",
+  // Hosted, this must be the auth instance's ID rather than its name: sign-in carries no
+  // API key, so there is no org to resolve a name inside and the platform answers 404.
+  // The datastore and channel below are named — those calls carry an identity token.
   auth: import.meta.env.VITE_AUTH_INSTANCE || "dutyboard-auth",
   datastore: import.meta.env.VITE_DATASTORE_INSTANCE || "dutyboard",
   channel: import.meta.env.VITE_CHANNEL_INSTANCE || "dutyboard-live",

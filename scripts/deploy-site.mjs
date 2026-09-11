@@ -37,7 +37,7 @@ const has = (name) => args.includes(name);
 
 const URL_BASE = (process.env.ALTENGINE_URL || "https://api.altengine.net").replace(/\/+$/, "");
 const KEY = process.env.ALTENGINE_KEY || "";
-const INSTANCE = flag("--instance") || process.env.DUTYBOARD_STATIC_INSTANCE || "dutyboard-site";
+const INSTANCE = flag("--instance") || process.env.DUTYBOARD_STATIC_INSTANCE || "dutyboard";
 const DIR = resolve(root, flag("--dir") || process.env.DUTYBOARD_SITE_DIR || "public");
 const DRY = has("--dry-run");
 const NO_ACTIVATE = has("--no-activate");

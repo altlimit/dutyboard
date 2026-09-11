@@ -2,10 +2,11 @@
 parse: text
 sitemap: "false"
 ---
+{{- $site := data "site.json" -}}
 User-agent: *
 Allow: /
 
 # The console is a signed-in application, not content.
 Disallow: /app/
 
-Sitemap: https://www.dutyboard.com/sitemap.xml
+Sitemap: {{$site.url}}/sitemap.xml

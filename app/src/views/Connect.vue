@@ -175,7 +175,12 @@ onMounted(() => {
       <div class="field">
         <label for="c-auth">Auth instance</label>
         <input id="c-auth" v-model="form.auth" required placeholder="dutyboard-auth" />
-        <p class="hint">Where your account lives. Sign-up and sign-in go here.</p>
+        <p class="hint">
+          Where your account lives. Sign-up and sign-in go here. On hosted altengine this is
+          the instance's <strong>id</strong>, the UUID the console shows — signing in carries no
+          API key, so there is nothing to resolve a name against and a name answers 404. The
+          other two fields take names.
+        </p>
       </div>
 
       <div class="field">

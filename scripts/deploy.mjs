@@ -70,8 +70,26 @@ if (!res.ok) {
 const out = JSON.parse(text);
 console.log(`✔ deployed ${FN_NAME} v${out.version} to functions instance '${FN_INSTANCE}' (${out.size_bytes} bytes)`);
 console.log(`  grants: ${Object.entries(grants).map(([k, v]) => `${k}=${v}`).join(" ")}`);
-console.log(
-  URL_BASE.includes("127.0.0.1") || URL_BASE.includes("localhost")
-    ? `  URL:    ${URL_BASE}/fn/${FN_INSTANCE}/${FN_NAME}`
-    : `  URL:    https://${FN_INSTANCE}-fn.altengine.app/${FN_NAME}`,
-);
+
+/**
+ * Where it actually answers — ASKED, not guessed.
+ *
+ * This used to print `https://<instance>-fn.altengine.app/<fn>`, which is wrong on any
+ * instance created since slugs were minted: the subdomain is a random label, not the name.
+ * The first hosted deploy of this app printed a host that 404s, and that string is the one
+ * thing here a person copies into VITE_API_URL. The listing endpoint knows the host, so it
+ * is one more call and no guesswork.
+ */
+const local = URL_BASE.includes("127.0.0.1") || URL_BASE.includes("localhost");
+if (local) {
+  console.log(`  URL:    ${URL_BASE}/fn/${FN_INSTANCE}/${FN_NAME}`);
+} else {
+  const listed = await fetch(`${URL_BASE}/v1/functions/${encodeURIComponent(FN_INSTANCE)}`, {
+    headers: { authorization: `Bearer ${KEY}` },
+  })
+    .then((r) => (r.ok ? r.json() : null))
+    .catch(() => null);
+  const url = (listed?.functions || []).find((f) => f.name === FN_NAME)?.url;
+  console.log(url ? `  URL:    ${url}` : `  URL:    on subdomain '${listed?.host || "(ask the console)"}'`);
+  console.log(`  Point the console at it with VITE_API_URL — the subdomain is minted, not the instance name.`);
+}

@@ -7,15 +7,20 @@
 #
 # IT SKIPS UNTIL IT IS CONFIGURED. With no ALTENGINE_KEY secret the job says what is missing
 # and passes, rather than painting main red on every push for a deploy nobody has set up yet.
-# That also covers the current state of things: the hosted platform's static service is not
-# live at api.altengine.net, so there is nothing to point this at until it is.
+#
+# The same commands have been run by hand against hosted altengine, so this is a pipeline for a
+# thing that works rather than a guess at one.
 #
 # What to set, once there is:
 #   secret ALTENGINE_KEY            an API key with `write` on the static instance — that
 #                                   level and no more: deploying is not a reason to hold a
 #                                   key that can read the datastore your customers' boards
 #                                   are in.
-#   var    ALTENGINE_STATIC_INSTANCE  the static instance name (default: dutyboard-site)
+#   var    ALTENGINE_STATIC_INSTANCE  the static instance name (default: dutyboard)
+#   var    VITE_AUTH_INSTANCE       the auth instance's ID. Hosted it must be the id and
+#                                   not the name — sign-in carries no API key, so a name
+#                                   resolves to nothing and the console 404s on every
+#                                   sign-in while looking perfectly healthy.
 #   var    VITE_API_URL             the deployed function's URL. Hosted, a functions instance
 #                                   answers on a MINTED subdomain that need not match its
 #                                   name, so the console cannot derive it and this is not
@@ -82,7 +87,7 @@ jobs:
         env:
           VITE_ALTENGINE_URL: ${{ vars.VITE_ALTENGINE_URL || 'https://api.altengine.net' }}
           VITE_API_URL: ${{ vars.VITE_API_URL }}
-          VITE_AUTH_INSTANCE: ${{ vars.VITE_AUTH_INSTANCE }}
+          VITE_AUTH_INSTANCE: ${{ vars.VITE_AUTH_INSTANCE }}   # hosted: the instance ID, not its name
           VITE_DATASTORE_INSTANCE: ${{ vars.VITE_DATASTORE_INSTANCE }}
           VITE_CHANNEL_INSTANCE: ${{ vars.VITE_CHANNEL_INSTANCE }}
           VITE_FUNCTIONS_INSTANCE: ${{ vars.VITE_FUNCTIONS_INSTANCE }}
@@ -97,7 +102,7 @@ jobs:
         env:
           ALTENGINE_KEY: ${{ secrets.ALTENGINE_KEY }}
           ALTENGINE_URL: ${{ vars.ALTENGINE_URL || 'https://api.altengine.net' }}
-          DUTYBOARD_STATIC_INSTANCE: ${{ vars.ALTENGINE_STATIC_INSTANCE || 'dutyboard-site' }}
+          DUTYBOARD_STATIC_INSTANCE: ${{ vars.ALTENGINE_STATIC_INSTANCE || 'dutyboard' }}
         run: npm run deploy:site
 
       # Not a failure: the build above still proves the site compiles, which is what a push to
