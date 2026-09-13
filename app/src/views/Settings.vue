@@ -55,9 +55,20 @@ async function reindex() {
 const mcpUrl = computed(() => `${config.api}/mcp${agentIdOf(fresh.value) ? `?agent=${agentIdOf(fresh.value)}` : ""}`);
 const agentIdOf = (t) => (t && t.default_agent_id) || "";
 
+/**
+ * The MCP server's name, which is the board's.
+ *
+ * It used to be `dutyboard` for every board, so the second board's command in the same repo
+ * was refused as a duplicate, and two boards in one session could not both be connected. With
+ * the board in the name each one is its own server, and its tools arrive as
+ * `mcp__dutyboard-<board>__duty_poll` — which is also how an agent holding two of them tells
+ * them apart. Board ids are already [a-z0-9-], which is what a server name allows.
+ */
+const serverName = computed(() => `dutyboard-${props.projectId}`);
+
 const mcpCommand = computed(
   () =>
-    `claude mcp add --transport http dutyboard "${mcpUrl.value}" \\\n  --header "Authorization: Bearer ${fresh.value ? fresh.value.token : "<your token>"}"`,
+    `claude mcp add --transport http ${serverName.value} "${mcpUrl.value}" \\\n  --header "Authorization: Bearer ${fresh.value ? fresh.value.token : "<your token>"}"`,
 );
 
 async function load() {
@@ -169,6 +180,11 @@ onMounted(load);
       <div class="row">
         <button type="button" @click="copy(mcpCommand)">Copy command</button>
       </div>
+      <p class="small muted" style="margin: 0">
+        Run it inside the repo this board is for: Claude Code keeps the server for that
+        directory only, so an agent there sees this board and no other. To disconnect, or to
+        replace a token you have revoked, <code class="mono">claude mcp remove {{ serverName }}</code>.
+      </p>
       <p class="small muted" style="margin: 0">
         Or over plain HTTP: <code class="mono">POST {{ config.api }}/duty/poll</code> with the same
         Authorization header.

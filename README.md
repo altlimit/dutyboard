@@ -347,10 +347,23 @@ screen shows.
 Mint a token on the board's **Agents & tokens** page. Then, as an MCP server:
 
 ```bash
-claude mcp add --transport http dutyboard \
+claude mcp add --transport http dutyboard-<board> \
   "https://<subdomain>-fn.altengine.app/board/mcp?agent=alpha" \
   --header "Authorization: Bearer db_…"
 ```
+
+**One connection is one board.** The URL is the same for every board; the token decides which
+one, and a token is refused on any board but its own. So an agent never has to tell boards
+apart — and the server is named after the board so you can have more than one:
+
+- **A board per repo** is the clean setup. Run the command inside that repo: Claude Code keeps
+  the server for that directory, so the agent working there sees that board and nothing else.
+- **Several boards in one session** each get their own server, and their tools arrive as
+  `mcp__dutyboard-payments__duty_poll` and `mcp__dutyboard-docs__duty_poll`. Say which board is
+  for what, or the agent will guess.
+
+`claude mcp remove dutyboard-<board>` disconnects one — which is also the way to swap in a
+new token after revoking the old.
 
 The agent gets `duty_poll`, `duty_claim`, `duty_enqueue`, `duty_checkpoint`,
 `duty_complete`, `duty_fail` and `duty_thread` as tools. `?agent=alpha` names the worker

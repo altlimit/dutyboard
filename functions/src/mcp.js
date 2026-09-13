@@ -3,7 +3,7 @@
 // The same handlers the REST routes call, exposed as tools so an agent runtime can add
 // DutyBoard as a server and get `duty_poll` / `duty_claim` / … with no shim in between:
 //
-//   claude mcp add --transport http dutyboard \
+//   claude mcp add --transport http dutyboard-<board> \
 //     "https://<sub>-fn.altengine.app/board/mcp?agent=alpha" \
 //     --header "Authorization: Bearer db_…"
 //
