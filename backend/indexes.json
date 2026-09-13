@@ -11,7 +11,13 @@
     "",
     "Every console query carries an extra `owner_uid = $auth.uid` filter that the row rules",
     "AND in server-side — which is why the console indexes lead with owner_uid and the",
-    "function's own (organization-level, no rules) do not."
+    "function's own (organization-level, no rules) do not.",
+    "",
+    "The `member:` entries serve the second branch of a shared board's read rule — `project_id in",
+    "$auth.claims.boards` — which the platform plans as a separate query with its own index. Declare",
+    "them: auto-indexing on hosted altengine builds only ONE missing index per call, so a read whose",
+    "two branches both lack one fails the first time it is asked (fixed in the platform at",
+    "altengineapp 9ac661a, not yet deployed at the time of writing)."
   ],
   "duties": [
     { "fields": ["project_id", "status", "prio_rank", "created_at"], "for": "the scheduler: the runnable queue, highest priority then oldest first" },
@@ -22,11 +28,13 @@
     },
     { "fields": ["owner_uid", "project_id", "status", "updated_at:desc"], "for": "console: one board column, most recently touched first" },
     { "fields": ["owner_uid", "project_id", "status", "prio_rank", "created_at"], "for": "console: the Queued column, in the order the scheduler will take them — the same order as the index above it, so the top of that column is the duty an agent claims next" },
-    { "fields": ["owner_uid", "project_id", "updated_at:desc"], "for": "console: whole-board activity" }
+    { "fields": ["owner_uid", "project_id", "updated_at:desc"], "for": "console: whole-board activity" },
+    { "fields": ["project_id", "status", "updated_at"], "for": "member: a board column or the working set, read by someone the board is shared with" }
   ],
   "threads": [
     { "fields": ["duty_id", "created_at"], "for": "the function: a duty's decision log" },
-    { "fields": ["owner_uid", "duty_id", "created_at"], "for": "console: the same log, read directly" }
+    { "fields": ["owner_uid", "duty_id", "created_at"], "for": "console: the same log, read directly" },
+    { "fields": ["duty_id", "project_id", "created_at"], "for": "member: the same log, read by someone the board is shared with" }
   ],
   "projects": [
     { "fields": ["owner_uid", "created_at:desc"], "for": "both: a person's boards" }
@@ -40,10 +48,15 @@
   ],
   "agents": [
     { "fields": ["owner_uid", "project_id", "last_seen_at:desc"], "for": "console: which agents are working this board" },
+    { "fields": ["project_id", "last_seen_at:desc"], "for": "member: the same strip; also the function's own board/open" },
     {
       "fields": ["active_duty_id"],
       "unique": true,
       "for": "THE MUTEX, not a query. Two agents cannot both hold one duty because the datastore refuses the second write of the same active_duty_id, which fails that whole claim transaction and leaves the duty untouched. Nulls do not collide, so any number of agents may be idle. The function creates this on demand too (see store.ensureUniqueIndex) — auto-indexing would never make it, because what a query needs is never unique."
     }
+  ],
+  "memberships": [
+    { "fields": ["uid"], "for": "the function: the boards one person is a member of — their claim, and their board list" },
+    { "fields": ["project_id", "created_at"], "for": "the function: a board's members, oldest first; also the sweep when a board is deleted" }
   ]
 }
