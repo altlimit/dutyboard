@@ -108,6 +108,14 @@ a { color: var(--accent); }
   border-radius: 4px;
 }
 
+/* A file input is visually hidden behind the label that opens it, so its focus ring has to be
+   drawn on that label. Without this, tabbing to "Choose files" or "Add files" puts keyboard
+   focus on something nobody can see. */
+input[type="file"].sr-only:focus-visible + label.btn {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
 .skip {
   position: absolute;
   left: -9999px;
@@ -226,7 +234,7 @@ button.link {
 }
 button.link:hover { background: none; }
 
-label { display: block; font-weight: 550; font-size: 0.9rem; margin-bottom: 0.25rem; }
+label, .label { display: block; font-weight: 550; font-size: 0.9rem; margin-bottom: 0.25rem; }
 input, textarea, select {
   font: inherit;
   width: 100%;
@@ -446,6 +454,9 @@ input[aria-invalid="true"], textarea[aria-invalid="true"] { border-color: var(--
 .uploads { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.4rem; }
 .uploads li { display: flex; gap: 0.6rem; align-items: center; }
 .uploads progress { flex: 1 1 auto; height: 0.5rem; }
+.draft-files { list-style: none; margin: 0.5rem 0 0; padding: 0; display: grid; gap: 0.3rem; }
+.draft-files li { display: flex; gap: 0.6rem; align-items: baseline; flex-wrap: wrap; }
+.draft-files .mono { overflow-wrap: anywhere; }
 
 .files { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.6rem; }
 .file {

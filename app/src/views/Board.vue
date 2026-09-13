@@ -1,6 +1,6 @@
 <script setup>
-import { computed, onUnmounted, ref, watch } from "vue";
-import { aggregate, api, query, subscribeLive } from "../lib/altengine.js";
+import { computed, onUnmounted, reactive, ref, watch } from "vue";
+import { aggregate, api, putSigned, query, subscribeLive } from "../lib/altengine.js";
 import { STATUS_COLUMNS, PRIORITIES, ago, columnOrder, sortColumn } from "../lib/duties.js";
 import BoardColumn from "../components/BoardColumn.vue";
 
@@ -124,6 +124,15 @@ const liveState = ref("connecting");
 const showForm = ref(false);
 const draft = ref({ title: "", brief: "", priority: "next" });
 const adding = ref(false);
+
+// Files chosen while writing the duty, uploaded once it exists. A screenshot of the bug is
+// often the clearest brief there is, and making someone add the duty, open it, and attach
+// from there is how the screenshot ends up described in words instead.
+const draftFiles = ref([]); // File[]
+const uploading = ref([]); // [{ name, pct }], reactive, while bytes are in flight
+// Files that did not make it onto a duty that did. Kept apart from `error` because it needs
+// a link to the duty — the duty exists, and that page is where to try again.
+const attachFailed = ref(null); // { dutyId, title, lines: string[] }
 
 // The phone layout's current column. `picked` stays null until someone chooses, so the
 // default can follow the board (see `focusColumn`) without overriding a real choice.
@@ -389,17 +398,74 @@ function connect(mint) {
   );
 }
 
+const human = (bytes) =>
+  bytes < 1024 ? `${bytes} B` : bytes < 1048576 ? `${Math.round(bytes / 1024)} KB` : `${(bytes / 1048576).toFixed(1)} MB`;
+
+function pickDraftFiles(event) {
+  draftFiles.value = [...draftFiles.value, ...(event.target.files || [])];
+  event.target.value = ""; // so the same file can be chosen again after removing it
+}
+
+const dropDraftFile = (file) => (draftFiles.value = draftFiles.value.filter((f) => f !== file));
+
+/**
+ * Attach files to a duty that has just been created. Returns a line per file that failed.
+ *
+ * EVERY ROW IS RESERVED BEFORE ANY BYTES MOVE. The duty is claimable the moment it exists,
+ * and an agent reads `attachment_count` to decide whether to look — so the count has to be
+ * right as early as possible, not after the slowest upload. Reserving is one small call per
+ * file; a video can take a minute. An agent that claims in that minute sees the file listed
+ * as uploading rather than a duty that appears to have none.
+ */
+async function attachAll(dutyId, files) {
+  const failed = [];
+  const reserved = [];
+  for (const file of files) {
+    try {
+      const minted = await api("/duty/attach", {
+        duty_id: dutyId,
+        name: file.name,
+        size: file.size,
+        content_type: file.type || "application/octet-stream",
+      });
+      reserved.push({ file, minted });
+    } catch (err) {
+      failed.push(`${file.name}: ${err.message}`);
+    }
+  }
+  for (const { file, minted } of reserved) {
+    const entry = reactive({ name: file.name, pct: 0 });
+    uploading.value = [...uploading.value, entry];
+    try {
+      await putSigned(minted.upload_url, minted.required_headers, file, (pct) => (entry.pct = pct));
+    } catch (err) {
+      // The reservation stays behind as a pending row and is swept later, exactly as on the
+      // duty page — reported, not cleaned up by hand.
+      failed.push(`${file.name}: ${err.message}`);
+    } finally {
+      uploading.value = uploading.value.filter((u) => u !== entry);
+    }
+  }
+  return failed;
+}
+
 async function addDuty() {
   adding.value = true;
   error.value = "";
+  attachFailed.value = null;
   try {
-    await api("/duty/enqueue", {
+    const created = await api("/duty/enqueue", {
       project_id: props.projectId,
       title: draft.value.title,
       brief: draft.value.brief,
       priority: draft.value.priority,
     });
+    // From here the duty EXISTS. A file that fails does not un-create it — rolling back work
+    // someone has written because a screenshot timed out would lose the part that mattered.
+    const failed = draftFiles.value.length ? await attachAll(created.duty_id, draftFiles.value) : [];
+    if (failed.length) attachFailed.value = { dutyId: created.duty_id, title: draft.value.title, lines: failed };
     draft.value = { title: "", brief: "", priority: "next" };
+    draftFiles.value = [];
     showForm.value = false;
     // A new duty is queued, by definition — no other column can have changed, so no other
     // column needs re-reading.
@@ -483,6 +549,15 @@ onUnmounted(() => {
 
     <p v-if="error" class="notice notice--error" role="alert">{{ error }}</p>
 
+    <div v-if="attachFailed" class="notice notice--error" role="alert">
+      <strong>“{{ attachFailed.title }}” was added, but not every file made it.</strong>
+      <ul style="margin: 0.3rem 0">
+        <li v-for="line in attachFailed.lines" :key="line">{{ line }}</li>
+      </ul>
+      Add them from
+      <router-link :to="{ name: 'duty', params: { projectId, dutyId: attachFailed.dutyId } }">the duty's page</router-link>.
+    </div>
+
     <p v-if="needsYou" class="notice notice--warn" role="status">
       {{ needsYou }} {{ needsYou === 1 ? "duty is" : "duties are" }} waiting on an answer from you. Agents have
       already moved on to other work — answering puts each one back at the front of the queue.
@@ -511,9 +586,44 @@ onUnmounted(() => {
           <option v-for="p in PRIORITIES" :key="p.key" :value="p.key">{{ p.label }} — {{ p.hint }}</option>
         </select>
       </div>
+      <div class="field">
+        <span class="label" id="d-files-label">Files <span class="muted">(optional)</span></span>
+        <div>
+          <input id="d-files" class="sr-only" type="file" multiple :disabled="adding" @change="pickDraftFiles" />
+          <label class="btn" for="d-files" :aria-disabled="adding">Choose files</label>
+        </div>
+        <ul v-if="draftFiles.length" class="draft-files" aria-labelledby="d-files-label">
+          <li v-for="f in draftFiles" :key="f.name + f.size + f.lastModified">
+            <span class="mono small">{{ f.name }}</span>
+            <span class="muted small">{{ human(f.size) }}</span>
+            <button type="button" class="link small" :disabled="adding" :aria-label="`Remove ${f.name}`" @click="dropDraftFile(f)">
+              Remove
+            </button>
+          </li>
+        </ul>
+        <p class="hint">
+          A screenshot of the bug, a recording, a log. Uploaded when you add the duty, and an
+          agent that picks it up reads them before asking about it.
+        </p>
+        <ul v-if="uploading.length" class="uploads" aria-live="polite">
+          <li v-for="u in uploading" :key="u.name">
+            <span class="mono small">{{ u.name }}</span>
+            <progress :value="u.pct" max="100">{{ u.pct }}%</progress>
+            <span class="muted small">{{ u.pct }}%</span>
+          </li>
+        </ul>
+      </div>
       <div>
         <button class="primary" type="submit" :disabled="adding || !draft.title || !draft.brief">
-          {{ adding ? "Adding…" : "Add to the queue" }}
+          {{
+            !adding
+              ? draftFiles.length
+                ? `Add to the queue with ${draftFiles.length} file${draftFiles.length === 1 ? "" : "s"}`
+                : "Add to the queue"
+              : uploading.length
+                ? "Uploading…"
+                : "Adding…"
+          }}
         </button>
       </div>
     </form>
