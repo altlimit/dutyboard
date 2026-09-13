@@ -131,7 +131,7 @@ const view = (row, extra) => ({
 export async function attachToDuty(ctx, body) {
   const target = requireBlob(ctx);
   const duty = await loadDuty(ctx, body.duty_id);
-  const project = projectOfDuty(ctx.caller, duty);
+  const project = await projectOfDuty(ctx.caller, duty, ctx.store);
 
   const name = str(body.name, "name", { required: true, max: 200 });
   const contentType = str(body.content_type, "content_type", { max: 120, fallback: "application/octet-stream" });
@@ -213,7 +213,7 @@ export async function attachToDuty(ctx, body) {
 export async function listAttachments(ctx, body) {
   const target = requireBlob(ctx);
   const duty = await loadDuty(ctx, body.duty_id);
-  projectOfDuty(ctx.caller, duty);
+  await projectOfDuty(ctx.caller, duty, ctx.store);
 
   const { rows } = await ctx.store.query("attachments", {
     where: [{ field: "duty_id", op: "=", value: duty.key }],
@@ -303,7 +303,7 @@ export async function deleteAttachment(ctx, body) {
   if (!row) throw notFound(`attachment '${key}' not found`);
 
   const duty = await loadDuty(ctx, row.duty_id);
-  const project = projectOfDuty(ctx.caller, duty);
+  const project = await projectOfDuty(ctx.caller, duty, ctx.store);
   if (row.project_id !== project.key) throw forbidden("that attachment is not on this board");
 
   // The row first: a row pointing at an object that is gone is a broken link on the page,

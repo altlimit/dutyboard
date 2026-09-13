@@ -4,6 +4,7 @@ import { useRouter } from "vue-router";
 import { api, getDocs, query, subscribeLive } from "../lib/altengine.js";
 import { ALL_STATUSES, PRIORITIES, THREAD_KIND_LABELS, ago, exactTime, priorityLabel, statusLabel } from "../lib/duties.js";
 import Attachments from "../components/Attachments.vue";
+import { user } from "../lib/session.js";
 
 const props = defineProps({ projectId: { type: String, required: true }, dutyId: { type: String, required: true } });
 const router = useRouter();
@@ -33,6 +34,10 @@ let refreshTimer = null;
 const flat = (doc) => ({ ...doc.data, key: String(doc.key) });
 
 const needsAnswer = computed(() => duty.value && duty.value.status === "needs_decision");
+
+/** Deleting a duty is the board owner's alone; a member does the work but does not remove it.
+ *  The row names its board's owner, so this needs no request. */
+const canDelete = computed(() => !!(duty.value && user.value && duty.value.owner_uid === user.value.uid));
 
 /** Finished, one way or the other — the only state a duty can be sent back from. */
 const finished = computed(() => duty.value && (duty.value.status === "done" || duty.value.status === "failed"));
@@ -292,7 +297,7 @@ onUnmounted(() => {
             <button class="primary" type="submit" :disabled="posting">Save</button>
             <button type="button" :disabled="posting" @click="editing = false">Cancel</button>
             <span class="spacer"></span>
-            <button class="danger" type="button" :disabled="posting" @click="remove">Delete</button>
+            <button v-if="canDelete" class="danger" type="button" :disabled="posting" @click="remove">Delete</button>
           </div>
         </form>
       </div>

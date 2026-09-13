@@ -11,14 +11,17 @@ import { badRequest, notFound, forbidden, str, intIn } from "./http.js";
 import { mintToken, sha256Hex } from "./ids.js";
 import { requireHuman, resolveProject } from "./identity.js";
 
-/** `POST /tokens/mint` — returns the one and only copy of the token. */
+/** `POST /tokens/mint` — returns the one and only copy of the token.
+ *
+ * Every token endpoint is the OWNER's alone. A token is how software gets onto a board, and
+ * who may hand that out is exactly what a member is not trusted with. */
 /** Live tokens per board. A token is a credential; a board accumulating hundreds of them
  *  is a board nobody is revoking, which is the state this is meant to make visible. */
 const MAX_TOKENS = 50;
 
 export async function createToken(ctx, body) {
   const caller = requireHuman(ctx.caller);
-  const project = await resolveProject(ctx.caller, body.project_id, ctx.store);
+  const project = await resolveProject(ctx.caller, body.project_id, ctx.store, { ownerOnly: true });
 
   const existing = await ctx.store.countAtMost(
     "tokens",
@@ -52,7 +55,7 @@ export async function createToken(ctx, body) {
 /** `POST /tokens/list` — names and hints only; the values are gone. */
 export async function listTokens(ctx, body) {
   requireHuman(ctx.caller);
-  const project = await resolveProject(ctx.caller, body.project_id, ctx.store);
+  const project = await resolveProject(ctx.caller, body.project_id, ctx.store, { ownerOnly: true });
   const limit = intIn(body.limit, "limit", 1, 100, 50);
   const { rows, cursor } = await ctx.store.query("tokens", {
     where: [{ field: "project_id", op: "=", value: project.key }],
@@ -78,7 +81,7 @@ export async function listTokens(ctx, body) {
  *  is still visible. `identify` refuses it from the next request onward. */
 export async function revokeToken(ctx, body) {
   requireHuman(ctx.caller);
-  const project = await resolveProject(ctx.caller, body.project_id, ctx.store);
+  const project = await resolveProject(ctx.caller, body.project_id, ctx.store, { ownerOnly: true });
   const id = str(body.token_id, "token_id", { required: true, max: 128 });
   const row = await ctx.store.get("tokens", id);
   if (!row) throw notFound(`token '${id}' not found`);

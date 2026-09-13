@@ -59,7 +59,7 @@ async function leave() {
         <router-link class="navlink" :to="{ name: 'boards' }">Boards</router-link>
         <router-link v-if="projectId" class="navlink" :to="{ name: 'board', params: { projectId } }">Board</router-link>
         <router-link v-if="projectId" class="navlink" :to="{ name: 'settings', params: { projectId } }">
-          Agents &amp; tokens
+          Settings
         </router-link>
       </nav>
 

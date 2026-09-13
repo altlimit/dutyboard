@@ -457,6 +457,10 @@ input[aria-invalid="true"], textarea[aria-invalid="true"] { border-color: var(--
 .draft-files { list-style: none; margin: 0.5rem 0 0; padding: 0; display: grid; gap: 0.3rem; }
 .draft-files li { display: flex; gap: 0.6rem; align-items: baseline; flex-wrap: wrap; }
 .draft-files .mono { overflow-wrap: anywhere; }
+.members { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.45rem; }
+.members li { display: flex; gap: 0.6rem; align-items: baseline; flex-wrap: wrap; }
+.members li > span:first-child { flex: 1 1 14rem; overflow-wrap: anywhere; }
+.members__id, .members__you { margin-left: 0.45rem; }
 
 .files { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.6rem; }
 .file {

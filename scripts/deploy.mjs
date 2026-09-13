@@ -37,7 +37,8 @@ if (!KEY) {
 
 // The blast radius of this function, and nothing wider.
 //   datastore full  — it deletes duties, threads and whole boards; delete sits above write
-//   auth      read  — verifyToken only; it never touches a user record
+//   auth      write — verifyToken, and setClaims: adding someone to a board writes the
+//                     `boards` claim their browser's reads are scoped by (functions/src/members.js)
 //   channel   read  — publish plus subscribe-token minting, neither of which writes state
 //   blob      full  — minting an upload URL is a write, and deleting an attachment (or a
 //                     whole board) has to remove the object, which sits above write
@@ -45,7 +46,7 @@ if (!KEY) {
 //                     is a delete, which sits above it
 const grants = {
   [`datastore:${DS}`]: "full",
-  [`auth:${AUTH}`]: "read",
+  [`auth:${AUTH}`]: "write",
   [`channel:${CHANNEL}`]: "write",
   [`blob:${BLOB}`]: "full",
   [`search:${SEARCH}`]: "full",

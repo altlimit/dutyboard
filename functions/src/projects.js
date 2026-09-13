@@ -9,6 +9,7 @@ import { requireHuman, resolveProject } from "./identity.js";
 import { liveConfigured, mintLive } from "./live.js";
 import { sweepAttachments } from "./attachments.js";
 import { searchConfigured, unindexDuties } from "./searching.js";
+import { sharedBoards, sweepMembers, syncAccess } from "./members.js";
 
 const SWEEP_PAGE = 200;
 
@@ -56,18 +57,30 @@ export async function createProject(ctx, body) {
   return { project_id: key, name };
 }
 
-/** `POST /projects/list` — the boards this person owns. */
+/** `POST /projects/list` — the boards this person owns, and the ones shared with them.
+ *
+ * Shared boards come on the first page only and are not paged: a person is a member of at
+ * most MAX_SHARED_BOARDS, so they are one bounded read, and a cursor over two differently
+ * ordered sets is a way to skip boards. */
 export async function listProjects(ctx, body) {
   const caller = requireHuman(ctx.caller);
   const limit = intIn(body.limit, "limit", 1, 100, 50);
-  const { rows, cursor } = await ctx.store.query("projects", {
-    where: [{ field: "owner_uid", op: "=", value: caller.uid }],
-    order: [{ field: "created_at", dir: "desc" }],
-    limit,
-    cursor: body.cursor || undefined,
-  });
+  const [{ rows, cursor }, access] = await Promise.all([
+    ctx.store.query("projects", {
+      where: [{ field: "owner_uid", op: "=", value: caller.uid }],
+      order: [{ field: "created_at", dir: "desc" }],
+      limit,
+      cursor: body.cursor || undefined,
+    }),
+    // This list is where someone looks for a board they have just been added to, so it is also
+    // where the token gets checked against the membership rows — and `refresh` tells the
+    // console its token is behind, in the same response rather than a second call.
+    body.cursor ? Promise.resolve(null) : syncAccess(ctx).catch(() => null),
+  ]);
   return {
-    projects: rows.map((p) => ({ project_id: p.key, name: p.name, created_at: p.created_at })),
+    projects: rows.map((p) => ({ project_id: p.key, name: p.name, created_at: p.created_at, role: "owner" })),
+    shared: access ? await sharedBoards(ctx, access.boards) : [],
+    refresh: !!(access && access.refresh),
     cursor,
   };
 }
@@ -103,7 +116,15 @@ export async function openBoard(ctx, body) {
   ]);
 
   return {
-    project: { project_id: project.key, name: project.name, created_at: project.created_at },
+    project: {
+      project_id: project.key,
+      name: project.name,
+      created_at: project.created_at,
+      owner_name: project.owner_name || "",
+    },
+    // Which of the two this caller is, so the console can leave out what a member cannot do
+    // rather than offer it and refuse.
+    role: project.owner_uid === ctx.caller.uid ? "owner" : "member",
     agents,
     live,
     // Whether this deployment can search finished work. Reported here rather than probed
@@ -122,7 +143,7 @@ const agentView = (a) => ({
 /** `POST /projects/rename` */
 export async function renameProject(ctx, body) {
   requireHuman(ctx.caller);
-  const project = await resolveProject(ctx.caller, body.project_id, ctx.store);
+  const project = await resolveProject(ctx.caller, body.project_id, ctx.store, { ownerOnly: true });
   const name = str(body.name, "name", { required: true, max: 120 });
   await ctx.store.putOne("projects", project.key, {
     ...withoutMeta(project),
@@ -141,7 +162,7 @@ export async function renameProject(ctx, body) {
  */
 export async function deleteProject(ctx, body) {
   requireHuman(ctx.caller);
-  const project = await resolveProject(ctx.caller, body.project_id, ctx.store);
+  const project = await resolveProject(ctx.caller, body.project_id, ctx.store, { ownerOnly: true });
   if (body.confirm !== project.key) {
     throw forbidden(`to delete this board, send confirm: "${project.key}"`);
   }
@@ -152,6 +173,8 @@ export async function deleteProject(ctx, body) {
     duties: await sweep(ctx, "duties", project.key),
     agents: await sweep(ctx, "agents", project.key),
     tokens: await sweep(ctx, "tokens", project.key),
+    // And everyone who was on it, with the board taken back out of their claims.
+    members: await sweepMembers(ctx, project.key),
   };
   await ctx.store.delete("projects", [project.key]);
   return { ok: true, deleted: project.key, removed };

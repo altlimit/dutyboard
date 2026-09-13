@@ -92,6 +92,34 @@ async function dsGet(collection, key, token) {
   return doc ? { ...doc.data, key: String(doc.key) } : {};
 }
 
+/** A datastore query, read the way the console reads it. A query that matches nothing may omit
+ *  `documents` rather than sending an empty array, so it is defaulted here as the console does. */
+async function dsQuery(collection, req, token) {
+  const res = await fetch(`${BASE}/v1/datastore/${encodeURIComponent(DS)}/ns/_default/col/${collection}/query`, {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+    body: JSON.stringify(req),
+  });
+  const json = await res.json().catch(() => ({}));
+  return { status: res.status, json, docs: json.documents || [] };
+}
+
+/**
+ * What the console does before its first direct read: ask the function whether this token can
+ * read what the person is allowed to, and refresh it if not. Returns the token to use.
+ *
+ * Reads are scoped by a rule with two branches — rows you own, or rows on a board in your
+ * `boards` claim — and a rule naming a claim the account does not have refuses the WHOLE read.
+ * A fresh account has no such claim until the function writes it.
+ */
+async function withAccess(tokens) {
+  const res = await call("/me/access", {}, tokens.id_token);
+  if (!res.refresh) return tokens.id_token;
+  const t = await authCall("/token/refresh", { refresh_token: tokens.refresh_token });
+  tokens.refresh_token = t.refresh_token;
+  return (tokens.id_token = t.id_token);
+}
+
 async function main() {
   console.log(`DutyBoard smoke test → ${API}\n`);
 
@@ -108,12 +136,21 @@ async function main() {
   // --- a person, a board, and a token for an agent ------------------------
   const email = `smoke_${Date.now()}@example.test`;
   const signup = await authCall("/signup", { email, name: "Smoke Tester", password: "correct-horse-battery-staple" });
-  const human = signup.id_token;
-  check("signed up a human", !!human);
+  check("signed up a human", !!signup.id_token);
+
+  // The hazard sharing introduced, pinned: a token issued before the account has a `boards`
+  // claim cannot read even its own rows, because the rule's member branch names that claim and
+  // a missing claim denies the whole rule. This is why the console syncs before reading.
+  const bare = await dsQuery("projects", { where: [{ field: "owner_uid", op: "=", value: "x" }], limit: 1 }, signup.id_token);
+  check("a token without the boards claim is refused a direct read", bare.status === 403, bare.status);
+  const human = await withAccess(signup);
+  const synced = await dsQuery("projects", { where: [{ field: "owner_uid", op: "=", value: "x" }], limit: 1 }, human);
+  check("and the same account reads once the function has given it the claim", synced.status === 200, synced.json);
 
   const projectId = `smoke-${Date.now().toString(36)}`;
+  const bystanderEmail = `bystander_${Date.now()}@example.test`;
   const other0 = await authCall("/signup", {
-    email: `bystander_${Date.now()}@example.test`,
+    email: bystanderEmail,
     name: "Bystander",
     password: "correct-horse-battery-staple",
   });
@@ -520,16 +557,6 @@ async function main() {
   // or, far worse, someone else's.
   // A query that matches nothing may omit `documents` rather than sending an empty array,
   // so every reader of a query result has to default it — the console does too.
-  const dsQuery = async (collection, req, token) => {
-    const res = await fetch(`${BASE}/v1/datastore/${encodeURIComponent(DS)}/ns/_default/col/${collection}/query`, {
-      method: "POST",
-      headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
-      body: JSON.stringify(req),
-    });
-    const json = await res.json().catch(() => ({}));
-    return { status: res.status, json, docs: json.documents || [] };
-  };
-
   const mine = await dsQuery("duties", { where: [{ field: "project_id", op: "=", value: projectId }], limit: 50 }, human);
   check("the console can read its own duties", mine.status === 200 && mine.docs.length === 4, mine);
 
@@ -588,7 +615,7 @@ async function main() {
     name: "Someone Else",
     password: "correct-horse-battery-staple",
   });
-  const theirs = await dsQuery("duties", { where: [{ field: "project_id", op: "=", value: projectId }], limit: 50 }, other.id_token);
+  const theirs = await dsQuery("duties", { where: [{ field: "project_id", op: "=", value: projectId }], limit: 50 }, await withAccess(other));
   check("another person sees none of this board", theirs.status === 200 && theirs.docs.length === 0, theirs.json);
 
   const theirApi = await call("/duty/poll", { project_id: projectId }, other.id_token, { expectStatus: true });
@@ -605,6 +632,92 @@ async function main() {
     { expectStatus: true },
   );
   check("nor write to its thread", theirCheckpoint.status === 404, theirCheckpoint);
+
+  // --- a board shared with someone -----------------------------------------
+  //
+  // A member does the work on a board; the owner keeps what can hurt it or reach outside it.
+  // Membership lives in rows the function checks on every write, and is copied into a claim
+  // the datastore rules check on every read — so both halves are exercised, and so is the moment
+  // they disagree.
+  const beforeAdd = await call("/board/members/add", { project_id: projectId, email: bystanderEmail }, other0.id_token, { expectStatus: true });
+  check("a stranger cannot add themselves to a board", beforeAdd.status === 403, beforeAdd);
+
+  const noAccount = await call("/board/members/add", { project_id: projectId, email: "nobody-here@example.test" }, human, { expectStatus: true });
+  check("adding an email with no account says so", noAccount.status === 404 && /account/.test(JSON.stringify(noAccount.json)), noAccount);
+
+  const added = await call("/board/members/add", { project_id: projectId, email: bystanderEmail.toUpperCase() }, human);
+  check("the owner adds someone by email, whatever its case", added.ok === true && added.member.identifier === bystanderEmail, added);
+
+  const roster = await call("/board/members/list", { project_id: projectId }, human);
+  check("and they are on the member list", roster.members.some((m) => m.identifier === bystanderEmail) && roster.you === "owner", roster);
+
+  const theirList = await call("/projects/list", {}, other0.id_token);
+  check("the board shows up for them as shared", theirList.shared.some((b) => b.project_id === projectId), theirList.shared);
+  check("and the list says their token is behind", theirList.refresh === true, theirList.refresh);
+
+  const memberToken = await withAccess(other0);
+  const memberRead = await dsQuery("duties", { where: [{ field: "project_id", op: "=", value: projectId }], limit: 50 }, memberToken);
+  check("with a refreshed token they read the board's duties directly", memberRead.status === 200 && memberRead.docs.length === 4, memberRead.status);
+  const memberColumn = await dsQuery(
+    "duties",
+    {
+      where: [
+        { field: "project_id", op: "=", value: projectId },
+        { field: "status", op: "=", value: "queued" },
+      ],
+      order: [
+        { field: "prio_rank", dir: "asc" },
+        { field: "created_at", dir: "asc" },
+      ],
+      limit: 1,
+    },
+    memberToken,
+  );
+  check("including an ordered column, as the board reads it", memberColumn.status === 200 && (memberColumn.docs[0] || {}).key === topOfColumn, memberColumn.status);
+  const memberThread = await dsQuery(
+    "threads",
+    { where: [{ field: "duty_id", op: "=", value: soon.duty_id }], order: [{ field: "created_at", dir: "asc" }], limit: 50 },
+    memberToken,
+  );
+  check("and a duty's decision log", memberThread.status === 200 && memberThread.docs.length === myThreads.docs.length, memberThread.status);
+
+  const memberOpen = await call("/board/open", { project_id: projectId }, memberToken);
+  check("the board tells them they are a member", memberOpen.role === "member", memberOpen.role);
+
+  const memberDuty = await call("/duty/enqueue", { project_id: projectId, title: "Filed by a member", brief: "Work from someone the owner added." }, memberToken);
+  check("a member adds work to the board", !!memberDuty.duty_id, memberDuty);
+  const memberDutyRow = await dsGet("duties", memberDuty.duty_id, human);
+  check("and the owner sees it, because the row still names the board's owner", memberDutyRow.owner_uid && memberDutyRow.title === "Filed by a member", memberDutyRow);
+
+  const memberNote = await call("/duty/checkpoint", { duty_id: soon.duty_id, kind: "note", message: "a member's note" }, memberToken);
+  check("a member writes on a duty's thread, as themselves", memberNote.entry && memberNote.entry.author_id === other0.user.uid, memberNote.entry);
+
+  const ownerOnly = [
+    ["/duty/delete", { duty_id: memberDuty.duty_id, confirm: memberDuty.duty_id }],
+    ["/tokens/mint", { project_id: projectId, name: "member's token" }],
+    ["/tokens/list", { project_id: projectId }],
+    ["/projects/rename", { project_id: projectId, name: "renamed by a member" }],
+    ["/projects/delete", { project_id: projectId, confirm: projectId }],
+    ["/board/members/add", { project_id: projectId, email }],
+    ["/board/members/remove", { project_id: projectId, uid: signup.user.uid }],
+  ];
+  const allowed = [];
+  for (const [path, body] of ownerOnly) {
+    const res = await call(path, body, memberToken, { expectStatus: true });
+    if (res.status < 400) allowed.push(`${path} ${res.status}`);
+  }
+  check(`a member is refused everything that is the owner's (${ownerOnly.length} tried)${allowed.length ? `: ${allowed.join(", ")}` : ""}`, allowed.length === 0);
+
+  await call("/duty/delete", { duty_id: memberDuty.duty_id, confirm: memberDuty.duty_id }, human);
+  check("the owner can delete what a member filed", (await dsGet("duties", memberDuty.duty_id, human)).title === undefined);
+
+  const unshared = await call("/board/members/remove", { project_id: projectId, uid: other0.user.uid }, human);
+  check("the owner removes them", unshared.removed === true, unshared);
+  const writeAfterRemoval = await call("/duty/enqueue", { project_id: projectId, title: "too late", brief: "no" }, memberToken, { expectStatus: true });
+  check("and their next write is refused at once, whatever their token says", writeAfterRemoval.status === 403, writeAfterRemoval);
+  const refreshedAfterRemoval = await withAccess(other0);
+  const afterHeal = await dsQuery("duties", { where: [{ field: "project_id", op: "=", value: projectId }], limit: 50 }, refreshedAfterRemoval);
+  check("and once their token is refreshed they read nothing", afterHeal.status === 200 && afterHeal.docs.length === 0, afterHeal.status);
 
   // --- what is actually deployed ------------------------------------------
   //
@@ -775,6 +888,9 @@ async function main() {
     "/duty/attachment/delete": () => ({ attachment_id: "att_nope" }),
     "/board/open": () => ({ project_id: projectId }),
     "/board/reindex": () => ({ project_id: projectId }),
+    "/board/members/list": () => ({ project_id: projectId }),
+    "/board/members/add": () => ({ project_id: projectId, email: bystanderEmail }),
+    "/board/members/remove": () => ({ project_id: projectId, uid: signup.user.uid }),
     "/projects/rename": () => ({ project_id: projectId, name: "mine now" }),
     "/projects/delete": () => ({ project_id: projectId, confirm: projectId }),
     "/tokens/mint": () => ({ project_id: projectId, name: "no" }),
@@ -786,6 +902,7 @@ async function main() {
     // excluded deliberately, and named here so the exclusion is a decision on the record.
     "/projects/create": null,
     "/projects/list": null,
+    "/me/access": null,
   };
 
   const uncovered = ROUTE_PATHS.filter((p) => !(p in outsiderArgs));

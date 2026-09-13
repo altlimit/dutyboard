@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import { api } from "../lib/altengine.js";
+import { user as me } from "../lib/session.js";
 import { config } from "../config.js";
 import { ago } from "../lib/duties.js";
 
@@ -18,6 +19,60 @@ const agentId = ref("");
 const fresh = ref(null);
 const copied = ref(false);
 const confirmDelete = ref("");
+
+// Who this caller is on the board, from the same `/board/open` the board makes. Until it is
+// known nothing owner-only is drawn: a member briefly shown a token form they cannot use is a
+// page that looks broken for a second and then changes its mind.
+const role = ref(null); // "owner" | "member"
+const isOwner = computed(() => role.value === "owner");
+const ownerName = ref("");
+
+const members = ref([]);
+const maxMembers = ref(0);
+const memberEmail = ref("");
+const memberNotice = ref("");
+
+async function loadMembers() {
+  const res = await api("/board/members/list", { project_id: props.projectId });
+  members.value = res.members || [];
+  maxMembers.value = res.max_members || 0;
+}
+
+async function addMember() {
+  busy.value = true;
+  error.value = "";
+  memberNotice.value = "";
+  try {
+    const res = await api("/board/members/add", { project_id: props.projectId, email: memberEmail.value });
+    const who = res.member.name || res.member.identifier;
+    memberNotice.value = res.already
+      ? `${who} is already on this board.`
+      : `Added ${who}. They see this board the next time they open DutyBoard.`;
+    memberEmail.value = "";
+    await loadMembers();
+  } catch (err) {
+    error.value = err.message;
+  } finally {
+    busy.value = false;
+  }
+}
+
+async function removeMember(m) {
+  const who = m.name || m.identifier;
+  if (!confirm(`Remove ${who} from this board? They can no longer change anything on it.`)) return;
+  busy.value = true;
+  error.value = "";
+  memberNotice.value = "";
+  try {
+    await api("/board/members/remove", { project_id: props.projectId, uid: m.uid });
+    memberNotice.value = `Removed ${who}.`;
+    await loadMembers();
+  } catch (err) {
+    error.value = err.message;
+  } finally {
+    busy.value = false;
+  }
+}
 
 /**
  * Indexing finished work, from the one page where you would look for it.
@@ -75,14 +130,17 @@ async function load() {
   loading.value = true;
   error.value = "";
   try {
-    const [list, board] = await Promise.all([
-      api("/tokens/list", { project_id: props.projectId }),
-      // Only to learn whether this deployment has search. Same call the board itself makes,
-      // so it is a warm path rather than an extra endpoint invented for one boolean.
-      api("/board/open", { project_id: props.projectId }).catch(() => ({})),
-    ]);
-    tokens.value = list.tokens;
+    // Who you are here, and whether this deployment has search — the same call the board
+    // itself makes, so a warm path rather than an endpoint invented for two facts.
+    const board = await api("/board/open", { project_id: props.projectId });
+    role.value = board.role || "owner";
+    ownerName.value = (board.project && board.project.owner_name) || "";
     searchable.value = board.search === true;
+    await Promise.all([
+      loadMembers(),
+      // Tokens are the owner's. A member is refused them, so they are not asked for.
+      isOwner.value ? api("/tokens/list", { project_id: props.projectId }).then((l) => (tokens.value = l.tokens)) : null,
+    ]);
   } catch (err) {
     error.value = err.message;
   } finally {
@@ -153,16 +211,65 @@ onMounted(load);
     <p><router-link :to="{ name: 'board', params: { projectId } }">← Back to the board</router-link></p>
 
     <div>
-      <h1>Agents &amp; tokens</h1>
+      <h1>Board settings</h1>
+      <p v-if="role === 'member'" class="muted">
+        You are a member of this board{{ ownerName ? `, which ${ownerName} owns` : "" }}. Members do
+        the work on a board — adding duties, answering questions, sending work back. The owner
+        decides who is on it, mints agent tokens, and can delete it.
+      </p>
+    </div>
+
+    <p v-if="error" class="notice notice--error" role="alert">{{ error }}</p>
+
+    <section v-if="role" aria-labelledby="members-h" class="panel stack">
+      <h2 id="members-h" style="margin: 0">Members</h2>
+      <p class="muted small" style="margin: 0">
+        People who work on this board besides {{ isOwner ? "you" : ownerName || "its owner" }}. They
+        see every duty on it and can do anything but manage tokens, members, or delete the board.
+      </p>
+
+      <p v-if="memberNotice" class="notice" role="status" style="margin: 0">{{ memberNotice }}</p>
+
+      <ul v-if="members.length" class="members">
+        <li v-for="m in members" :key="m.uid">
+          <span>
+            <strong>{{ m.name || m.identifier }}</strong>
+            <span v-if="me && m.uid === me.uid" class="badge members__you">you</span>
+            <span v-if="m.name" class="muted small members__id">{{ m.identifier }}</span>
+          </span>
+          <span class="muted small nowrap">added {{ ago(m.added_at) }}</span>
+          <button v-if="isOwner" type="button" class="link small" :disabled="busy" @click="removeMember(m)">
+            Remove<span class="sr-only"> {{ m.name || m.identifier }}</span>
+          </button>
+        </li>
+      </ul>
+      <p v-else class="muted small" style="margin: 0">Nobody else yet.</p>
+
+      <form v-if="isOwner" class="stack" @submit.prevent="addMember">
+        <div class="field" style="margin: 0">
+          <label for="m-email">Add someone by email</label>
+          <input id="m-email" v-model="memberEmail" type="email" required autocomplete="off" placeholder="name@example.com" />
+          <p class="hint">
+            They need a DutyBoard account already — this adds a person to a board, it does not
+            invite them to sign up.
+            <template v-if="maxMembers"> Up to {{ maxMembers }} members.</template>
+          </p>
+        </div>
+        <div>
+          <button type="submit" :disabled="busy || !memberEmail.trim()">Add member</button>
+        </div>
+      </form>
+    </section>
+
+    <div v-if="isOwner">
+      <h2>Agents &amp; tokens</h2>
       <p class="muted">
         An agent connects with a project token. The token names this board and nothing else,
         so an agent holding it can never reach another one.
       </p>
     </div>
 
-    <p v-if="error" class="notice notice--error" role="alert">{{ error }}</p>
-
-    <div v-if="fresh" class="notice stack" role="status">
+    <div v-if="isOwner && fresh" class="notice stack" role="status">
       <h2 style="margin: 0">Copy this now</h2>
       <p style="margin: 0">This is the only time the token is shown. Only its hash is stored.</p>
       <p class="token">{{ fresh.token }}</p>
@@ -192,7 +299,7 @@ onMounted(load);
       <div><button type="button" @click="fresh = null">Done</button></div>
     </div>
 
-    <form class="panel stack" @submit.prevent="mint">
+    <form v-if="isOwner" class="panel stack" @submit.prevent="mint">
       <h2>New token</h2>
       <div class="field">
         <label for="t-name">What is it for</label>
@@ -209,7 +316,7 @@ onMounted(load);
       <div><button class="primary" type="submit" :disabled="busy || !name">Mint token</button></div>
     </form>
 
-    <section aria-labelledby="tokens-h" class="stack">
+    <section v-if="isOwner" aria-labelledby="tokens-h" class="stack">
       <h2 id="tokens-h">Tokens on this board</h2>
       <p v-if="loading" class="muted" role="status">Loading…</p>
       <p v-else-if="!tokens.length" class="empty">No tokens yet.</p>
@@ -266,7 +373,7 @@ onMounted(load);
       </p>
     </section>
 
-    <section aria-labelledby="danger-h" class="panel stack" style="border-color: var(--danger)">
+    <section v-if="isOwner" aria-labelledby="danger-h" class="panel stack" style="border-color: var(--danger)">
       <h2 id="danger-h" style="margin: 0">Delete this board</h2>
       <p class="muted small" style="margin: 0">
         Removes the board with every duty, thread, agent and token on it. There is no undo.

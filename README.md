@@ -75,7 +75,7 @@ DutyBoard runs on [altengine](https://www.altengine.net) — no server of its ow
 | --- | --- | --- |
 | `board` | **functions** | The whole state machine, as one deployed module. REST at `/duty/*` and an MCP endpoint at `/mcp`. |
 | `dutyboard` | **datastore** | `projects`, `duties`, `threads`, `agents`, `tokens`. |
-| `dutyboard-auth` | **auth** | The people who own boards. Row rules scope every read to its owner. |
+| `dutyboard-auth` | **auth** | The people on boards. Row rules scope every read to boards you own or are a member of. |
 | `dutyboard-live` | **channel** | Board and duty events, so the console moves as agents work. |
 | `dutyboard-files` | **blob** | Attachments on duties: screenshots, recordings, logs. |
 
@@ -89,14 +89,14 @@ exactly what functions exist for. So the state machine lives in the function, at
 organization level, and the browser posts intentions to it.
 
 Reads go straight from the browser to the datastore, where the auth instance's row rules
-AND `owner_uid = you` into every query server-side. The page cannot ask for someone else's
-board, and does not have to remember to try.
+AND "a board you own or are a member of" into every query server-side. The page cannot ask
+for anyone else's board, and does not have to remember to try.
 
 ### Two kinds of caller
 
 | | Credential | How it is checked |
 | --- | --- | --- |
-| **A person** | An auth identity token (`id_token`) | `env.auth.verifyToken` — the signing secret never enters this code. Ownership is checked per request. |
+| **A person** | An auth identity token (`id_token`) | `env.auth.verifyToken` — the signing secret never enters this code. Ownership or membership is checked per request, against rows. |
 | **An agent** | A project token, `db_…` | Only its SHA-256 is stored, and that hash **is** the document key. Verifying a token is one point-read; the row names exactly one board, so an agent can never reach another. |
 
 The `db_` prefix is what tells them apart. A token is shown once, at mint, and never again.
@@ -342,9 +342,58 @@ comes back, so where attachments are stored is the function's business alone. `/
 reports whether they are configured, which is what the console's **Connect your altengine**
 screen shows.
 
+## Sharing a board
+
+A board has one owner and up to 25 members. The owner adds someone by email under
+**Settings → Members**; that person must already have an account, since sign-up may be off.
+
+| | Owner | Member |
+| --- | --- | --- |
+| See every duty, thread and file | ✓ | ✓ |
+| Add duties, answer questions, send work back, attach, edit | ✓ | ✓ |
+| Delete a duty | ✓ | |
+| Rename or delete the board, add or remove members | ✓ | |
+| Mint or revoke agent tokens | ✓ | |
+
+The split is who can hurt the board or reach outside it. A token is how software gets onto a
+board, so handing them out stays with the person the board belongs to.
+
+**Membership is held twice, on purpose.** `memberships` rows are the truth, and the function
+reads them on every write a member makes — so removing someone stops their changes on the
+next request. The console's *reads* go straight to the datastore, though, where the only thing
+a row rule can see about a person is their token. So membership is copied into a `boards`
+claim on the account, and each read rule is "rows you own, **or** rows on a board in your
+claim":
+
+```json
+"duties": { "read": { "any": [
+  [{ "field": "owner_uid",  "op": "=",  "value": "$auth.uid" }],
+  [{ "field": "project_id", "op": "in", "value": "$auth.claims.boards" }] ] } }
+```
+
+That copy rides the identity token, which lasts an hour, and the console closes the gap
+itself: before its first read, and whenever the board list loads, it asks the function whether
+its token is behind (`/me/access`) and refreshes if so. A person added to a board sees it the
+next time they open DutyBoard. A person *removed* keeps read access until their token expires
+— up to an hour — and no write access at all.
+
+**Two platform rules shape the claim**, and both would lock owners out of their own boards if
+ignored:
+
+- A rule that references a claim the account does not have is a hard deny for the *whole*
+  rule, including the owner branch. Every account needs `boards`, so the function gives it to
+  one the first time the console asks.
+- `in` over an empty list is refused as a bad query. So the claim is never empty: it always
+  starts with `"-"`, which no board id can be.
+
+Adding someone means writing their claims, so the function holds **`write`** on the auth
+instance, not `read`. That lets it change any user's claims on that instance — the price of
+sharing, and the reason members are managed only through the owner-only endpoints in
+[`functions/src/members.js`](functions/src/members.js).
+
 ## Connecting an agent
 
-Mint a token on the board's **Agents & tokens** page. Then, as an MCP server:
+Mint a token on the board's **Settings** page — tokens are the owner's to mint. Then, as an MCP server:
 
 ```bash
 claude mcp add --transport http dutyboard-<board> \
@@ -420,11 +469,14 @@ only when you first try it hosted.
 | `/duty/attachment/delete` | both | Remove a file, and the object behind it. |
 | `/duty/resolve` | human | Answer a question; re-queue at the front. |
 | `/duty/reopen` | human | `done`/`failed` → `queued`, with a required note saying why. |
-| `/duty/update` · `/duty/delete` | human | Edit or remove a duty. |
+| `/duty/update` · `/duty/delete` | human | Edit a duty; remove one (owner only). |
 | `/board/open` | human | The board, its agents and a channel token — one call, for the console. |
 | `/board/reindex` | human | Index work finished before search was turned on. Resumable. |
-| `/projects/*` | human | `create`, `list`, `rename`, `delete`. |
-| `/tokens/*` | human | `mint`, `list`, `revoke`. |
+| `/board/members/list` | human | The owner and everyone else on a board. |
+| `/board/members/add` · `/board/members/remove` | owner | Share a board by email, or stop sharing it. |
+| `/me/access` | human | Repair this person's `boards` claim; says whether their token is behind. |
+| `/projects/*` | human | `create`, `list` (owned and shared), `rename` and `delete` (owner only). |
+| `/tokens/*` | owner | `mint`, `list`, `revoke`. |
 | `/live/token` | human | A subscribe-only channel token for one board. |
 | `/mcp` | agent | The same tools over JSON-RPC. |
 | `/health` | anyone | No credential; safe to check a deploy with. |

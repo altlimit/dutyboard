@@ -155,7 +155,7 @@ export async function listThread(ctx, body) {
   // `loadDuty` trusted its callers to check, and this caller did not. Any signed-in
   // person, or any agent token for any board, could read any decision log by naming a
   // duty id. Ids are ULIDs and not guessable, which is not an access control.
-  projectOfDuty(ctx.caller, duty);
+  await projectOfDuty(ctx.caller, duty, ctx.store);
   const limit = intIn(body.limit, "limit", 1, 100, 20);
   const { rows } = await ctx.store.query("threads", {
     where: [{ field: "duty_id", op: "=", value: duty.key }],
@@ -182,7 +182,7 @@ export async function listThread(ctx, body) {
 export async function claimDuty(ctx, body) {
   const agentId = agentIdFrom(ctx, body, { required: true });
   const duty = await loadDuty(ctx, body.duty_id);
-  const project = projectOfDuty(ctx.caller, duty);
+  const project = await projectOfDuty(ctx.caller, duty, ctx.store);
   const now = Date.now();
 
   if (duty.status !== "queued") {
@@ -350,7 +350,7 @@ export async function enqueueDuty(ctx, body) {
  */
 export async function checkpointDuty(ctx, body) {
   const duty = await loadDuty(ctx, body.duty_id);
-  const project = projectOfDuty(ctx.caller, duty);
+  const project = await projectOfDuty(ctx.caller, duty, ctx.store);
   const agentId = agentIdFrom(ctx, body, { required: false });
   const now = Date.now();
 
@@ -442,7 +442,7 @@ export async function failDuty(ctx, body) {
 
 async function finishDuty(ctx, body, terminal) {
   const duty = await loadDuty(ctx, body.duty_id);
-  const project = projectOfDuty(ctx.caller, duty);
+  const project = await projectOfDuty(ctx.caller, duty, ctx.store);
   const agentId = agentIdFrom(ctx, body, { required: false });
   const now = Date.now();
 
@@ -527,7 +527,7 @@ async function finishDuty(ctx, body, terminal) {
 export async function reopenDuty(ctx, body) {
   requireHuman(ctx.caller);
   const duty = await loadDuty(ctx, body.duty_id);
-  const project = projectOfDuty(ctx.caller, duty);
+  const project = await projectOfDuty(ctx.caller, duty, ctx.store);
   const now = Date.now();
   const note = str(body.note ?? body.reason, "note", { required: true, max: 4000 });
 
@@ -610,7 +610,7 @@ export async function reopenDuty(ctx, body) {
 export async function resolveDuty(ctx, body) {
   requireHuman(ctx.caller);
   const duty = await loadDuty(ctx, body.duty_id);
-  const project = projectOfDuty(ctx.caller, duty);
+  const project = await projectOfDuty(ctx.caller, duty, ctx.store);
   const now = Date.now();
   const text = str(body.resolution_text ?? body.message, "resolution_text", { required: true, max: 4000 });
 
@@ -650,7 +650,7 @@ export async function resolveDuty(ctx, body) {
 export async function updateDuty(ctx, body) {
   requireHuman(ctx.caller);
   const duty = await loadDuty(ctx, body.duty_id);
-  const project = projectOfDuty(ctx.caller, duty);
+  const project = await projectOfDuty(ctx.caller, duty, ctx.store);
   const now = Date.now();
   const next = { ...stripMeta(duty), updated_at: now };
 
@@ -697,7 +697,9 @@ export async function updateDuty(ctx, body) {
 export async function deleteDuty(ctx, body) {
   requireHuman(ctx.caller);
   const duty = await loadDuty(ctx, body.duty_id);
-  const project = projectOfDuty(ctx.caller, duty);
+  // Owner only. A member does the work on a board; removing work, and its whole decision log,
+  // is the owner's call.
+  const project = await projectOfDuty(ctx.caller, duty, ctx.store, { ownerOnly: true });
 
   // Threads are keyed independently of the duty, so they have to be swept explicitly.
   // Bounded per call and repeated until empty rather than assuming one page is all there is.

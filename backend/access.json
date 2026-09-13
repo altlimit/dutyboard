@@ -19,23 +19,100 @@
     "`attachments` is absent for the same reason, one step removed: the row is harmless but",
     "the object it names is private, and the only way to open one is a short-lived URL the",
     "function mints for a caller it has just checked. A browser that could read the rows",
-    "would learn what files exist without being able to open them, which is nobody's win."
+    "would learn what files exist without being able to open them, which is nobody's win.",
+    "",
+    "Each read is an OR of two branches: rows you own, or rows on a board you are a member of.",
+    "Membership reaches a rule through the `boards` claim on your account, which the function",
+    "writes when an owner adds you (functions/src/members.js). Projects carry their id as",
+    "`slug`; everything else as `project_id`.",
+    "",
+    "The claim must exist on every account, and must never be an empty list — a rule naming a",
+    "missing claim is a hard deny for BOTH branches, and `in []` is refused. The function keeps",
+    "it as [\"-\", ...boards], and the console asks it to heal the claim before its first read."
   ],
   "datastore:dutyboard": {
     "level": "read",
     "rules": {
       "_default": {
         "projects": {
-          "read": [{ "field": "owner_uid", "op": "=", "value": "$auth.uid" }]
+          "read": {
+            "any": [
+              [
+                {
+                  "field": "owner_uid",
+                  "op": "=",
+                  "value": "$auth.uid"
+                }
+              ],
+              [
+                {
+                  "field": "slug",
+                  "op": "in",
+                  "value": "$auth.claims.boards"
+                }
+              ]
+            ]
+          }
         },
         "duties": {
-          "read": [{ "field": "owner_uid", "op": "=", "value": "$auth.uid" }]
+          "read": {
+            "any": [
+              [
+                {
+                  "field": "owner_uid",
+                  "op": "=",
+                  "value": "$auth.uid"
+                }
+              ],
+              [
+                {
+                  "field": "project_id",
+                  "op": "in",
+                  "value": "$auth.claims.boards"
+                }
+              ]
+            ]
+          }
         },
         "threads": {
-          "read": [{ "field": "owner_uid", "op": "=", "value": "$auth.uid" }]
+          "read": {
+            "any": [
+              [
+                {
+                  "field": "owner_uid",
+                  "op": "=",
+                  "value": "$auth.uid"
+                }
+              ],
+              [
+                {
+                  "field": "project_id",
+                  "op": "in",
+                  "value": "$auth.claims.boards"
+                }
+              ]
+            ]
+          }
         },
         "agents": {
-          "read": [{ "field": "owner_uid", "op": "=", "value": "$auth.uid" }]
+          "read": {
+            "any": [
+              [
+                {
+                  "field": "owner_uid",
+                  "op": "=",
+                  "value": "$auth.uid"
+                }
+              ],
+              [
+                {
+                  "field": "project_id",
+                  "op": "in",
+                  "value": "$auth.claims.boards"
+                }
+              ]
+            ]
+          }
         }
       }
     }

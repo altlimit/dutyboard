@@ -165,16 +165,24 @@ auth_set_rules  instance=dutyboard-auth  access={
   "datastore:dutyboard": {
     "level": "read",
     "rules": { "_default": {
-      "projects": { "read": [{ "field": "owner_uid", "op": "=", "value": "$auth.uid" }] },
-      "duties":   { "read": [{ "field": "owner_uid", "op": "=", "value": "$auth.uid" }] },
-      "threads":  { "read": [{ "field": "owner_uid", "op": "=", "value": "$auth.uid" }] },
-      "agents":   { "read": [{ "field": "owner_uid", "op": "=", "value": "$auth.uid" }] }
+      "projects": { "read": { "any": [
+        [{ "field": "owner_uid", "op": "=",  "value": "$auth.uid" }],
+        [{ "field": "slug",      "op": "in", "value": "$auth.claims.boards" }] ] } },
+      "duties":   { "read": { "any": [
+        [{ "field": "owner_uid",  "op": "=",  "value": "$auth.uid" }],
+        [{ "field": "project_id", "op": "in", "value": "$auth.claims.boards" }] ] } },
+      "threads":  { "read": { "any": [
+        [{ "field": "owner_uid",  "op": "=",  "value": "$auth.uid" }],
+        [{ "field": "project_id", "op": "in", "value": "$auth.claims.boards" }] ] } },
+      "agents":   { "read": { "any": [
+        [{ "field": "owner_uid",  "op": "=",  "value": "$auth.uid" }],
+        [{ "field": "project_id", "op": "in", "value": "$auth.claims.boards" }] ] } }
     }}
   }
 }
 ```
 
-Send it exactly. Three things are deliberate and all three matter:
+Send it exactly. Four things are deliberate and all four matter:
 
 - `level` is `read` and no collection has a `write` rule. Every write in DutyBoard is a
   state-machine transition that touches more than one collection at once — claiming a duty
@@ -183,6 +191,10 @@ Send it exactly. Three things are deliberate and all three matter:
 - `tokens` is absent. Agent credentials must be default-denied to browsers.
 - `attachments` is absent. The rows are harmless but the files they name are private, and a
   browser that could read the rows would learn what exists without being able to open it.
+- Each read is "rows you own, OR rows on a board in your `boards` claim". That claim is how a
+  board's members read it. You do not set it: the function writes it when an owner adds a
+  member, and the console asks the function to repair it before its first read. Do not
+  simplify the rule to the owner branch alone, or shared boards open empty.
 
 `auth_set_rules` REPLACES the whole access config. If the instance is not brand new, call
 `auth_get_rules` first and merge.
@@ -204,7 +216,7 @@ if they would rather not trust a file from a website.
 functions_deploy  instance=dutyboard  name=board  code=<the bundle>  activate=true
   grants={
     "datastore:dutyboard":   "full",
-    "auth:dutyboard-auth":   "read",
+    "auth:dutyboard-auth":   "write",
     "channel:dutyboard-live":"write",
     "blob:dutyboard-files":  "full",
     "search:dutyboard-search":"full"
@@ -216,7 +228,8 @@ and the deploy will be refused.
 
 Those grants are the blast radius, so they are the least each service needs:
 `datastore` is `full` because deleting a board deletes its rows and delete sits above
-write; `auth` is `read` because it only verifies tokens; `channel` is `write` to publish
+write; `auth` is `write` because adding someone to a board sets the claim their browser's
+reads are scoped by (verifying tokens alone would need only `read`); `channel` is `write` to publish
 and mint subscribe tokens; `blob` is `full` because deleting an attachment must remove the
 object, not just the row; `search` is `full` for the same reason, since deleting a board has
 to remove its documents.

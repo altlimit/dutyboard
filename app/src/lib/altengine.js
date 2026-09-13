@@ -136,6 +136,7 @@ async function authed(method, url, opts = {}) {
  *  already known to be dead, and telling the server to revoke it would only fail. */
 function clearSession() {
   session = { idToken: null, refreshToken: null, user: null };
+  accessChecked = null;
   saveSession(session);
   notify();
 }
@@ -149,6 +150,7 @@ export const authConfig = () => raw("GET", `${authBase()}/config`);
 
 function applyTokens(t) {
   session = { idToken: t.id_token, refreshToken: t.refresh_token, user: t.user || session.user };
+  accessChecked = null; // a new person, or the same one freshly signed in: check again
   saveSession(session);
   notify();
   return session.user;
@@ -232,6 +234,41 @@ export const ORIGIN_ID = Math.random().toString(36).slice(2) + Date.now().toStri
 /** Call a DutyBoard endpoint as the signed-in person. Every write goes through here. */
 export const api = (path, body = {}) =>
   authed("POST", `${config.api}${path}`, { body, headers: { "x-dutyboard-origin": ORIGIN_ID } });
+
+/**
+ * Make sure the token in hand can read the boards this person is on — once per page load,
+ * before the first direct read.
+ *
+ * Reads of a board go straight to the datastore, and the rules there let a MEMBER in through a
+ * `boards` claim on their account. That claim is written by the function when someone is added,
+ * but a token carries the claims it was issued with, so it can be up to an hour behind. The
+ * function knows the truth; this asks it, and refreshes the token when the answer is that it
+ * is out of date. Without it a person added to a board would open it and see nothing until
+ * their token happened to expire.
+ *
+ * It is also what keeps OWNERS reading: a rule that names a claim the account does not have
+ * refuses the whole read, so an account made before sharing existed has to be given the claim
+ * before its first query.
+ *
+ * Shared by concurrent callers — the router and a view mounting at the same moment make one
+ * request, not two. A failure is not fatal: the page carries on, and a board shared with this
+ * person may be empty until the next load.
+ */
+let accessChecked = null;
+
+export function ensureAccess({ force = false } = {}) {
+  if (!session.idToken) return Promise.resolve();
+  if (accessChecked && !force) return accessChecked;
+  accessChecked = (async () => {
+    try {
+      const res = await api("/me/access");
+      if (res && res.refresh && session.refreshToken) await refresh();
+    } catch {
+      /* see above — an enhancement to reads, never a reason the page fails to draw */
+    }
+  })();
+  return accessChecked;
+}
 
 /**
  * PUT a file to a signed upload URL, reporting progress.

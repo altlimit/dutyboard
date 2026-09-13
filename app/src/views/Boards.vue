@@ -1,9 +1,10 @@
 <script setup>
 import { nextTick, onMounted, ref } from "vue";
-import { api } from "../lib/altengine.js";
+import { api, refresh } from "../lib/altengine.js";
 import { ago } from "../lib/duties.js";
 
 const boards = ref([]);
+const shared = ref([]);
 const loading = ref(true);
 const error = ref("");
 const creating = ref(false);
@@ -16,7 +17,13 @@ async function load() {
   loading.value = true;
   error.value = "";
   try {
-    boards.value = (await api("/projects/list")).projects;
+    const res = await api("/projects/list");
+    boards.value = res.projects;
+    shared.value = res.shared || [];
+    // Someone may have been added to a board since this page loaded, and this list is where they
+    // would look for it. The function checked the token while answering; when it is behind, a
+    // refresh now means the board opens with its duties rather than empty.
+    if (res.refresh) await refresh().catch(() => {});
   } catch (err) {
     error.value = err.message;
   } finally {
@@ -98,7 +105,7 @@ onMounted(load);
     <template v-else>
       <!-- The whole card is the link. Two targets on one row — open, and settings — meant
            the obvious tap did the less likely thing about half the time; the board's own
-           nav carries Agents & tokens, which is where you go once you are inside it. -->
+           nav carries Settings, which is where you go once you are inside it. -->
       <ul v-if="boards.length" class="cards">
         <li v-for="b in boards" :key="b.project_id">
           <router-link class="boardcard" :to="{ name: 'board', params: { projectId: b.project_id } }">
@@ -110,8 +117,21 @@ onMounted(load);
       </ul>
 
       <p v-else class="empty">
-        No boards yet. Create one and mint a token for your first agent.
+        {{ shared.length ? "No boards of your own yet." : "No boards yet. Create one and mint a token for your first agent." }}
       </p>
+
+      <section v-if="shared.length" aria-labelledby="shared-h" class="stack">
+        <h2 id="shared-h" style="margin: 0">Shared with you</h2>
+        <ul class="cards">
+          <li v-for="b in shared" :key="b.project_id">
+            <router-link class="boardcard" :to="{ name: 'board', params: { projectId: b.project_id } }">
+              <span class="boardcard__name">{{ b.name }}</span>
+              <span class="boardcard__meta mono">{{ b.project_id }}</span>
+              <span class="boardcard__meta">{{ b.owner_name ? `owned by ${b.owner_name}` : "shared with you" }}</span>
+            </router-link>
+          </li>
+        </ul>
+      </section>
     </template>
   </div>
 </template>

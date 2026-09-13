@@ -40,6 +40,7 @@ import {
   listThread,
 } from "./duties.js";
 import { handleMcp } from "./mcp.js";
+import { addMember, listMembers, removeMember, syncAccess } from "./members.js";
 import { reindexBoard, searchConfigured, searchDuties } from "./searching.js";
 import { VERSION } from "./version.js";
 
@@ -79,6 +80,10 @@ const ROUTES = {
   "/duty/attachment/delete": deleteAttachment,
   "/board/open": openBoard,
   "/board/reindex": reindexBoard,
+  "/board/members/list": listMembers,
+  "/board/members/add": addMember,
+  "/board/members/remove": removeMember,
+  "/me/access": syncAccess,
   "/projects/create": createProject,
   "/projects/list": listProjects,
   "/projects/rename": renameProject,

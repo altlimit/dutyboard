@@ -1,5 +1,5 @@
 import { createRouter, createWebHashHistory } from "vue-router";
-import { isSignedIn, onSessionChange } from "./lib/altengine.js";
+import { ensureAccess, isSignedIn, onSessionChange } from "./lib/altengine.js";
 
 const routes = [
   { path: "/", name: "boards", component: () => import("./views/Boards.vue"), meta: { title: "Your boards" } },
@@ -24,9 +24,12 @@ export const router = createRouter({
   routes,
 });
 
-router.beforeEach((to) => {
+router.beforeEach(async (to) => {
   if (!to.meta.public && !isSignedIn()) return { name: "signin", query: { next: to.fullPath } };
   if (to.name === "signin" && isSignedIn()) return { name: "boards" };
+  // Before any page that reads the datastore: the token must carry the claim the rules check.
+  // Memoised, so this is one request a page load however many navigations follow.
+  if (!to.meta.public) await ensureAccess();
   return true;
 });
 
