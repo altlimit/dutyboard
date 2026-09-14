@@ -87,7 +87,17 @@ async function main() {
   }).then((r) => r.json());
   const human = signup.id_token;
   const boardId = `runner-${Date.now().toString(36)}`;
-  const created = await call("/projects/create", { name: "Runner", project_id: boardId, profile: { type: "webapp", default_branch: "main" }, runner: { parallel: 1 } }, human);
+  const remote = join(work, "remote.git");
+  const created = await call(
+    "/projects/create",
+    {
+      name: "Runner",
+      project_id: boardId,
+      profile: { type: "webapp", default_branch: "main", repo_url: `file://${remote}`, git: { author_name: "Runner Bot", author_email: "runner-bot@example.com" } },
+      runner: { parallel: 1 },
+    },
+    human,
+  );
 
   // Pair a machine, as `dutyboard` does on first run.
   const started = await call("/connect/start", { name: "runner-smoke", os: "linux", arch: "amd64", cli_version: "smoke" });
@@ -98,8 +108,8 @@ async function main() {
   // The emulator takes any altengine key; a stored one is what lets a session deploy through the daemon.
   writeFileSync(join(home, "credentials.json"), JSON.stringify({ "machine-key": paired.machine_key, "altengine-key": "dev" }));
 
-  // A repository with a remote, linked the way `dutyboard` links the folder it is run in.
-  const remote = join(work, "remote.git");
+  // A repository with a remote. `linked` stands for the person's own checkout: the daemon must never
+  // work in it or add branches to it — it clones the board's repository for itself.
   const linked = join(work, "linked");
   sh("git", ["init", "--quiet", "--bare", "-b", "main", remote], work);
   sh("git", ["clone", "--quiet", remote, linked], work);
@@ -107,8 +117,7 @@ async function main() {
   sh("git", ["add", "."], linked);
   sh("git", ["-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "--quiet", "-m", "start"], linked);
   sh("git", ["push", "--quiet", "origin", "HEAD:main"], linked);
-  const link = await call("/machine/link", { project_id: boardId, path_hint: linked }, paired.machine_key);
-  writeFileSync(join(home, "workspaces.json"), JSON.stringify([{ board: boardId, path: linked, linked_at: Date.now() }]));
+  const link = await call("/machine/link", { project_id: boardId }, paired.machine_key);
 
   const hello = await call("/duty/enqueue", { project_id: boardId, title: "Add a hello file", brief: "Anything will do." }, human);
   const park = await call("/duty/enqueue", { project_id: boardId, title: "[park] Pick a colour", brief: "Ask which colour, then do it." }, human);
@@ -169,6 +178,11 @@ async function main() {
     const worktrees = () => (existsSync(join(home, "worktrees", boardId)) ? readdirSync(join(home, "worktrees", boardId)).filter((n) => !n.startsWith(".")) : []);
     await until("worktree removed", () => !worktrees().includes(hello.duty_id), 10_000);
     check("its worktree is gone once it is done", !worktrees().includes(hello.duty_id), worktrees());
+    const boardFolder = join(work, "projects", boardId);
+    const clones = existsSync(boardFolder) ? readdirSync(boardFolder).filter((n) => n.startsWith("remote-")) : [];
+    check("the daemon worked from its own clone, in its projects folder", clones.length === 1 && existsSync(join(boardFolder, "local")), readdirSync(boardFolder));
+    check("and never touched the person's checkout", !sh("git", ["branch", "--list", "duty/*"], linked), sh("git", ["branch", "--list"], linked));
+    check("commits are made as the board's author", sh("git", ["--git-dir", remote, "log", "-1", "--format=%ae", "main"]) === "runner-bot@example.com");
 
     // --- parked, answered, resumed ----------------------------------------------
     const parked = await until("parked", async () => {
@@ -234,6 +248,26 @@ async function main() {
       return t.entries.find((e) => /not watched|CI \(deploy\.yml\)/.test(e.message));
     }, 20_000);
     check("a push-to-deploy board says on the duty when its CI could not be watched", !!noted, noted);
+
+    // --- a pull-request board on a machine without the GitHub CLI ---------------
+    let hasGH = true;
+    try {
+      execFileSync("gh", ["auth", "status"], { stdio: "ignore" });
+    } catch {
+      hasGH = false;
+    }
+    if (!hasGH) {
+      await call("/projects/profile", { project_id: boardId, profile: { git: { mode: "pr" } } }, human);
+      const flagged = await until("problem reported", async () => {
+        const r = await call("/board/runners", { project_id: boardId }, human);
+        return /GitHub CLI/.test(r.runners[0]?.problem || "") && r.runners[0];
+      }, 30_000);
+      check("a pull-request board says when this machine has no GitHub CLI", !!flagged, flagged);
+      const waiting = await call("/duty/enqueue", { project_id: boardId, title: "Should wait", brief: "No gh here." }, human);
+      await sleep(6000);
+      check("and takes none of its duties", (await get(waiting.duty_id)).status === "queued");
+      await call("/projects/profile", { project_id: boardId, profile: { git: { mode: "push" } } }, human);
+    }
 
     const machines = await call("/machines/list", {}, human);
     check("the console sees the machine online", machines.machines[0]?.online === true, machines.machines[0]);

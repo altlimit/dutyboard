@@ -68,7 +68,10 @@ type Daemon struct {
 	reported     map[string]string
 	reportedAt   map[string]time.Time
 	reportDue    map[string]bool
-	requests     map[string]bool // setup requests being handled
+	requests     map[string]bool   // setup requests being handled
+	problems     map[string]string // board → what stops this machine working it
+	ghOK         bool
+	ghCheckedAt  time.Time
 	limitedUntil time.Time
 	paused       bool
 
@@ -117,6 +120,7 @@ func New(opt Options) (*Daemon, error) {
 		reportedAt: map[string]time.Time{},
 		reportDue:  map[string]bool{},
 		requests:   map[string]bool{},
+		problems:   map[string]string{},
 		wakeCh:     make(chan struct{}, 1),
 		relink:     make(chan struct{}, 1),
 	}, nil
@@ -267,9 +271,6 @@ func (d *Daemon) refresh(ctx context.Context) error {
 	d.views = map[string]board.BoardView{}
 	for _, l := range me.Links {
 		d.views[l.ProjectID] = l
-		if d.workspaces[l.ProjectID] == "" {
-			d.log.Printf("board %q is linked to this machine but has no folder here — run `dutyboard` inside its repository to link one", l.ProjectID)
-		}
 	}
 	return nil
 }
@@ -387,6 +388,9 @@ func (d *Daemon) tick(ctx context.Context) error {
 			d.handleRequest(ctx, req)
 		}
 	}
+	// Every linked board gets its clone here, before anything is claimed on it — a board linked from
+	// the console, or whose repository just changed, is ready by the time its duties are.
+	d.ensureWorkspaces(ctx)
 	if p.Paused || limited {
 		return nil
 	}
@@ -407,7 +411,7 @@ func (d *Daemon) tick(ctx context.Context) error {
 			if d.running() >= maxSessions {
 				return nil
 			}
-			if d.folder(b.ProjectID) == "" {
+			if d.folder(b.ProjectID) == "" || d.problem(b.ProjectID) != "" {
 				continue
 			}
 			if d.startOne(ctx, b, started, tried) {
@@ -521,9 +525,10 @@ func (d *Daemon) report(ctx context.Context, boardID string) {
 			runs = append(runs, board.Run{DutyID: r.DutyID, State: r.state(), Detail: r.detail()})
 		}
 	}
+	problem := d.problems[boardID]
 	d.mu.Unlock()
 	sort.Slice(runs, func(i, j int) bool { return runs[i].DutyID < runs[j].DutyID })
-	key := fmt.Sprint(runs)
+	key := fmt.Sprint(runs, problem)
 	d.mu.Lock()
 	same := d.reported[boardID] == key
 	d.reported[boardID] = key
@@ -534,7 +539,7 @@ func (d *Daemon) report(ctx context.Context, boardID string) {
 	if same {
 		return
 	}
-	if err := d.api.ReportState(ctx, boardID, runs); err != nil {
+	if err := d.api.ReportState(ctx, boardID, runs, problem); err != nil {
 		d.log.Printf("reporting state on %s: %v", boardID, err)
 	}
 }

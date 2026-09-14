@@ -80,7 +80,7 @@ func TestEnsurePreparesAndHandsCachesOn(t *testing.T) {
 		return Spec{
 			Repo: linked, Board: "game", DutyID: duty,
 			Prep: "mkdir -p node_modules && echo built >> node_modules/count && touch .prepped", PrepInputs: []string{"app.txt"},
-			Cache: []string{"node_modules"}, Copy: []string{".env"},
+			Cache: []string{"node_modules"}, Copy: []string{".env"}, CopyFrom: linked,
 		}
 	}
 

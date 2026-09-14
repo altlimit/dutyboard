@@ -367,10 +367,11 @@ the duty, records the question, and claims other work. Answering is not urgent b
 nothing is idle while you think.
 
 **To have boards worked by Claude Code on a machine**, rather than connecting an agent by
-hand, run `dutyboard` on that machine inside the project's repository (Claude Code installed
-and signed in). It prints a code your user approves in the console, links the repository to a
-board, and from then on claims that board's duties and works each one in its own git
-worktree, landing the work and checking the board afterwards. See the README's "Running agents
+hand, run `dutyboard` on that machine (Claude Code installed and signed in). It prints a code
+your user approves in the console; your user then chooses which boards it works, each of which
+must name its repository URL. The machine clones each repository into its own projects folder,
+claims the board's duties, and works each one in its own git worktree, landing the work and
+checking the board afterwards. See the README's "Running agents
 on your machine".
 
 

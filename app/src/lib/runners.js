@@ -69,6 +69,7 @@ export function runnerSummary(runners) {
   const online = runners.filter((r) => r.online !== false);
   const working = runners.reduce((n, r) => n + (r.runs || []).filter((x) => x.state === "working" || x.state === "integrating").length, 0);
   const limited = runners.some((r) => (r.runs || []).some((x) => x.state === "limited"));
+  if (runners.some((r) => r.problem)) return { tone: "warn", text: "Runner needs attention" };
   if (!online.length) return { tone: "off", text: runners.length === 1 ? "Runner offline" : `${runners.length} runners offline` };
   if (limited) return { tone: "warn", text: "Runner at its plan limit" };
   if (working) return { tone: "live", text: `${working} ${working === 1 ? "duty" : "duties"} running` };
@@ -92,6 +93,9 @@ export function profileDraft(profile, runner) {
     deploy_command: (p.deploy && p.deploy.command) || "",
     deploy_instances: ((p.deploy && p.deploy.altengine_instances) || []).join(", "),
     git_mode: (p.git && p.git.mode) || "push",
+    git_author_name: (p.git && p.git.author_name) || "",
+    git_author_email: (p.git && p.git.author_email) || "",
+    git_ssh_command: (p.git && p.git.ssh_command) || "",
     parallel: r.parallel || 1,
     model: r.model || "",
     effort: r.effort || "",
@@ -125,7 +129,12 @@ export function profilePayload(d) {
         .filter(Boolean),
       test_command: d.test_command.trim(),
       deploy,
-      git: { mode: d.git_mode },
+      git: {
+        mode: d.git_mode,
+        author_name: d.git_author_name.trim(),
+        author_email: d.git_author_email.trim(),
+        ssh_command: d.git_ssh_command.trim(),
+      },
     },
     runner: {
       agent: "claude-code",

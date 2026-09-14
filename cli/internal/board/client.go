@@ -206,7 +206,10 @@ type Profile struct {
 		AltengineInstances []string `json:"altengine_instances"`
 	} `json:"deploy"`
 	Git struct {
-		Mode string `json:"mode"`
+		Mode        string `json:"mode"`
+		AuthorName  string `json:"author_name"`
+		AuthorEmail string `json:"author_email"`
+		SSHCommand  string `json:"ssh_command"`
 	} `json:"git"`
 	Worktree struct {
 		Prep       string   `json:"prep"`
@@ -365,12 +368,13 @@ type Run struct {
 	Detail string `json:"detail,omitempty"`
 }
 
-// ReportState replaces what this machine says it is doing on a board.
-func (c *Client) ReportState(ctx context.Context, projectID string, runs []Run) error {
+// ReportState replaces what this machine says it is doing on a board, and what — if anything — stops
+// it working the board at all.
+func (c *Client) ReportState(ctx context.Context, projectID string, runs []Run, problem string) error {
 	if runs == nil {
 		runs = []Run{}
 	}
-	return c.Call(ctx, "/machine/state", "", map[string]any{"project_id": projectID, "runs": runs}, nil)
+	return c.Call(ctx, "/machine/state", "", map[string]any{"project_id": projectID, "runs": runs, "problem": problem}, nil)
 }
 
 // ReportRequest reports a setup request's progress.

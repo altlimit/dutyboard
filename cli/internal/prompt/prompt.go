@@ -33,7 +33,8 @@ type Input struct {
 	Mode        string // push, pr, branch
 	Resuming    bool
 	Attempt     int
-	ProjectRoot string // the linked folder, for setup
+	ProjectRoot string // the machine's clone of the board's repository
+	LocalDir    string // where the board's untracked files live on this machine
 	Tools       string // what is installed on this machine, one line each
 	Hints       string // what this kind of project usually needs, for setup and rules
 	Detected    string // the daemon's reading of the repository's CI, for setup

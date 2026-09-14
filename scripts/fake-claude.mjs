@@ -106,7 +106,7 @@ if (title.includes("[park]") && !resumed) {
 if (title.includes("[deploy]")) {
   writeFileSync("fn.js", 'export default { async fetch() { return new Response("deployed by a session"); } };\n');
   git("add", "-A");
-  git("-c", "user.email=fake@example.com", "-c", "user.name=fake", "commit", "--quiet", "-m", "a function");
+  git("commit", "--quiet", "-m", "a function");
   const integrated = await tool("duty_integrate");
   const refused = await tool("altengine_deploy_function", { file: "fn.js", instance: "not-allowed", name: "hello" });
   const escaped = await tool("altengine_deploy_function", { file: "../../../../etc/passwd", instance: "runner-fns", name: "hello" });
@@ -122,7 +122,7 @@ const early = await tool("duty_complete", { duty_id: dutyId, outcome_summary: "t
 const file = `work-${dutyId}.txt`;
 writeFileSync(file, `done for ${dutyId}\n`);
 git("add", "-A");
-git("-c", "user.email=fake@example.com", "-c", "user.name=fake", "commit", "--quiet", "-m", `work for ${dutyId}`);
+git("commit", "--quiet", "-m", `work for ${dutyId}`);
 const integrated = await tool("duty_integrate");
 const completed = await tool("duty_complete", { duty_id: dutyId, outcome_summary: `Added ${file} in ${integrated.data?.commit}` });
 record({

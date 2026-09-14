@@ -106,7 +106,28 @@ async function setAgents(m, allowed) {
   }
 }
 
-const linkCommand = computed(() => `alt install altlimit/dutyboard\ncd /path/to/the/repository\ndutyboard --server ${config.api}`);
+const linkCommand = computed(() => `alt install altlimit/dutyboard\ndutyboard --server ${config.api} --root /path/for/projects`);
+
+// Your paired machines, for putting this board on one of them without leaving the page.
+const myMachines = ref([]);
+async function loadMachines() {
+  myMachines.value = (await api("/machines/list").catch(() => ({ machines: [] }))).machines || [];
+}
+const freeMachines = computed(() => myMachines.value.filter((m) => !runners.value.some((r) => r.machine_id === m.machine_id)));
+
+async function workOn(m) {
+  busy.value = true;
+  error.value = "";
+  profileNotice.value = "";
+  try {
+    await api("/machine/request", { machine_id: m.machine_id, project_id: props.projectId });
+    profileNotice.value = `Asked ${m.name} to work this board. If it is online it clones the repository and starts within a minute.`;
+  } catch (err) {
+    error.value = err.message;
+  } finally {
+    busy.value = false;
+  }
+}
 
 const tokens = ref([]);
 const loading = ref(true);
@@ -241,6 +262,7 @@ async function load() {
     await Promise.all([
       loadMembers(),
       loadRules(),
+      loadMachines(),
       // Tokens are the owner's. A member is refused them, so they are not asked for.
       isOwner.value ? api("/tokens/list", { project_id: props.projectId }).then((l) => (tokens.value = l.tokens)) : null,
     ]);
@@ -343,17 +365,25 @@ onUnmounted(() => {
 
     <section v-if="created === 'runner' || (role && !runners.length && hasProfile)" aria-labelledby="next-h" class="notice stack">
       <h2 id="next-h" style="margin: 0">Put this board on a machine</h2>
+      <p v-if="!profile.repo_url" class="notice notice--warn" style="margin: 0">
+        Give the board its repository URL below first — a machine works a board from its own clone of it.
+      </p>
+      <div v-if="freeMachines.length" class="row">
+        <button v-for="m in freeMachines" :key="m.machine_id" type="button" :disabled="busy || !profile.repo_url" @click="workOn(m)">
+          Work it on {{ m.name }}
+        </button>
+      </div>
       <p style="margin: 0">
-        On the computer that should do the work — with Claude Code installed and signed in — run this inside the
-        project's repository. It pairs the machine, links the repository to this board, and starts working.
+        {{ freeMachines.length ? "Or add another computer" : "On the computer that should do the work" }} — with
+        Claude Code installed and signed in:
       </p>
       <pre class="token" style="white-space: pre-wrap">{{ linkCommand }}</pre>
       <div class="row">
         <button type="button" @click="copy(linkCommand)">Copy</button>
-        <router-link :to="{ name: 'runners' }">Or set it up on a machine you already paired</router-link>
       </div>
       <p class="small muted" style="margin: 0">
-        Its first duties get the machine ready for the project and draft this board's rules for you to accept.
+        It pairs the machine; then choose it here. Its first duties get the machine ready for the project and draft
+        this board's rules for you to accept.
       </p>
     </section>
 
@@ -377,6 +407,7 @@ onUnmounted(() => {
               </span>
             </template>
           </span>
+          <span v-if="r.problem" class="notice notice--warn small" style="flex-basis: 100%; margin: 0">{{ r.problem }}</span>
           <button v-if="isOwner || (me && r.owner_uid === me.uid)" type="button" class="link small" :disabled="busy" @click="unlinkRunner(r)">
             Unlink<span class="sr-only"> {{ r.machine_name }}</span>
           </button>

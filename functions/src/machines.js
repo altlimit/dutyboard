@@ -75,6 +75,7 @@ const linkView = (l) => ({
   agent_prefix: l.agent_prefix,
   path_hint: l.path_hint || "",
   runs: l.runs || [],
+  problem: l.problem || "",
   runs_at: l.runs_at || null,
   created_at: l.created_at,
 });
@@ -448,6 +449,9 @@ export async function linkMachine(ctx, body) {
     if (!member) throw notFound(`project '${projectId}' not found`);
     throw forbidden("the board's owner has not let you run agents on it");
   }
+  if (!(project.profile && project.profile.repo_url)) {
+    throw badRequest("this board has no repository URL — set one in its settings first: a machine works a board from its own clone of it");
+  }
   const pathHint = str(body.path_hint, "path_hint", { max: 300 });
   const key = linkKey(project.key, caller.machineId);
   const now = Date.now();
@@ -579,7 +583,10 @@ export async function reportState(ctx, body) {
     state: oneOf(r && r.state, `runs[${i}].state`, RUN_STATES),
     detail: str(r && r.detail, `runs[${i}].detail`, { max: 300 }),
   }));
-  await ctx.store.putOne("machine_links", link.key, { ...stripMeta(link), runs, runs_at: now, updated_at: now });
+  // What stops this machine working the board at all — a clone that failed, a pull-request board with
+  // no GitHub CLI — as opposed to anything about one duty. Empty when nothing is wrong.
+  const problem = str(body.problem, "problem", { max: 300 });
+  await ctx.store.putOne("machine_links", link.key, { ...stripMeta(link), runs, problem, runs_at: now, updated_at: now });
   await ctx.publish(projectId, null, { t: "runner", machine_id: caller.machineId, runs: runs.length });
   return { ok: true, runs: runs.length };
 }
@@ -689,6 +696,9 @@ export async function requestSetup(ctx, body) {
   const machine = await ownMachine(ctx, body);
   const project = await resolveProject(ctx.caller, body.project_id, ctx.store);
   if (!(await mayRunAgents(ctx, project, ctx.caller.uid))) throw forbidden("the board's owner has not let you run agents on it");
+  if (!(project.profile && project.profile.repo_url)) {
+    throw badRequest("this board has no repository URL — set one in its settings first: the machine clones it");
+  }
   const path = str(body.path, "path", { max: 200 });
   if (path && (path.startsWith("/") || path.startsWith("~") || path.includes("\\") || path.split("/").includes(".."))) {
     throw badRequest("'path' must be a folder name inside the machine's projects folder");

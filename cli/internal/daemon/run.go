@@ -123,8 +123,12 @@ func (d *Daemon) view(boardID string) board.BoardView {
 	return d.views[boardID]
 }
 
-func (d *Daemon) specFor(boardID, duty string, v board.BoardView) worktree.Spec {
-	s := worktree.Spec{Repo: d.folder(boardID), Board: boardID, DutyID: duty}
+func (d *Daemon) specFor(ctx context.Context, boardID, duty string, v board.BoardView) worktree.Spec {
+	repo := d.wt.RepoOf(ctx, boardID, duty) // a duty already under way stays on its clone
+	if repo == "" {
+		repo = d.folder(boardID)
+	}
+	s := worktree.Spec{Repo: repo, Board: boardID, DutyID: duty, CopyFrom: d.localDir(boardID)}
 	if p := v.Profile; p != nil {
 		s.Base = p.DefaultBranch
 		s.Prep, s.PrepInputs, s.Cache, s.Copy = p.Worktree.Prep, p.Worktree.PrepInputs, p.Worktree.Cache, p.Worktree.Copy
@@ -165,7 +169,7 @@ func (d *Daemon) rulesFor(ctx context.Context, boardID string) (int, string) {
 // daemon's own context; rctx is the session's, which a person moving the duty cancels.
 func (d *Daemon) execute(dctx, rctx context.Context, run *Run, duty *board.Duty, resuming bool) {
 	v := d.view(run.Board)
-	spec := d.specFor(run.Board, run.DutyID, v)
+	spec := d.specFor(dctx, run.Board, run.DutyID, v)
 	run.Spec = spec
 	run.set("working", "preparing its worktree")
 	d.report(dctx, run.Board)
@@ -197,7 +201,7 @@ func (d *Daemon) execute(dctx, rctx context.Context, run *Run, duty *board.Duty,
 		in := prompt.Input{
 			Duty: *duty, Board: v, Rules: rules, RulesAt: rulesAt, Branch: spec.Branch(), Worktree: path,
 			Mode: string(modeFor(dctx, v, spec)), Resuming: resume, Attempt: rec.Attempts,
-			ProjectRoot: spec.Repo, Tools: d.tools.Describe(),
+			ProjectRoot: spec.Repo, LocalDir: spec.CopyFrom, Tools: d.tools.Describe(),
 		}
 		if run.Kind == "setup" || run.Kind == "rules" {
 			kind := ""
@@ -378,7 +382,7 @@ func (d *Daemon) job(run *Run, v board.BoardView, path, system, task string, rec
 		}
 	}
 	if run.Kind == "setup" {
-		j.AddDirs = []string{run.Spec.Repo}
+		j.AddDirs = []string{run.Spec.CopyFrom}
 	}
 	j.OnActivity = func(line string) {
 		if run.state() != "working" {

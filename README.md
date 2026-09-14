@@ -419,16 +419,29 @@ sharing, and the reason members are managed only through the owner-only endpoint
 
 ## Running agents on your machine
 
-`dutyboard` is also the runner. In a terminal, inside a project's repository:
+`dutyboard` is also the runner. On the computer that should do the work, with Claude Code installed
+and signed in:
 
 ```bash
-dutyboard
+dutyboard --root D:\dutyboard      # or any folder; ~/dutyboard by default
 ```
 
 The first time, it pairs this machine with your DutyBoard: it prints a code, you approve it in the
-console, and the machine gets its own key. It offers to link the repository to a board (or to
-create one, asking what kind of project it is), and to start itself when you log in. After that it
-runs in the background and works every linked board.
+console, and the machine gets its own key. It offers to start itself when you log in, and runs in
+the background from then on. Which boards it works you choose in the console — **Work it on …** on
+a board's settings, or on the Machines page. Run in a repository, it also offers the boards that
+name that repository, or to create one.
+
+A board worked by a machine names its **repository URL**, and the machine keeps its own clone of it
+at `<root>/<board>/`. It never works in, or adds branches to, a checkout you use. Point a board at
+another repository and machines clone that one; duties under way finish where they started. Files
+the project needs that git does not carry (an `.env`) go in `<root>/<board>/local/`, and the setup
+duty tells you which.
+
+Git runs as the machine's user, with its keys and credentials. A board can set the **commit author**
+and an **SSH command** (another key or account) — written into the machine's clone of that board,
+never your global config. A board that opens **pull requests** needs the GitHub CLI signed in on the
+machine (`gh auth login`); without it, the machine says so on the board and takes none of its duties.
 
 The loop is the program's, not the agent's. For each duty it:
 

@@ -2,21 +2,17 @@ package daemon
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/altlimit/dutyboard/cli/internal/board"
 	"github.com/altlimit/dutyboard/cli/internal/state"
-	"github.com/altlimit/dutyboard/cli/internal/worktree"
 )
 
-// ProjectsRoot is where setups requested from the console put projects: config.json's
-// projects_root, else ~/dutyboard.
+// ProjectsRoot is where this machine keeps the boards it works: config.json's projects_root, else
+// ~/dutyboard.
 func ProjectsRoot(cfg *state.Config) string {
 	if cfg.ProjectsRoot != "" {
 		return cfg.ProjectsRoot
@@ -27,9 +23,8 @@ func ProjectsRoot(cfg *state.Config) string {
 	return "dutyboard"
 }
 
-// handleRequest sets up a board a person asked this machine for from the console: clone its
-// repository into the projects folder (or use what is already there) and link it. Never anywhere
-// outside the projects folder, whatever the request says.
+// handleRequest works a board a person asked this machine for from the console: link it, then clone
+// its repository into the board's folder under the projects root, where the daemon keeps it.
 func (d *Daemon) handleRequest(ctx context.Context, req board.Request) {
 	d.mu.Lock()
 	if d.requests[req.RequestID] {
@@ -40,7 +35,7 @@ func (d *Daemon) handleRequest(ctx context.Context, req board.Request) {
 	ask := d.me != nil && d.me.Machine.RemoteSetup == "ask"
 	d.mu.Unlock()
 	if ask {
-		d.log.Printf("setup of %q was requested from the console; this machine is set to ask — run `dutyboard` in its folder to accept", req.ProjectID)
+		d.log.Printf("working %q was requested from the console; this machine is set to ask — run `dutyboard` here to accept", req.ProjectID)
 		return
 	}
 
@@ -54,45 +49,24 @@ func (d *Daemon) handleRequest(ctx context.Context, req board.Request) {
 			_ = d.api.ReportRequest(ctx, req.RequestID, "failed", err.Error())
 			return
 		}
-		d.log.Printf("%s: set up at %s", req.ProjectID, path)
-		_ = d.api.ReportRequest(ctx, req.RequestID, "done", "linked at "+path)
+		d.log.Printf("%s: cloned into %s", req.ProjectID, path)
+		_ = d.api.ReportRequest(ctx, req.RequestID, "done", "cloned into "+path)
 		d.Reload()
 	}()
 }
 
 func (d *Daemon) setUp(ctx context.Context, req board.Request) (string, error) {
-	root, err := filepath.Abs(ProjectsRoot(d.opt.Config))
-	if err != nil {
+	if _, err := d.api.Link(ctx, req.ProjectID, d.boardDir(req.ProjectID)); err != nil {
 		return "", err
 	}
-	name := req.Path
-	if name == "" {
-		name = req.ProjectID
-	}
-	target := filepath.Join(root, filepath.FromSlash(name))
-	if !within(target, root) || target == root {
-		return "", fmt.Errorf("%q is not a folder inside %s", name, root)
-	}
-
-	if top, err := worktree.Toplevel(ctx, target); err == nil && filepath.Clean(top) == filepath.Clean(target) {
-		// Already cloned — someone set this up before, or cloned it by hand.
-	} else if _, statErr := os.Stat(target); statErr == nil {
-		return "", fmt.Errorf("%s exists and is not a git repository; move it or choose another folder", target)
-	} else {
-		if req.RepoURL == "" {
-			return "", errors.New("the board has no repository URL in its profile, so there is nothing to clone")
-		}
-		if err := os.MkdirAll(root, 0o755); err != nil {
-			return "", err
-		}
-		cmd := exec.CommandContext(ctx, "git", "clone", "--quiet", req.RepoURL, target)
-		cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
-		if out, err := cmd.CombinedOutput(); err != nil {
-			return "", fmt.Errorf("cloning %s: %v: %s", req.RepoURL, err, strings.TrimSpace(string(out)))
-		}
-	}
-	if _, err := d.api.Link(ctx, req.ProjectID, target); err != nil {
+	if err := d.refresh(ctx); err != nil {
 		return "", err
 	}
-	return target, state.SetWorkspace(req.ProjectID, target)
+	d.mu.Lock()
+	v, ok := d.views[req.ProjectID]
+	d.mu.Unlock()
+	if !ok {
+		return "", fmt.Errorf("board %s did not appear among this machine's links", req.ProjectID)
+	}
+	return d.ensureClone(ctx, v)
 }

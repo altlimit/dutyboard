@@ -859,6 +859,12 @@ async function main() {
   );
   check("a board made with a profile starts with its rules to write", !!mCreated.rules_duty_id, mCreated);
   const escape = await call("/projects/profile", { project_id: mBoard, profile: { worktree: { copy: ["../../.ssh/id_ed25519"] } } }, human, { expectStatus: true });
+  await call("/projects/profile", { project_id: mBoard, profile: { git: { author_name: "Cadence Bot", author_email: "bot@example.com" } } }, human);
+  await call("/projects/profile", { project_id: mBoard, profile: { git: { mode: "push" } } }, human);
+  const gitKept = (await call("/board/profile", { project_id: mBoard }, human)).profile.git;
+  check("saving the git mode keeps the commit author already set", gitKept.author_email === "bot@example.com" && gitKept.mode === "push", gitKept);
+  const badEmail = await call("/projects/profile", { project_id: mBoard, profile: { git: { author_email: "not an email" } } }, human, { expectStatus: true });
+  check("and a commit author email has to be one", badEmail.status === 400, badEmail.json);
   check("a profile path that leaves the project is refused", escape.status === 400, escape.json);
 
   const unnamed = await call("/duty/poll", {}, mkey, { expectStatus: true });
@@ -875,6 +881,9 @@ async function main() {
   // A board from before runners, linked: it gains runner settings, one duty at a time.
   const legacyBoard = `smoke-legacy-${Date.now().toString(36)}`;
   await call("/projects/create", { name: "Legacy", project_id: legacyBoard }, human);
+  const noRepo = await call("/machine/link", { project_id: legacyBoard, setup: false }, mkey, { expectStatus: true });
+  check("a machine cannot work a board that names no repository", noRepo.status === 400 && /repository/.test(JSON.stringify(noRepo.json)), noRepo.json);
+  await call("/projects/profile", { project_id: legacyBoard, profile: { repo_url: "https://github.com/example/legacy.git" } }, human);
   await call("/machine/link", { project_id: legacyBoard, setup: false }, mkey);
   const legacyProfile = await call("/board/profile", { project_id: legacyBoard }, human);
   check("linking a board made before runners gives it one duty at a time", legacyProfile.runner && legacyProfile.runner.parallel === 1, legacyProfile.runner);
@@ -1281,7 +1290,7 @@ async function main() {
 
   // An agent token on a board of their own — the realistic leaked-credential case.
   const otherProject = `smoke-outsider-${Date.now()}`;
-  await call("/projects/create", { name: "Outsider board", project_id: otherProject }, other.id_token);
+  await call("/projects/create", { name: "Outsider board", project_id: otherProject, profile: { repo_url: "https://github.com/example/outsider.git" } }, other.id_token);
   const otherAgent = (await call("/tokens/mint", { project_id: otherProject, name: "outsider" }, other.id_token)).token;
   // And a machine key belonging to someone else, pointed at this board — the leaked daemon key.
   const otherMachine = await pair(other.id_token, "Outsider machine");

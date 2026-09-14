@@ -635,9 +635,13 @@ musictheory over needs a release and its owner at a Windows terminal (see below)
   socket or named pipe — one code path on every OS, with the same trust boundary (this user).
 - **Headless session identity**: a per-session token in the MCP server's environment, so the
   daemon knows which run a message belongs to without trusting anything the session says.
-- **Linking a folder** links it on the server and records it locally; it does not commit
-  `.dutyboard/`, `.mcp.json` or a `CLAUDE.md` import yet (§11 step 3). Headless sessions do not
-  need them; interactive wiring comes later.
+- **No linked folders** (replaces §11): a board worked by a machine requires a repository URL, and
+  each machine clones it into `<projects root>/<board>/<repo>-<hash>/`, with `<board>/local/` for
+  untracked files a worktree needs. Nobody's own checkout is used. Machines are put on boards from
+  the console; running `dutyboard` in a repository offers the boards naming its remote. Changing a
+  board's repository clones the new one; duties under way stay on their clone until they finish.
+  Boards carry an optional commit author and SSH command, set in the clone's local git config. A
+  pull-request board on a machine without `gh` is reported as a problem and not worked.
 - **Tool registry** (§7) shipped with phase 3: `tools_list` and `tools_register` in the bridge,
   verified on register and at daemon start, on every session's PATH.
 - **Console** (§12): the board wizard is one form rather than steps; machines have their own page

@@ -86,11 +86,14 @@ function branch(v, field) {
 
 function repoUrl(v, field) {
   const u = str(v, field, { max: 500 });
-  if (u && !/^(https:\/\/|ssh:\/\/|git@)[^\s]+$/.test(u)) {
-    throw badRequest(`'${field}' must be an https://, ssh:// or git@ repository URL`);
+  // file:// is for a repository on the machine itself — a local bare repo, or a test.
+  if (u && !/^(https:\/\/|ssh:\/\/|git@|file:\/\/)[^\s]+$/.test(u)) {
+    throw badRequest(`'${field}' must be an https://, ssh://, git@ or file:// repository URL`);
   }
   return u;
 }
+
+const EMAIL = /^[^\s@]+@[^\s@]+$/;
 
 const has = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
 const obj = (v, field) => {
@@ -137,8 +140,23 @@ export function mergeProfile(stored, input) {
     };
   }
   if (has(p, "git")) {
+    // Merged field by field: the console saves the mode without re-sending the author, and neither
+    // should erase the other.
     const g = obj(p.git, "profile.git");
-    next.git = { mode: oneOf(g.mode, "profile.git.mode", GIT_MODES, "push") };
+    const git = { mode: "push", ...(next.git || {}) };
+    if (has(g, "mode")) git.mode = oneOf(g.mode, "profile.git.mode", GIT_MODES, "push");
+    // Who commits are made as, in the machine's clone of this board — not in anyone's global git
+    // config. Empty means the machine user's own identity.
+    if (has(g, "author_name")) git.author_name = str(g.author_name, "profile.git.author_name", { max: 80 });
+    if (has(g, "author_email")) {
+      git.author_email = str(g.author_email, "profile.git.author_email", { max: 254 });
+      if (git.author_email && !EMAIL.test(git.author_email)) throw badRequest("'profile.git.author_email' is not an email address");
+    }
+    // How the clone reaches the remote, for a board that needs a different key or account than the
+    // machine user's default — e.g. `ssh -i ~/.ssh/work_ed25519`. A command a machine runs, which is
+    // why the profile is the owner's to edit.
+    if (has(g, "ssh_command")) git.ssh_command = str(g.ssh_command, "profile.git.ssh_command", { max: 300 });
+    next.git = git;
   }
   if (has(p, "worktree")) {
     const w = obj(p.worktree, "profile.worktree");

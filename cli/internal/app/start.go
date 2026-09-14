@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -203,7 +204,9 @@ func openBrowser(url string) {
 	}
 }
 
-// offerLink links the repository the program was run in, when it is not linked yet.
+// offerLink offers to work the repository the program was run in: on a board that already names
+// that repository, or on a new board made from it. The folder itself is never used — the daemon
+// clones the repository into its own projects folder, so this is only a way to find the board.
 func offerLink(ctx context.Context, u *ui.UI, api *board.Client) error {
 	wd, err := os.Getwd()
 	if err != nil {
@@ -211,37 +214,45 @@ func offerLink(ctx context.Context, u *ui.UI, api *board.Client) error {
 	}
 	top, err := worktree.Toplevel(ctx, wd)
 	if err != nil {
-		return nil // not in a repository: nothing to link
+		return nil // not in a repository: nothing to offer
 	}
-	top = filepath.Clean(top)
-	if strings.HasPrefix(top, filepath.Clean(state.Path("worktrees"))) {
-		return nil // a duty's own worktree
+	if strings.HasPrefix(filepath.Clean(top), filepath.Clean(state.Path())) {
+		return nil // inside the daemon's own clones and worktrees
 	}
-	workspaces, err := state.Workspaces()
+	remote := worktree.Remote(ctx, top)
+	if remote == "" {
+		u.Warn("%s has no remote. A board is worked from a repository URL, so push it somewhere this machine can clone from first.", top)
+		return nil
+	}
+	out, err := exec.CommandContext(ctx, "git", "-C", top, "remote", "get-url", remote).Output()
 	if err != nil {
-		return err
+		return nil
 	}
-	for _, w := range workspaces {
-		if filepath.Clean(w.Path) == top {
-			return nil
-		}
-	}
+	url := strings.TrimSpace(string(out))
 
 	boards, err := api.Boards(ctx)
 	if err != nil {
 		return err
 	}
-	opts := []string{}
+	var matching []board.BoardView
 	for _, b := range boards {
-		label := fmt.Sprintf("%s (%s)", b.Name, b.ProjectID)
-		if b.Linked {
-			label += " — already linked to another folder here"
+		if b.Profile != nil && sameRepo(b.Profile.RepoURL, url) {
+			if b.Linked {
+				return nil // already worked here
+			}
+			matching = append(matching, b)
 		}
-		opts = append(opts, label)
 	}
-	opts = append(opts, "Create a new board for this repository", "Don't link this folder")
-	u.Step("%s is not linked to a board", top)
-	pick, err := u.Choose("Link it to:", opts, len(opts)-2)
+	opts := []string{}
+	for _, b := range matching {
+		opts = append(opts, fmt.Sprintf("Work %s (%s) on this machine", b.Name, b.ProjectID))
+	}
+	opts = append(opts, "Create a board for this repository", "Not now")
+	u.Step("%s", url)
+	if len(matching) == 0 {
+		u.Say("No board of yours names this repository. (To use an existing board, set its repository in the console.)")
+	}
+	pick, err := u.Choose("What should this machine do with it?", opts, len(opts)-2)
 	if err != nil {
 		return err
 	}
@@ -250,24 +261,36 @@ func offerLink(ctx context.Context, u *ui.UI, api *board.Client) error {
 	case pick == len(opts)-1:
 		return nil
 	case pick == len(opts)-2:
-		if projectID, err = createBoard(ctx, u, api, top); err != nil {
+		if projectID, err = createBoard(ctx, u, api, top, url); err != nil {
 			return err
 		}
 	default:
-		projectID = boards[pick].ProjectID
+		projectID = matching[pick].ProjectID
 	}
-	linked, err := api.Link(ctx, projectID, top)
+	linked, err := api.Link(ctx, projectID, "")
 	if err != nil {
 		return err
 	}
-	if err := state.SetWorkspace(projectID, top); err != nil {
-		return err
-	}
-	u.OK("linked %s to %s", top, projectID)
+	u.OK("this machine works %s; it clones the repository into its projects folder", projectID)
 	if linked.SetupDutyID != "" {
 		u.Say("First up: a setup duty that gets this machine ready for the project.")
 	}
 	return nil
+}
+
+var repoPath = regexp.MustCompile(`^(?:[a-z+]+://)?(?:[^@/]+@)?([^/:]+)[:/](.+?)(?:\.git)?/?$`)
+
+// sameRepo compares repository URLs the way a person means them: git@github.com:a/b.git and
+// https://github.com/a/b are the same repository.
+func sameRepo(a, b string) bool {
+	norm := func(u string) string {
+		u = strings.ToLower(strings.TrimSpace(u))
+		if m := repoPath.FindStringSubmatch(u); m != nil {
+			return m[1] + "/" + m[2]
+		}
+		return u
+	}
+	return a != "" && norm(a) == norm(b)
 }
 
 var projectTypes = []struct{ key, label string }{
@@ -275,7 +298,7 @@ var projectTypes = []struct{ key, label string }{
 	{"desktop", "Desktop app"}, {"api", "API / backend"}, {"cli-lib", "CLI or library"}, {"other", "Other"},
 }
 
-func createBoard(ctx context.Context, u *ui.UI, api *board.Client, repo string) (string, error) {
+func createBoard(ctx context.Context, u *ui.UI, api *board.Client, repo, url string) (string, error) {
 	name, err := u.Ask("Board name", filepath.Base(repo))
 	if err != nil {
 		return "", err
@@ -303,13 +326,8 @@ func createBoard(ctx context.Context, u *ui.UI, api *board.Client, repo string) 
 	if desc != "-" {
 		profile["description"] = desc
 	}
-	remote := worktree.Remote(ctx, repo)
-	if remote != "" {
-		if url, err := exec.CommandContext(ctx, "git", "-C", repo, "remote", "get-url", remote).Output(); err == nil {
-			profile["repo_url"] = strings.TrimSpace(string(url))
-		}
-	}
-	profile["default_branch"] = worktree.DefaultBranch(ctx, repo, remote)
+	profile["repo_url"] = url
+	profile["default_branch"] = worktree.DefaultBranch(ctx, repo, worktree.Remote(ctx, repo))
 	mode, err := u.Choose("When a duty is done, its work should be:", []string{"Pushed to " + profile["default_branch"].(string), "Opened as a pull request"}, 0)
 	if err != nil {
 		return "", err

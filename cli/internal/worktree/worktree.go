@@ -37,8 +37,10 @@ type Spec struct {
 	PrepInputs []string
 	// Cache folders move from one finished duty's checkout to the next new one.
 	Cache []string
-	// Copy files come from the linked folder: what the project needs that git does not carry.
-	Copy []string
+	// Copy files come from CopyFrom — the board's local folder on this machine: what the project
+	// needs that git does not carry, like an .env.
+	Copy     []string
+	CopyFrom string
 }
 
 // Branch is the duty's branch.
@@ -99,6 +101,20 @@ func DefaultBranch(ctx context.Context, repo, remote string) string {
 		return out
 	}
 	return "main"
+}
+
+// RepoOf is the repository a duty's existing worktree belongs to, or "" when it has none. A board
+// whose repository changed keeps its duties in progress on the clone they started in.
+func (m *Manager) RepoOf(ctx context.Context, board, duty string) string {
+	path := m.Path(board, duty)
+	if _, err := os.Stat(filepath.Join(path, ".git")); err != nil {
+		return ""
+	}
+	common, err := git(ctx, path, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	if err != nil {
+		return ""
+	}
+	return filepath.Dir(common)
 }
 
 // Exists reports whether the duty already has a worktree.
@@ -250,11 +266,14 @@ func (m *Manager) returnCaches(s Spec, path string) {
 }
 
 func (m *Manager) copyFiles(s Spec, path string) error {
+	if s.CopyFrom == "" {
+		return nil
+	}
 	for _, c := range s.Copy {
-		from := filepath.Join(s.Repo, filepath.FromSlash(c))
+		from := filepath.Join(s.CopyFrom, filepath.FromSlash(c))
 		info, err := os.Stat(from)
 		if err != nil {
-			m.logf("copy: %s is not in the linked folder, skipped", c)
+			m.logf("copy: %s is not in %s, skipped", c, s.CopyFrom)
 			continue
 		}
 		to := filepath.Join(path, filepath.FromSlash(c))

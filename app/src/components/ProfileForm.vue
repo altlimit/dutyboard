@@ -35,8 +35,12 @@ defineProps({ idPrefix: { type: String, default: "pf" }, disabled: { type: Boole
     <legend class="label">Where the code is</legend>
     <div class="field">
       <label :for="`${idPrefix}-repo`">Repository URL</label>
-      <input :id="`${idPrefix}-repo`" v-model="draft.repo_url" maxlength="500" placeholder="git@github.com:you/project.git" />
-      <p class="hint">What a machine clones when you set the board up on it from the console.</p>
+      <input :id="`${idPrefix}-repo`" v-model="draft.repo_url" required maxlength="500" placeholder="git@github.com:you/project.git" />
+      <p class="hint">
+        Each machine working the board keeps its own clone of this, in its projects folder — your own checkout
+        is never touched. Change it and machines clone the new one; duties already under way finish where they
+        started.
+      </p>
     </div>
     <div class="field">
       <label :for="`${idPrefix}-branch`">Main branch <span class="muted">(optional)</span></label>
@@ -74,6 +78,30 @@ defineProps({ idPrefix: { type: String, default: "pf" }, disabled: { type: Boole
       <input :id="`${idPrefix}-instances`" v-model="draft.deploy_instances" class="mono" placeholder="cadence" />
       <p class="hint">Comma-separated. A session can deploy to these and nothing else, with the machine's stored key.</p>
     </div>
+    <details class="stack">
+      <summary>Commit author and SSH key <span class="muted small">(optional)</span></summary>
+      <p class="hint">
+        Set in each machine's clone of this board only. Left empty, commits are made as the machine's own git user,
+        with its default key.
+      </p>
+      <div class="field">
+        <label :for="`${idPrefix}-author`">Commit as (name)</label>
+        <input :id="`${idPrefix}-author`" v-model="draft.git_author_name" maxlength="80" placeholder="the machine's git user.name" />
+      </div>
+      <div class="field">
+        <label :for="`${idPrefix}-email`">Commit as (email)</label>
+        <input :id="`${idPrefix}-email`" v-model="draft.git_author_email" type="email" maxlength="254" placeholder="the machine's git user.email" />
+      </div>
+      <div class="field">
+        <label :for="`${idPrefix}-ssh`">SSH command</label>
+        <input :id="`${idPrefix}-ssh`" v-model="draft.git_ssh_command" maxlength="300" class="mono" placeholder="ssh -i ~/.ssh/work_ed25519" />
+        <p class="hint">For a board whose repository needs another key or account than the machine's default.</p>
+      </div>
+    </details>
+    <p v-if="draft.git_mode === 'pr'" class="hint">
+      Opening pull requests needs the GitHub CLI signed in on each machine (<code class="mono">gh auth login</code>).
+      A machine without it says so here and takes no duties from this board.
+    </p>
     <div v-if="draft.deploy_method === 'command'" class="field">
       <label :for="`${idPrefix}-cmd`">Deploy command</label>
       <input :id="`${idPrefix}-cmd`" v-model="draft.deploy_command" class="mono" placeholder="npm run deploy" />

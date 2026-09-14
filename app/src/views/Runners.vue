@@ -16,7 +16,7 @@ const busy = ref(false);
 const notice = ref("");
 const setupFor = ref({}); // machine_id → { project_id, path }
 
-const installCommand = computed(() => `alt install altlimit/dutyboard\ndutyboard --server ${config.api}`);
+const installCommand = computed(() => `alt install altlimit/dutyboard\ndutyboard --server ${config.api} --root /path/for/projects`);
 
 async function load({ quiet = false } = {}) {
   if (!quiet) loading.value = true;
@@ -62,8 +62,8 @@ function unlink(m, link) {
 function requestSetup(m) {
   const req = setupFor.value[m.machine_id] || {};
   act(
-    () => api("/machine/request", { machine_id: m.machine_id, project_id: req.project_id, path: req.path || undefined }),
-    `Asked ${m.name} to set up ${req.project_id}. It clones the repository and links it within a minute if it is online.`,
+    () => api("/machine/request", { machine_id: m.machine_id, project_id: req.project_id }),
+    `Asked ${m.name} to work ${req.project_id}. If it is online it clones the repository and starts within a minute.`,
   );
   setupFor.value[m.machine_id] = {};
 }
@@ -115,8 +115,8 @@ onUnmounted(() => clearInterval(timer));
       <pre class="token" style="white-space: pre-wrap">{{ installCommand }}</pre>
       <div><button type="button" @click="copy(installCommand)">Copy</button></div>
       <p class="small muted" style="margin: 0">
-        It prints a code and opens this console to approve it. Run it again inside a project's repository to
-        link that repository to a board.
+        It prints a code and opens this console to approve it. Then choose which boards it works — here, or on a
+        board's settings. It clones each board's repository into its projects folder.
       </p>
     </section>
 
@@ -160,6 +160,7 @@ onUnmounted(() => clearInterval(timer));
                 <td><router-link :to="{ name: 'board', params: { projectId: l.project_id } }">{{ l.project_id }}</router-link></td>
                 <td class="mono small">{{ l.path_hint || "—" }}</td>
                 <td>
+                  <p v-if="l.problem" class="notice notice--warn small" style="margin: 0 0 0.3rem">{{ l.problem }}</p>
                   <span v-if="!l.runs.length" class="muted">idle</span>
                   <ul v-else class="runs">
                     <li v-for="r in l.runs" :key="r.duty_id">
@@ -184,18 +185,14 @@ onUnmounted(() => clearInterval(timer));
           <div class="stack" style="margin-top: 0.75rem">
             <form class="stack" @submit.prevent="requestSetup(m)">
               <div class="field">
-                <label :for="`s-board-${m.machine_id}`">Set up a board on this machine</label>
+                <label :for="`s-board-${m.machine_id}`">Work a board on this machine</label>
                 <select :id="`s-board-${m.machine_id}`" v-model="draft(m).project_id" required>
                   <option value="" disabled>Choose a board</option>
                   <option v-for="b in unlinkedBoards(m)" :key="b.project_id" :value="b.project_id">{{ b.name }} ({{ b.project_id }})</option>
                 </select>
               </div>
-              <div class="field">
-                <label :for="`s-path-${m.machine_id}`">Folder <span class="muted">(optional)</span></label>
-                <input :id="`s-path-${m.machine_id}`" v-model="draft(m).path" placeholder="the board id" />
-                <p class="hint">Inside the machine's projects folder. The board's repository is cloned there, then linked.</p>
-              </div>
-              <div><button type="submit" :disabled="busy || !draft(m).project_id">Set up</button></div>
+              <p class="hint" style="margin: 0">It clones the board's repository into its projects folder and starts on its duties.</p>
+              <div><button type="submit" :disabled="busy || !draft(m).project_id">Work this board</button></div>
             </form>
 
             <div class="field">
