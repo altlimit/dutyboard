@@ -44,7 +44,7 @@ Found DutyBoard v2.0.0 → https://k3x9-fn.altengine.app/board
 Opening the console to finish pairing…   code KQTR-8841
 ✓ Paired — this machine is "faisal-wsl"
 Start automatically when you log in? [Y/n] y
-Tools: ~/.dutyboard/tools   Projects: ~/dutyboard
+Tools: <projects root>/_tools   Projects: ~/dutyboard
 Watching 0 boards · live
 ```
 
@@ -371,7 +371,7 @@ The session:
    type (`internal/hints/<type>.md`: Godot, Unity, Node, Go, Flutter, Electron, …).
 2. Writes it to the board with `board_profile_propose` (`toolchain`), so other machines know.
 3. Checks this machine: `PATH`, usual install locations, `tools_list`.
-4. Installs what is missing into `~/.dutyboard/tools/<name>/<version>/`: portable builds from
+4. Installs what is missing into `<projects root>/_tools/<name>/<version>/`: portable builds from
    official sources, checksum verified. **No sudo, no system package managers (assumed).**
 5. Anything needing admin rights or a licence acceptance becomes a `needs_decision` with the
    exact command.

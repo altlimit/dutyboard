@@ -53,6 +53,8 @@ type Outcome struct {
 	IsError  bool
 	Cost     float64
 	Session  string
+	// Denied is each tool call the permission rules refused, as "Tool: input".
+	Denied []string
 }
 
 // Binary is the Claude Code executable: $DUTYBOARD_CLAUDE, or `claude` on PATH.
@@ -180,11 +182,15 @@ func Run(ctx context.Context, j Job) Outcome {
 
 func readEvent(line []byte, out *Outcome) {
 	var ev struct {
-		Type          string  `json:"type"`
-		SessionID     string  `json:"session_id"`
-		Result        string  `json:"result"`
-		IsError       bool    `json:"is_error"`
-		TotalCostUSD  float64 `json:"total_cost_usd"`
+		Type         string  `json:"type"`
+		SessionID    string  `json:"session_id"`
+		Result       string  `json:"result"`
+		IsError      bool    `json:"is_error"`
+		TotalCostUSD float64 `json:"total_cost_usd"`
+		Denials      []struct {
+			ToolName  string         `json:"tool_name"`
+			ToolInput map[string]any `json:"tool_input"`
+		} `json:"permission_denials"`
 		RateLimitInfo *struct {
 			Status   string `json:"status"`
 			ResetsAt int64  `json:"resetsAt"`
@@ -206,6 +212,13 @@ func readEvent(line []byte, out *Outcome) {
 		}
 	case "result":
 		out.Result, out.IsError, out.Cost = ev.Result, ev.IsError, ev.TotalCostUSD
+		for _, dn := range ev.Denials {
+			what := dn.ToolName
+			if c, ok := dn.ToolInput["command"].(string); ok {
+				what += ": " + c
+			}
+			out.Denied = append(out.Denied, what)
+		}
 		if m := limitText.FindStringSubmatch(ev.Result); m != nil && ev.IsError {
 			out.Limited = true
 			if n, err := strconv.ParseInt(m[1], 10, 64); err == nil {

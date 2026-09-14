@@ -47,12 +47,19 @@ type Registry struct {
 	Tools []Tool `json:"tools"`
 }
 
-// Dir is the tools folder: ~/.dutyboard/tools.
-func Dir() string { return state.Path("tools") }
+var dir = state.Path("tools")
 
-// Load reads the registry; a missing file is an empty one.
+// UseDir sets where sessions install tools: the daemon puts it in the projects root, next to the
+// boards, where a person looking for "the Godot it downloaded" would look.
+func UseDir(p string) { dir = p }
+
+// Dir is the folder sessions install tools into.
+func Dir() string { return dir }
+
+// Load reads the registry; a missing file is an empty one. The registry stays in the daemon's own
+// folder, so moving the projects root does not forget tools installed elsewhere.
 func Load() (*Registry, error) {
-	r := &Registry{path: filepath.Join(Dir(), "registry.json")}
+	r := &Registry{path: state.Path("tools", "registry.json")}
 	b, err := os.ReadFile(r.path)
 	if errors.Is(err, os.ErrNotExist) {
 		return r, nil

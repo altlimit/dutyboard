@@ -16,6 +16,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -95,6 +96,8 @@ func New(opt Options) (*Daemon, error) {
 	if err != nil {
 		return nil, err
 	}
+	// "_tools" is no board's folder: board ids are lowercase letters, digits and dashes.
+	tools.UseDir(filepath.Join(ProjectsRoot(opt.Config), "_tools"))
 	reg, err := tools.Load()
 	if err != nil {
 		return nil, fmt.Errorf("reading the tool registry: %w", err)

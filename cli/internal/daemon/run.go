@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -34,7 +35,10 @@ func retryDelay() time.Duration {
 
 // defaultTools is what a session may use without asking when the board does not say. Headless, a
 // tool that needs permission is a tool that is refused, so the list is what real work needs.
-var defaultTools = []string{"Read", "Edit", "Write", "Glob", "Grep", "Bash", "Agent", "TodoWrite", "WebFetch", "WebSearch", "mcp__dutyboard"}
+// PowerShell is Claude Code's shell tool on Windows, as Bash is elsewhere: without it every command a
+// Windows session runs — node, npm, godot, the project's own scripts — waits for an approval nobody
+// is there to give.
+var defaultTools = []string{"Read", "Edit", "Write", "MultiEdit", "NotebookEdit", "Glob", "Grep", "Bash", "PowerShell", "Agent", "TodoWrite", "WebFetch", "WebSearch", "mcp__dutyboard"}
 
 // Run is one duty being worked on this machine.
 type Run struct {
@@ -175,7 +179,15 @@ func (d *Daemon) execute(dctx, rctx context.Context, run *Run, duty *board.Duty,
 	d.report(dctx, run.Board)
 
 	path, created, err := d.wt.Ensure(rctx, spec)
-	if err != nil {
+	var prepErr *worktree.PrepError
+	prepFailed := ""
+	switch {
+	case errors.As(err, &prepErr) && path != "":
+		// The worktree is there; only its prep failed. That is the session's to sort out — it has the
+		// shell and the project in front of it — not a question for a person.
+		d.log.Printf("%s: prep failed for %q, handing it to the session: %v", run.Board, run.Title, prepErr.Err)
+		prepFailed = fmt.Sprintf("Command: %s\nError: %v\nOutput (tail):\n%s", prepErr.Command, prepErr.Err, prepErr.Output)
+	case err != nil:
 		d.park(dctx, run, v, fmt.Sprintf("The runner on this machine could not prepare a worktree for this duty, so it has not started:\n\n%v", err))
 		return
 	}
@@ -201,7 +213,7 @@ func (d *Daemon) execute(dctx, rctx context.Context, run *Run, duty *board.Duty,
 		in := prompt.Input{
 			Duty: *duty, Board: v, Rules: rules, RulesAt: rulesAt, Branch: spec.Branch(), Worktree: path,
 			Mode: string(modeFor(dctx, v, spec)), Resuming: resume, Attempt: rec.Attempts,
-			ProjectRoot: spec.Repo, LocalDir: spec.CopyFrom, Tools: d.tools.Describe(),
+			ProjectRoot: spec.Repo, LocalDir: spec.CopyFrom, Tools: d.tools.Describe(), PrepFailed: prepFailed,
 		}
 		if run.Kind == "setup" || run.Kind == "rules" {
 			kind := ""
@@ -242,6 +254,12 @@ func (d *Daemon) execute(dctx, rctx context.Context, run *Run, duty *board.Duty,
 		outcome := runner.Run(rctx, job)
 		if logFile != nil {
 			logFile.Close()
+		}
+		if len(outcome.Denied) > 0 {
+			// Refused tools are the runner's business, so they are said here, where its owner looks —
+			// not left to the session to raise as a duty for someone who never configured them.
+			d.log.Printf("%s: %q was refused %d tool call(s): %s — widen the board's allowed tools if the work needs them",
+				run.Board, clip(run.Title, 60), len(outcome.Denied), clip(strings.Join(outcome.Denied, "; "), 400))
 		}
 		_ = os.Remove(job.MCPConfig)
 		if outcome.Session != "" {

@@ -206,10 +206,23 @@ func (m *Manager) prepIfNeeded(ctx context.Context, s Spec, path string, fresh b
 	out, err := Shell(ctx, path, s.Prep, nil)
 	m.logf("%s", out)
 	if err != nil {
-		return fmt.Errorf("preparing the worktree (%s) failed: %w\n%s", s.Prep, err, tail(out, 2000))
+		return &PrepError{Command: s.Prep, Output: tail(out, 2000), Err: err}
 	}
 	return m.writeMeta(s, meta{PrepHash: want})
 }
+
+// PrepError is a worktree that was made but whose prep command failed. The worktree is usable; what
+// prep should have done is not there yet, and prep runs again next time.
+type PrepError struct {
+	Command, Output string
+	Err             error
+}
+
+func (e *PrepError) Error() string {
+	return fmt.Sprintf("preparing the worktree (%s) failed: %v\n%s", e.Command, e.Err, e.Output)
+}
+
+func (e *PrepError) Unwrap() error { return e.Err }
 
 func (m *Manager) writeMeta(s Spec, v meta) error {
 	p := m.metaPath(s.Board, s.DutyID)

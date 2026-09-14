@@ -38,6 +38,7 @@ type Input struct {
 	Tools       string // what is installed on this machine, one line each
 	Hints       string // what this kind of project usually needs, for setup and rules
 	Detected    string // the daemon's reading of the repository's CI, for setup
+	PrepFailed  string // the board's prep command failed in this worktree: what ran and what it said
 }
 
 // System is the part appended to the agent's own system prompt.

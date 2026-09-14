@@ -33,12 +33,24 @@ func gitEnv(ctx context.Context, dir string, env []string, args ...string) (stri
 
 // Shell runs a project command — a prep or test command from the profile — in dir, answering its
 // combined output.
+//
+// With bash, everywhere it can: the agent that writes these commands writes them for the shell its
+// own sessions use, which on Windows is Git Bash — and `a; b`, `pushd`, `&&` all mean something else,
+// or nothing, to cmd.exe. Without Git Bash, Windows gets PowerShell, which reads them far more often
+// than cmd does.
 func Shell(ctx context.Context, dir, command string, env []string) (string, error) {
 	var cmd *exec.Cmd
-	if runtime.GOOS == "windows" {
-		cmd = exec.CommandContext(ctx, "cmd", "/C", command)
-	} else {
-		cmd = exec.CommandContext(ctx, "sh", "-c", command)
+	switch {
+	case runtime.GOOS != "windows":
+		sh := "sh"
+		if p, err := exec.LookPath("bash"); err == nil {
+			sh = p
+		}
+		cmd = exec.CommandContext(ctx, sh, "-c", command)
+	case GitBash() != "":
+		cmd = exec.CommandContext(ctx, GitBash(), "-c", command)
+	default:
+		cmd = exec.CommandContext(ctx, "powershell", "-NoProfile", "-NonInteractive", "-Command", command)
 	}
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), env...)

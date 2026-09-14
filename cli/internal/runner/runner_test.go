@@ -31,3 +31,11 @@ func TestLimitIsRead(t *testing.T) {
 		t.Fatal("an allowed rate limit event is not a limit")
 	}
 }
+
+func TestRefusedToolsAreRead(t *testing.T) {
+	var o Outcome
+	readEvent([]byte(`{"type":"result","result":"stopped","permission_denials":[{"tool_name":"PowerShell","tool_use_id":"t1","tool_input":{"command":"npm ci"}},{"tool_name":"WebFetch","tool_input":{"url":"https://x"}}]}`), &o)
+	if len(o.Denied) != 2 || o.Denied[0] != "PowerShell: npm ci" || o.Denied[1] != "WebFetch" {
+		t.Fatalf("denials: %q", o.Denied)
+	}
+}

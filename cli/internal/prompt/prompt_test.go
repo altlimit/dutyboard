@@ -27,6 +27,11 @@ func TestEveryKindRenders(t *testing.T) {
 			t.Errorf("system prompt is missing %q:\n%s", want, sys)
 		}
 	}
+	in.PrepFailed = "Command: npm ci\nError: exit status 1"
+	if sys, _ := System(in); !strings.Contains(sys, "not prepared yet") || !strings.Contains(sys, "npm ci") {
+		t.Errorf("a failed prep is not handed to the session:\n%s", sys)
+	}
+	in.PrepFailed = ""
 	for _, kind := range []string{"work", "setup", "rules"} {
 		in.Duty.Kind = kind
 		out, err := Duty(in)
