@@ -94,8 +94,9 @@ async function main() {
   await call("/connect/approve", { user_code: started.user_code }, human);
   const paired = await call("/connect/poll", { device_code: started.device_code });
   execFileSync("mkdir", ["-p", home]);
-  writeFileSync(join(home, "config.json"), JSON.stringify({ server: API, machine_id: paired.machine_id, machine_name: paired.name, agent_prefix: paired.agent_prefix, projects_root: join(work, "projects") }));
-  writeFileSync(join(home, "credentials.json"), JSON.stringify({ "machine-key": paired.machine_key }));
+  writeFileSync(join(home, "config.json"), JSON.stringify({ server: API, altengine: BASE, machine_id: paired.machine_id, machine_name: paired.name, agent_prefix: paired.agent_prefix, projects_root: join(work, "projects") }));
+  // The emulator takes any altengine key; a stored one is what lets a session deploy through the daemon.
+  writeFileSync(join(home, "credentials.json"), JSON.stringify({ "machine-key": paired.machine_key, "altengine-key": "dev" }));
 
   // A repository with a remote, linked the way `dutyboard` links the folder it is run in.
   const remote = join(work, "remote.git");
@@ -129,7 +130,9 @@ async function main() {
     // --- setup and rules, before anything else ---------------------------------
     const setup = await until("setup done", async () => (await get(link.setup_duty_id)).status === "done" && (await get(link.setup_duty_id)));
     check("the daemon runs the machine's setup duty first", !!setup, setup);
-    const setupEvent = events(log).find((e) => e.event === "setup");
+    // The agent records what it saw after its last call returns, which can be just after the board
+    // already says done.
+    const setupEvent = await until("setup event", () => events(log).find((e) => e.event === "setup"), 10_000);
     check(
       "setup records the toolchain and registers a tool, over the bridge",
       setupEvent && !setupEvent.proposeError && !setupEvent.registerError && setupEvent.integrate?.no_op && !setupEvent.completeError,
@@ -151,7 +154,7 @@ async function main() {
       return d.status === "done" && d;
     });
     check("a work duty is finished", !!done, done);
-    const doneEvent = events(log).find((e) => e.event === "done" && e.dutyId === hello.duty_id);
+    const doneEvent = await until("done event", () => events(log).find((e) => e.event === "done" && e.dutyId === hello.duty_id), 10_000);
     const startEvent = events(log).find((e) => e.event === "start" && e.dutyId === hello.duty_id);
     check("on its own branch, in its own folder", startEvent?.branch === `duty/${hello.duty_id}` && startEvent.cwd.includes(join("worktrees", boardId, hello.duty_id)), startEvent);
     check("with the machine's tools first on its PATH", startEvent?.path === dirname(process.execPath), startEvent?.path);
@@ -199,6 +202,33 @@ async function main() {
     await call("/duty/delete", { duty_id: slow.duty_id, confirm: slow.duty_id }, human);
     const removed = await until("slow worktree removed", () => !worktrees().includes(slow.duty_id), 20_000);
     check("deleting a duty stops its session and removes its worktree", !!removed && !events(log).some((e) => e.event === "slow-end"), worktrees());
+
+    // --- deploying to altengine through the daemon -------------------------------
+    await call("/projects/profile", { project_id: boardId, profile: { deploy: { method: "altengine", altengine_instances: ["runner-fns"] } } }, human);
+    await sleep(3000); // the daemon reloads the profile from the board event
+    const ship = await call("/duty/enqueue", { project_id: boardId, title: "[deploy] Ship a function", brief: "Deploy it." }, human);
+    const shipDone = await until("deploy done", async () => (await get(ship.duty_id)).status === "done", 60_000);
+    if (!shipDone) {
+      console.log("      duty:", JSON.stringify(await get(ship.duty_id)));
+      console.log("      poll:", JSON.stringify(await call("/machine/poll", {}, paired.machine_key)));
+    }
+    const shipped = await until("deploy event", () => events(log).find((e) => e.event === "deploy" && e.dutyId === ship.duty_id), 10_000);
+    check("a board that deploys to altengine offers the session the deploy tools", shipped?.offered === true, shipped);
+    check("which refuse an instance the board does not allow, and a file outside the worktree", shipped?.refused === true && shipped?.escaped === true, shipped);
+    check("and deploy to one it does, with the daemon's key", !!shipped?.deployed?.version && !shipped.deployError, shipped);
+    const fns = await fetch(`${BASE}/v1/functions/runner-fns`, { headers: { authorization: "Bearer dev" } }).then((r) => r.json());
+    check("the function is live on altengine", (fns.functions || []).some((f) => f.name === "hello"), fns);
+
+    // --- CI that nobody can watch here -------------------------------------------
+    await call("/projects/profile", { project_id: boardId, profile: { deploy: { method: "ci", workflow: "deploy.yml" } } }, human);
+    await sleep(3000);
+    const viaCI = await call("/duty/enqueue", { project_id: boardId, title: "Change something CI ships", brief: "Anything." }, human);
+    await until("ci duty done", async () => (await get(viaCI.duty_id)).status === "done", 60_000);
+    const noted = await until("ci note", async () => {
+      const t = await call("/duty/thread", { duty_id: viaCI.duty_id, limit: 50 }, human);
+      return t.entries.find((e) => /not watched|CI \(deploy\.yml\)/.test(e.message));
+    }, 20_000);
+    check("a push-to-deploy board says on the duty when its CI could not be watched", !!noted, noted);
 
     const machines = await call("/machines/list", {}, human);
     check("the console sees the machine online", machines.machines[0]?.online === true, machines.machines[0]);

@@ -338,11 +338,20 @@ func (d *Daemon) onEvent(ev live.Event) {
 			d.wake()
 		}
 	case "board":
+		// A profile or rules change: re-read settings, but the channels this machine listens on are
+		// the same, so the socket stays as it is.
 		board := strings.TrimPrefix(ev.Channel, "board.")
 		d.mu.Lock()
 		delete(d.rules, board)
 		d.mu.Unlock()
-		go d.Reload()
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if err := d.refresh(ctx); err != nil {
+				d.log.Printf("reloading settings: %v", err)
+			}
+			d.wake()
+		}()
 	}
 }
 
@@ -454,6 +463,9 @@ func (d *Daemon) startOne(ctx context.Context, b board.PollBoard, started map[st
 				var e *board.Error
 				if errors.As(err, &e) && (strings.Contains(e.Message, "at a time") || strings.Contains(e.Message, "to itself")) {
 					return false // the board is full; the next event or poll tries again
+				}
+				if errors.As(err, &e) && !strings.Contains(e.Message, "claimed by another") && !strings.Contains(e.Message, "reserved") && !strings.Contains(e.Message, "parked on machine") {
+					d.log.Printf("could not claim %s on %s: %s", r.DutyID, b.ProjectID, e.Message)
 				}
 				continue // someone else took it, or it is parked for another machine
 			}

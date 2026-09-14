@@ -535,7 +535,8 @@ func deployConsole(ctx context.Context, c *altengine.Client, a *assets.Bundle, n
 		Path: "/index.html",
 		Data: []byte(`<!doctype html><meta charset="utf-8"><title>DutyBoard</title><meta http-equiv="refresh" content="0; url=/app/"><a href="/app/">DutyBoard</a>`),
 	})
-	return c.DeployStatic(ctx, n.Static, consoleLabel+a.Version, out)
+	url, _, err := c.DeployStatic(ctx, n.Static, consoleLabel+a.Version, out)
+	return url, err
 }
 
 // allowOrigins adds the console's origins to the function's CORS list and the auth instance's

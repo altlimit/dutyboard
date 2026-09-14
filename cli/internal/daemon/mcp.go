@@ -221,6 +221,9 @@ func (d *Daemon) filterTools(reply json.RawMessage, s *session) (json.RawMessage
 		}
 		out = append(out, t)
 	}
+	if s.run != nil && deploysToAltengine(d.view(s.board)) {
+		out = append(out, altengineTools...)
+	}
 	return rpcResult(env.ID, map[string]any{"tools": out}), nil
 }
 
@@ -247,6 +250,15 @@ func (d *Daemon) localTool(ctx context.Context, s *session, id json.RawMessage, 
 			run.setIntegrated(res)
 		}
 		return toolJSON(id, res, !res.OK), true
+	case "altengine_deploy_static", "altengine_deploy_function":
+		if s.run == nil {
+			return toolText(id, name+" is for sessions the daemon started", true), true
+		}
+		res, err := d.altengineDeploy(ctx, s, name, args)
+		if err != nil {
+			return toolText(id, err.Error(), true), true
+		}
+		return toolJSON(id, res, false), true
 	case "tools_list":
 		return toolJSON(id, map[string]any{"tools_folder": tools.Dir(), "tools": d.tools.List()}, false), true
 	case "tools_register":

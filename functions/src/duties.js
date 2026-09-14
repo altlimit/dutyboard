@@ -312,6 +312,12 @@ export async function claimDuty(ctx, body) {
   const aKey = agentKey(project.key, agentId);
   const agent = (await ctx.store.get("agents", aKey)) || newAgent(project, agentId, now);
   if (agent.active_duty_id && agent.active_duty_id !== duty.key) {
+    // The agent row can name a duty that is no longer this agent's — deleted, or moved by a person
+    // — when nothing polled in between to heal it. The duty row is the truth, as in poll.
+    const held = await ctx.store.get("duties", agent.active_duty_id);
+    if (!held || held.status !== "active" || held.assigned_agent_id !== agentId) agent.active_duty_id = null;
+  }
+  if (agent.active_duty_id && agent.active_duty_id !== duty.key) {
     // The single-active invariant, reported so the agent knows what to finish first.
     throw conflict(`agent '${agentId}' already holds duty '${agent.active_duty_id}'`, {
       active_duty_id: agent.active_duty_id,
@@ -984,6 +990,14 @@ export async function deleteDuty(ctx, body) {
   await sweepAttachments(ctx, { field: "duty_id", value: duty.key });
   await unindexDuties(ctx, [duty.key]);
   await ctx.store.delete("duties", [duty.key]);
+  // A duty deleted while held frees whoever held it, or that agent can never claim again.
+  if (duty.status === "active" && duty.assigned_agent_id) {
+    const aKey = agentKey(project.key, duty.assigned_agent_id);
+    const agent = await ctx.store.get("agents", aKey);
+    if (agent && agent.active_duty_id === duty.key) {
+      await ctx.store.putOne("agents", aKey, { ...stripMeta(agent), active_duty_id: null, last_seen_at: Date.now() });
+    }
+  }
   await ctx.publish(project.key, duty.key, { t: "duty", id: duty.key, status: "deleted" });
   return { ok: true, deleted: duty.key };
 }

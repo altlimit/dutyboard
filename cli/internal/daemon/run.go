@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/altlimit/dutyboard/cli/internal/board"
+	"github.com/altlimit/dutyboard/cli/internal/deploy"
+	"github.com/altlimit/dutyboard/cli/internal/hints"
 	"github.com/altlimit/dutyboard/cli/internal/prompt"
 	"github.com/altlimit/dutyboard/cli/internal/runner"
 	"github.com/altlimit/dutyboard/cli/internal/state"
@@ -197,6 +199,20 @@ func (d *Daemon) execute(dctx, rctx context.Context, run *Run, duty *board.Duty,
 			Mode: string(modeFor(dctx, v, spec)), Resuming: resume, Attempt: rec.Attempts,
 			ProjectRoot: spec.Repo, Tools: d.tools.Describe(),
 		}
+		if run.Kind == "setup" || run.Kind == "rules" {
+			kind := ""
+			if v.Profile != nil {
+				kind = v.Profile.Type
+			}
+			in.Hints = hints.For(kind)
+		}
+		if run.Kind == "setup" {
+			base := spec.Base
+			if base == "" {
+				base = worktree.DefaultBranch(dctx, spec.Repo, worktree.Remote(dctx, spec.Repo))
+			}
+			in.Detected = deploy.Detect(path, base).Describe()
+		}
 		system, err := prompt.System(in)
 		if err != nil {
 			d.log.Printf("prompt: %v", err)
@@ -278,6 +294,9 @@ func (d *Daemon) execute(dctx, rctx context.Context, run *Run, duty *board.Duty,
 			_ = d.wt.Remove(dctx, spec, keepBranch)
 			_ = state.SaveRunRecord(run.DutyID, nil)
 			d.log.Printf("%s: %s %q", run.Board, fresh.Status, fresh.Title)
+			if fresh.Status == "done" && res != nil && res.OK && !res.NoOp && res.Mode == worktree.ModePush {
+				d.watchDeploy(dctx, run, v, spec, res.Commit)
+			}
 			return
 		case "active":
 			if fresh.AssignedAgentID != run.Agent {

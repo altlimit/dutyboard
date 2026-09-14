@@ -445,6 +445,17 @@ async function main() {
     backInQueue && backInQueue.reopened,
   );
 
+  // Deleting a duty an agent holds frees the agent: before, the agent row kept naming the deleted
+  // duty and every later claim by that agent was refused as a second active duty.
+  const doomed = await call("/duty/enqueue", { project_id: projectId, title: "Deleted mid-work", brief: "gone soon" }, human);
+  await call("/duty/claim", { duty_id: doomed.duty_id, agent_id: "alpha" }, agent);
+  await call("/duty/delete", { duty_id: doomed.duty_id, confirm: doomed.duty_id }, human);
+  const afterDelete = await call("/duty/enqueue", { project_id: projectId, title: "Next for the same agent", brief: "claimable" }, human);
+  const freed = await call("/duty/claim", { duty_id: afterDelete.duty_id, agent_id: "alpha" }, agent, { expectStatus: true });
+  check("deleting a held duty frees its agent to claim the next", freed.status === 200, freed.json);
+  await call("/duty/update", { duty_id: afterDelete.duty_id, status: "queued" }, human);
+  await call("/duty/delete", { duty_id: afterDelete.duty_id, confirm: afterDelete.duty_id }, human);
+
   const twice = await call("/duty/reopen", { duty_id: shipped.duty_id, note: "again" }, human, { expectStatus: true });
   check("a duty that is already queued cannot be sent back", twice.status === 409, twice);
 

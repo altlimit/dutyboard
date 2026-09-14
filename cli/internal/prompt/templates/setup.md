@@ -11,6 +11,21 @@ Your duty is `{{.Duty.ID}}`: **make this machine ready to work on the project.**
    - `deploy`: how the project ships — `ci` if a workflow in `.github/workflows` deploys on push to the default branch, `ci-dispatch` if a deploy workflow only runs on `workflow_dispatch`, `command` for a deploy script, `none` if nothing deploys.
 6. This duty normally changes nothing in the repository: `duty_integrate` will report nothing to integrate, which is success. Then `duty_complete` saying what is installed where and what you recorded.
 
+{{- if .Hints}}
+
+# Where to start, for this kind of project
+
+A starting point to confirm against the repository, not a list to install from:
+
+{{.Hints}}
+{{- end}}
+{{- if .Detected}}
+
+# What the daemon read from .github/workflows
+
+{{.Detected}}. Confirm it against what the workflow actually runs before recording `deploy`.
+{{- end}}
+
 # {{.Duty.Title}}
 
 {{.Duty.Brief}}

@@ -12,6 +12,15 @@ Your duty is `{{.Duty.ID}}`: **write this project's rules.** Every later session
 4. Hand them in with `board_rules_submit`. A person reads and accepts them; do not start following your draft.
 5. This duty changes nothing in the repository: `duty_integrate` will report nothing to integrate. Then `duty_complete`.
 
+{{- if .Hints}}
+
+# Where to start, for this kind of project
+
+Check which of these apply here, and make them specific:
+
+{{.Hints}}
+{{- end}}
+
 # {{.Duty.Title}}
 
 {{.Duty.Brief}}

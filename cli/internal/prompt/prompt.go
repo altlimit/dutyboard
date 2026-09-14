@@ -35,6 +35,8 @@ type Input struct {
 	Attempt     int
 	ProjectRoot string // the linked folder, for setup
 	Tools       string // what is installed on this machine, one line each
+	Hints       string // what this kind of project usually needs, for setup and rules
+	Detected    string // the daemon's reading of the repository's CI, for setup
 }
 
 // System is the part appended to the agent's own system prompt.

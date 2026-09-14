@@ -443,6 +443,11 @@ The loop is the program's, not the agent's. For each duty it:
    folder. Stopped early means it is retried, and after three tries it is put to you with the
    session log attached.
 
+After a duty lands, a board that deploys through CI has its run watched (with the GitHub CLI): a
+failing deploy becomes an immediate duty to fix it, with the failing log in its brief. A board that
+deploys to altengine gives sessions `altengine_deploy_static` and `altengine_deploy_function`, which
+use the machine's stored key and only the instances the board's profile allows.
+
 A linked board starts with a **setup** duty, which gets this machine ready for the project and
 records the toolchain it installed, and a **rules** duty, which drafts the project's rules for you to
 accept. How many duties run at once is set per board (`runner.parallel`) and per machine

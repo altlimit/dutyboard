@@ -101,6 +101,19 @@ if (title.includes("[park]") && !resumed) {
   finish("parked");
 }
 
+if (title.includes("[deploy]")) {
+  writeFileSync("fn.js", 'export default { async fetch() { return new Response("deployed by a session"); } };\n');
+  git("add", "-A");
+  git("-c", "user.email=fake@example.com", "-c", "user.name=fake", "commit", "--quiet", "-m", "a function");
+  const integrated = await tool("duty_integrate");
+  const refused = await tool("altengine_deploy_function", { file: "fn.js", instance: "not-allowed", name: "hello" });
+  const escaped = await tool("altengine_deploy_function", { file: "../../../../etc/passwd", instance: "runner-fns", name: "hello" });
+  const deployed = await tool("altengine_deploy_function", { file: "fn.js", instance: "runner-fns", name: "hello" });
+  const completed = await tool("duty_complete", { duty_id: dutyId, outcome_summary: `Deployed hello v${deployed.data?.version}` });
+  record({ event: "deploy", dutyId, offered: tools.includes("altengine_deploy_function"), integrate: integrated.data, refused: refused.isError, escaped: escaped.isError, deployed: deployed.data, deployError: deployed.isError ? deployed.text : null, completeError: completed.isError ? completed.text : null });
+  finish("deployed");
+}
+
 const claim = await tool("duty_claim", { duty_id: dutyId });
 const notMine = await tool("duty_complete", { duty_id: "duty_NOTMINE", outcome_summary: "not mine" });
 const early = await tool("duty_complete", { duty_id: dutyId, outcome_summary: "too early" });

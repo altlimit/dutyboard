@@ -267,7 +267,7 @@ var ErrNoStatic = errors.New("this altengine does not host static sites")
 // The three calls deploy-site.mjs makes: the manifest, the missing files straight to storage, then
 // activation — a pointer move, so a half-finished upload is a deployment nobody points at rather
 // than a broken site.
-func (c *Client) DeployStatic(ctx context.Context, instance, message string, files []StaticFile) (string, error) {
+func (c *Client) DeployStatic(ctx context.Context, instance, message string, files []StaticFile) (url, deploymentID string, err error) {
 	manifest := map[string]any{}
 	byHash := map[string]*StaticFile{}
 	for i := range files {
@@ -282,18 +282,18 @@ func (c *Client) DeployStatic(ctx context.Context, instance, message string, fil
 		Cursor       string   `json:"cursor"`
 	}
 	base := "/v1/static/" + Esc(instance) + "/deployments"
-	err := c.Do(ctx, http.MethodPost, base, map[string]any{"files": manifest, "message": message}, &created)
+	err = c.Do(ctx, http.MethodPost, base, map[string]any{"files": manifest, "message": message}, &created)
 	if IsStatus(err, 501) || (IsStatus(err, 404) && strings.Contains(errorBody(err), "data-plane endpoint")) {
-		return "", ErrNoStatic
+		return "", "", ErrNoStatic
 	}
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 
 	uploads, cursor := created.Uploads, created.Cursor
 	for {
 		if err := putAll(ctx, c.HTTP, uploads, func(h string) *StaticFile { return byHash[h] }); err != nil {
-			return "", err
+			return "", "", err
 		}
 		if cursor == "" {
 			break
@@ -303,7 +303,7 @@ func (c *Client) DeployStatic(ctx context.Context, instance, message string, fil
 			Cursor  string   `json:"cursor"`
 		}
 		if err := c.Do(ctx, http.MethodGet, fmt.Sprintf("%s/%s/uploads?cursor=%s", base, Esc(created.DeploymentID), Esc(cursor)), nil, &page); err != nil {
-			return "", err
+			return "", "", err
 		}
 		uploads, cursor = page.Uploads, page.Cursor
 	}
@@ -312,9 +312,9 @@ func (c *Client) DeployStatic(ctx context.Context, instance, message string, fil
 		URL string `json:"url"`
 	}
 	if err := c.Do(ctx, http.MethodPost, fmt.Sprintf("%s/%s/activate", base, Esc(created.DeploymentID)), nil, &live); err != nil {
-		return "", err
+		return "", "", err
 	}
-	return strings.TrimRight(live.URL, "/"), nil
+	return strings.TrimRight(live.URL, "/"), created.DeploymentID, nil
 }
 
 func errorBody(err error) string {

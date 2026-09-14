@@ -1,6 +1,6 @@
 # `dutyboard` — the runner and provisioner
 
-Status: **phases 1–4 built** (server, provisioner, daemon, console) — see §15 and "Built so far" at the end. Written 2026-09-14. Decisions marked **(assumed)** are defaults
+Status: **phases 1–5 built** (server, provisioner, daemon, console, setup/rules/deploy) — see §15 and "Built so far" at the end. Written 2026-09-14. Decisions marked **(assumed)** are defaults
 chosen while planning; change them here before the phase that depends on them starts.
 
 ## 1. Why this exists
@@ -628,7 +628,7 @@ Each phase ends deployed and usable.
 
 ## Built so far (2026-09-14)
 
-Phases 1–4 exist and are tested; phases 5–6 do not yet. Where the build differs from the plan above:
+Phases 1–5 exist and are tested; phase 6 (docs and moving musictheory over) remains. Where the build differs from the plan above:
 
 - **Local bridge transport**: loopback TCP plus a secret in `run/daemon.json` (0600), not a Unix
   socket or named pipe — one code path on every OS, with the same trust boundary (this user).
@@ -641,14 +641,18 @@ Phases 1–4 exist and are tested; phases 5–6 do not yet. Where the build diff
   verified on register and at daemon start, on every session's PATH.
 - **Console** (§12): the board wizard is one form rather than steps; machines have their own page
   (`/machines`) with the settings the plan put under Runners, and `/pair` approves a code.
-- **Not built yet**: CI detection and watching, the altengine deploy tools (§10), per-type hints
-  (§7). Setup sessions are told what to detect and record instead.
+- **Deploy** (§10): CI is watched with the GitHub CLI only (no token fallback yet); a machine without
+  `gh` notes on the duty that CI was not watched. `altengine_deploy_static` does not prune old
+  deployments yet — the listing's shape could not be confirmed with a read.
+- **Hints** (§7) are per project type, embedded, and given to setup and rules sessions with the
+  daemon's reading of `.github/workflows`.
 
 Verified by:
 
-- `npm run smoke` (191 checks, server);
+- `npm run smoke` (195 checks, server);
 - `go test ./...` in `cli/` (the provisioner's hosted path against a fake altengine; worktrees,
   integration, conflicts and snapshots against real git);
-- `npm run smoke:runner` (25 checks: the daemon working a board on the emulator with a fake agent);
+- `npm run smoke:runner` (30 checks: the daemon working a board on the emulator with a fake agent,
+  including an altengine deploy through the bridge);
 - one run with real Claude Code (Haiku) completing a duty, integrating and landing the commit.
 

@@ -37,6 +37,8 @@ These are in force on this board. Follow them in everything you do for this duty
 {{- end}}
 {{- if .Deploy.Method}}
 - Deploys by: {{.Deploy.Method}}{{if .Deploy.Workflow}} ({{.Deploy.Workflow}}){{end}}{{if .Deploy.Command}} — `{{.Deploy.Command}}`{{end}}
+{{- if eq .Deploy.Method "ci" "ci-dispatch"}} — the daemon watches CI after your work lands; do not trigger or wait for it yourself.{{end}}
+{{- if eq .Deploy.Method "altengine"}} — after integrating, deploy with `altengine_deploy_static` or `altengine_deploy_function`, to {{join .Deploy.AltengineInstances ", "}} only.{{end}}
 {{- end}}
 {{- end}}
 
