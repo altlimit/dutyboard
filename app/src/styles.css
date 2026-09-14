@@ -128,6 +128,10 @@ input[type="file"].sr-only:focus-visible + label.btn {
   border-radius: var(--radius);
 }
 .skip:focus { left: 0.5rem; top: 0.5rem; }
+/* The app moves focus to <main> on every navigation so a screen reader hears the new page. It is a
+   landmark, not a control: a ring around the entire page says nothing to a sighted person, and on a
+   board wider than the window it was a stray line down the screen. */
+main:focus { outline: none; }
 
 /* --- layout ------------------------------------------------------------ */
 .wrap { max-width: 1200px; margin: 0 auto; padding: 1.25rem var(--gutter) 4rem; }
@@ -393,7 +397,11 @@ input[aria-invalid="true"], textarea[aria-invalid="true"] { border-color: var(--
 }
 .column__title { margin: 0; font-size: 0.95rem; }
 .column__count { color: var(--text-dim); font-size: 0.85rem; font-variant-numeric: tabular-nums; }
-.column__list { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.5rem; }
+/* One track that is exactly the column's width. Left to size itself, a grid track grows to its
+   longest unbreakable word — a deployment id in an outcome summary — and the card, then the whole
+   board, spills sideways off the page. */
+.column__list { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 0.5rem; }
+.column__list > li, .duty { min-width: 0; }
 .column__more { margin-top: 0.5rem; width: 100%; justify-content: center; font-size: 0.85rem; }
 .column__note { margin: 0.5rem 0 0; }
 
@@ -434,7 +442,7 @@ input[aria-invalid="true"], textarea[aria-invalid="true"] { border-color: var(--
   box-shadow: var(--shadow);
 }
 .duty:hover { border-color: var(--border-strong); }
-.duty__title { font-weight: 560; line-height: 1.35; margin-bottom: 0.3rem; display: block; }
+.duty__title { font-weight: 560; line-height: 1.35; margin-bottom: 0.3rem; display: block; overflow-wrap: anywhere; }
 .duty__meta { display: flex; gap: 0.35rem; align-items: center; flex-wrap: wrap; font-size: 0.8rem; color: var(--text-dim); }
 .duty__ask {
   margin-top: 0.45rem;
@@ -448,6 +456,8 @@ input[aria-invalid="true"], textarea[aria-invalid="true"] { border-color: var(--
   -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
   overflow: hidden;
+  /* Commit hashes, deployment ids and paths have no spaces to break at. */
+  overflow-wrap: anywhere;
 }
 
 /* --- attachments --------------------------------------------------------- */
@@ -654,7 +664,5 @@ details > summary { cursor: pointer; font-weight: 550; }
   overflow: hidden;
   text-overflow: ellipsis;
 }
-/* A card never grows past its column: a long line truncates instead of pushing the grid wider. */
-.column__list > li, .duty { min-width: 0; }
 .duty__now--page { white-space: normal; display: flex; gap: 0.5rem; align-items: baseline; margin: 0.4rem 0 0; }
 
