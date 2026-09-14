@@ -38,6 +38,7 @@ import {
   updateDuty,
   deleteDuty,
   listThread,
+  getDuty,
 } from "./duties.js";
 import { handleMcp } from "./mcp.js";
 import { addMember, listMembers, removeMember, setMemberAgents, syncAccess } from "./members.js";
@@ -54,6 +55,8 @@ import {
   revokeMachine,
   unlinkMachineByPerson,
   machineMe,
+  machineBoards,
+  createMachineBoard,
   linkMachine,
   unlinkMachine,
   reportState,
@@ -99,6 +102,7 @@ const ROUTES = {
   "/duty/update": updateDuty,
   "/duty/delete": deleteDuty,
   "/duty/thread": listThread,
+  "/duty/get": getDuty,
   "/duty/search": searchDuties,
   "/duty/attach": attachToDuty,
   "/duty/attachments": listAttachments,
@@ -133,6 +137,8 @@ const ROUTES = {
   "/machines/revoke": revokeMachine,
   "/machines/unlink": unlinkMachineByPerson,
   "/machine/me": machineMe,
+  "/machine/boards": machineBoards,
+  "/machine/boards/create": createMachineBoard,
   "/machine/link": linkMachine,
   "/machine/unlink": unlinkMachine,
   "/machine/state": reportState,

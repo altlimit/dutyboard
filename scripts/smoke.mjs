@@ -869,6 +869,18 @@ async function main() {
 
   const me = await call("/machine/me", {}, mkey);
   check("the machine reads its board and the profile with it", me.links.length === 1 && me.links[0].profile.type === "game", me.links);
+  const linkable = await call("/machine/boards", {}, mkey);
+  check(
+    "it can list the boards it may link, and says which it already works",
+    linkable.boards.some((b) => b.project_id === mBoard && b.linked) && linkable.boards.some((b) => b.project_id === projectId && !b.linked),
+    linkable.boards.map((b) => [b.project_id, b.linked]),
+  );
+  const madeHere = `smoke-from-terminal-${Date.now().toString(36)}`;
+  const terminalBoard = await call("/machine/boards/create", { name: "From the terminal", project_id: madeHere, profile: { type: "cli-lib" } }, mkey);
+  check("and make one for its owner from the terminal", terminalBoard.project_id === madeHere && !!terminalBoard.rules_duty_id, terminalBoard);
+  const ownersList = await call("/projects/list", {}, human);
+  check("which is the owner's board like any other", ownersList.projects.some((p) => p.project_id === madeHere), ownersList.projects.length);
+  await call("/projects/delete", { project_id: madeHere, confirm: madeHere }, human);
 
   const lane1 = `${prefix}/1`;
   const lane2 = `${prefix}/2`;
@@ -914,6 +926,8 @@ async function main() {
     proposed.profile,
   );
   await call("/duty/complete", { duty_id: linked.setup_duty_id, agent_id: lane1, outcome_summary: "Godot 4.7.1 installed and registered." }, mkey, { board: mBoard });
+  const afterSetup = await call("/duty/get", { duty_id: linked.setup_duty_id }, mkey, { board: mBoard });
+  check("a daemon reads back how its session left the duty", afterSetup.duty.status === "done" && /Godot/.test(afterSetup.duty.outcome_summary), afterSetup.duty);
 
   const rulesClaim = await call("/duty/claim", { duty_id: mCreated.rules_duty_id, agent_id: lane1 }, mkey, { board: mBoard });
   check("the rules duty is claimed next, before any rules exist", rulesClaim.duty.kind === "rules" && rulesClaim.rules_version === 0, rulesClaim);
@@ -1180,6 +1194,7 @@ async function main() {
     "/duty/update": (d) => ({ duty_id: d, title: "no" }),
     "/duty/delete": (d) => ({ duty_id: d, confirm: d }),
     "/duty/thread": (d) => ({ duty_id: d }),
+    "/duty/get": (d) => ({ duty_id: d }),
     "/duty/search": () => ({ project_id: projectId, query: "anything" }),
     "/duty/attach": (d) => ({ duty_id: d, name: "x.png", size: 10, content_type: "image/png" }),
     "/duty/attachments": (d) => ({ duty_id: d }),
@@ -1211,6 +1226,8 @@ async function main() {
     "/machines/revoke": () => ({ machine_id: paired.machine_id }),
     "/machines/unlink": () => ({ machine_id: paired.machine_id, project_id: projectId }),
     "/machine/me": () => ({}),
+    "/machine/boards": () => ({}),
+    "/machine/boards/create": () => ({ name: "Not yours", project_id: `outsider-made-${Date.now()}` }),
     "/machine/link": () => ({ project_id: projectId }),
     "/machine/unlink": () => ({ project_id: projectId }),
     "/machine/state": () => ({ project_id: projectId, runs: [] }),

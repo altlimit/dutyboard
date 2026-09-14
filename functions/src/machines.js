@@ -27,6 +27,7 @@ import { requireHuman, requireMachine, resolveProject, memberKey, linkKey } from
 import { liveConfigured, mintMachineLive, machinesPresent, publishMachine } from "./live.js";
 import { runnableDuties, activeDuties, seedDuty, stripMeta } from "./duties.js";
 import { profileView } from "./profile.js";
+import { createProjectFor } from "./projects.js";
 
 const PAIRING_TTL_MS = 10 * 60 * 1000;
 const PAIRING_POLL_SECONDS = 3;
@@ -603,6 +604,40 @@ export async function machineLive(ctx) {
   if (!liveConfigured(ctx)) throw badRequest("live updates are not configured for this deployment — poll instead");
   const links = await myLinks(ctx);
   return mintMachineLive(ctx, caller.machineId, links.map((l) => l.project_id));
+}
+
+/**
+ * `POST /machine/boards` — the boards this machine could work: its owner's, and those shared with
+ * its owner by someone who let them run agents. What a daemon offers when it is run in a folder
+ * that is not linked yet.
+ */
+export async function machineBoards(ctx) {
+  const caller = requireMachine(ctx.caller);
+  const [owned, shared, links] = await Promise.all([
+    ctx.store.query("projects", {
+      where: [{ field: "owner_uid", op: "=", value: caller.ownerUid }],
+      order: [{ field: "created_at", dir: "desc" }],
+      limit: 100,
+    }),
+    ctx.store.query("memberships", { where: [{ field: "uid", op: "=", value: caller.ownerUid }], limit: 50 }),
+    myLinks(ctx),
+  ]);
+  const allowed = shared.rows.filter((m) => m.can_run_agents).map((m) => m.project_id);
+  const sharedProjects = await ctx.store.getMany("projects", allowed);
+  const linked = new Set(links.map((l) => l.project_id));
+  const view = (p, role) => ({ ...profileView(p), role, linked: linked.has(p.key) });
+  return {
+    boards: [
+      ...owned.rows.map((p) => view(p, "owner")),
+      ...allowed.map((id) => sharedProjects.get(id)).filter(Boolean).map((p) => view(p, "member")),
+    ],
+  };
+}
+
+/** `POST /machine/boards/create` — a board for this machine's owner, made from the terminal. */
+export async function createMachineBoard(ctx, body) {
+  const caller = requireMachine(ctx.caller);
+  return createProjectFor(ctx, { uid: caller.ownerUid, name: caller.machineRow.owner_name || "" }, body);
 }
 
 // --- setup requests ----------------------------------------------------------------------

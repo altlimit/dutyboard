@@ -26,7 +26,14 @@ const MAX_AGENTS = 10;
 const MAX_BOARDS = 100;
 
 export async function createProject(ctx, body) {
-  const caller = requireHuman(ctx.caller);
+  return createProjectFor(ctx, requireHuman(ctx.caller), body);
+}
+
+/**
+ * Make a board owned by `caller` — `{ uid, name }`. Split out so a person's own paired machine can
+ * make one for them (`/machine/boards/create`) when it is linking a folder that has no board yet.
+ */
+export async function createProjectFor(ctx, caller, body) {
 
   const owned = await ctx.store.countAtMost(
     "projects",

@@ -237,6 +237,30 @@ function claimBlocker(ctx, duty, agentId, present, now) {
   return null;
 }
 
+/**
+ * `POST /duty/get` — one duty as it stands now.
+ *
+ * An agent otherwise only ever sees a duty through poll and claim, which is enough to work it and
+ * not enough to supervise it: a daemon whose session has just exited needs to know whether the duty
+ * was finished, parked, failed or is still held, and why.
+ */
+export async function getDuty(ctx, body) {
+  const duty = await loadDuty(ctx, body.duty_id);
+  await projectOfDuty(ctx.caller, duty, ctx.store);
+  return {
+    duty: {
+      ...briefOf(duty, { full: true }),
+      outcome_summary: duty.outcome_summary || null,
+      last_question: duty.last_question || null,
+      attachment_count: duty.attachment_count || 0,
+      affinity: duty.affinity || null,
+      spawned_by: duty.spawned_by || null,
+      blocked_by: duty.blocked_by || null,
+      updated_at: duty.updated_at,
+    },
+  };
+}
+
 /** `POST /duty/thread` — the decision log for one duty, oldest first. */
 export async function listThread(ctx, body) {
   const duty = await loadDuty(ctx, body.duty_id);
