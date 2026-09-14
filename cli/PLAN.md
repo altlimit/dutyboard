@@ -232,7 +232,7 @@ This lets one prebuilt console be deployed anywhere by writing one file.
 
 | Limit | Set where | Protects | Default |
 |---|---|---|---|
-| `max_sessions` | machine, editable under Runners | Claude plan usage, CPU, RAM | 3 |
+| `max_sessions` | machine, editable on the console's Machines page | Claude plan usage, CPU, RAM | 3 |
 | `runner.parallel` | board, **enforced by the server on claim** (§5) | whether this repo's work can run side by side | 1 |
 
 Three boards at 1 each run three sessions at once; one board at 3 runs three on that board.

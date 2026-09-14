@@ -113,7 +113,8 @@ func pairMachine(ctx context.Context, u *ui.UI, cfg *state.Config, f Flags) (str
 				cfg.Console = res.ConsoleURL
 			}
 		} else {
-			server, err = u.Ask("DutyBoard API URL (the console shows it under Runners)", "")
+			u.Say("The API URL is on the console's Machines page, e.g. https://abc123-fn.altengine.app/board")
+			server, err = u.Ask("DutyBoard API URL", "")
 			if err != nil {
 				return "", err
 			}

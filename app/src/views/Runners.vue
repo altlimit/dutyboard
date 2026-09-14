@@ -101,6 +101,10 @@ onUnmounted(() => clearInterval(timer));
           Computers running <code class="mono">dutyboard</code> for you. Each one claims duties from the boards
           linked to it and works them with Claude Code, in a git worktree of its own.
         </p>
+        <p class="small" style="margin: 0.4rem 0 0">
+          API URL, for pairing a machine: <code class="mono">{{ config.api }}</code>
+          <button type="button" class="link small" @click="copy(config.api)">Copy</button>
+        </p>
       </div>
       <router-link class="btn" :to="{ name: 'pair' }">Pair a machine</router-link>
     </div>
