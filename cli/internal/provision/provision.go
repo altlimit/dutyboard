@@ -589,21 +589,46 @@ func allowOrigins(ctx context.Context, c *altengine.Client, u *ui.UI, n Names, o
 	return nil
 }
 
+// verify waits for the function to report the version just deployed. Activation is not instant
+// everywhere: hosted, the edge goes on answering from the previous version for a little while, so a
+// single read straight after deploying can see the old one. It fails only if the new version never
+// appears.
 func verify(ctx context.Context, u *ui.UI, res *Result) error {
 	u.Step("Checking it")
-	h, err := Health(ctx, res.APIURL)
-	if err != nil {
-		return fmt.Errorf("the function does not answer /health: %w", err)
+	deadline := time.Now().Add(verifyWithin)
+	var last *HealthInfo
+	var lastErr error
+	for {
+		h, err := Health(ctx, res.APIURL)
+		last, lastErr = h, err
+		if err == nil && h.Version == res.Version {
+			if !h.Machines {
+				return fmt.Errorf("the function answers but cannot pair machines — it is older than this program")
+			}
+			u.OK("DutyBoard v%s answers at %s", h.Version, res.APIURL)
+			return nil
+		}
+		if time.Now().After(deadline) {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(verifyEvery):
+		}
 	}
-	if h.Version != res.Version {
-		return fmt.Errorf("the function reports v%s, not v%s — the deploy did not take", h.Version, res.Version)
+	if lastErr != nil {
+		return fmt.Errorf("the function does not answer /health: %w", lastErr)
 	}
-	if !h.Machines {
-		return fmt.Errorf("the function answers but cannot pair machines — it is older than this program")
-	}
-	u.OK("DutyBoard v%s answers at %s", h.Version, res.APIURL)
-	return nil
+	return fmt.Errorf("the function still reports v%s, not v%s, after %s — the deploy did not take", last.Version, res.Version, verifyWithin)
 }
+
+// How long verify waits for a new version to be served, and how often it asks. Variables, so a test
+// can shorten them.
+var (
+	verifyWithin = 90 * time.Second
+	verifyEvery  = 3 * time.Second
+)
 
 func originOf(raw string) string {
 	p, err := url.Parse(raw)

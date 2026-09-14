@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/altlimit/dutyboard/cli/internal/altengine"
 	"github.com/altlimit/dutyboard/cli/internal/assets"
@@ -376,7 +377,23 @@ func TestHostedConsoleOnlyInstancesNeedAPerson(t *testing.T) {
 	}
 }
 
+func TestHostedWaitsForTheNewVersionToBeServed(t *testing.T) {
+	verifyWithin, verifyEvery = 2*time.Second, 50*time.Millisecond
+	f := newFake(t, "1.0.0")
+	// The edge answers the old version for a moment after activation, then the new one.
+	go func() {
+		time.Sleep(300 * time.Millisecond)
+		f.mu.Lock()
+		f.version = "9.9.9"
+		f.mu.Unlock()
+	}()
+	if _, err := Run(context.Background(), Options{Client: hosted(f.srv.URL), Assets: testAssets(t, "9.9.9"), UI: quietUI()}); err != nil {
+		t.Fatalf("a version that appears shortly after deploying should pass: %v", err)
+	}
+}
+
 func TestHostedRefusesADeployThatDidNotTake(t *testing.T) {
+	verifyWithin, verifyEvery = 300*time.Millisecond, 50*time.Millisecond
 	f := newFake(t, "1.0.0") // the function keeps answering an old version
 	_, err := Run(context.Background(), Options{Client: hosted(f.srv.URL), Assets: testAssets(t, "9.9.9"), UI: quietUI()})
 	if err == nil || !strings.Contains(err.Error(), "did not take") {
