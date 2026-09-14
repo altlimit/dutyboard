@@ -12,7 +12,7 @@ import { sweepAttachments } from "./attachments.js";
 import { searchConfigured, unindexDuties } from "./searching.js";
 import { sharedBoards, sweepMembers, syncAccess } from "./members.js";
 import { mergeProfile, mergeRunner } from "./profile.js";
-import { rulesDuty, sweepBoardMachines } from "./machines.js";
+import { rulesDuty, runnersOf, sweepBoardMachines } from "./machines.js";
 
 const SWEEP_PAGE = 200;
 
@@ -124,7 +124,7 @@ export async function openBoard(ctx, body) {
   requireHuman(ctx.caller);
   const project = await resolveProject(ctx.caller, body.project_id, ctx.store);
 
-  const [agents, live] = await Promise.all([
+  const [agents, live, runners] = await Promise.all([
     ctx.store
       .query("agents", {
         where: [{ field: "project_id", op: "=", value: project.key }],
@@ -135,6 +135,9 @@ export async function openBoard(ctx, body) {
     // Live updates are an enhancement: a board with no channel configured still opens,
     // it just does not move on its own.
     liveConfigured(ctx) ? mintLive(ctx, project, body).catch(() => null) : Promise.resolve(null),
+    // The machines working this board, for the header's runner pill. Best-effort like live: a
+    // board still opens if this fails.
+    runnersOf(ctx, project.key).catch(() => []),
   ]);
 
   return {
@@ -151,6 +154,7 @@ export async function openBoard(ctx, body) {
     // rather than offer it and refuse.
     role: project.owner_uid === ctx.caller.uid ? "owner" : "member",
     agents,
+    runners,
     live,
     // Whether this deployment can search finished work. Reported here rather than probed
     // separately: the console needs it to decide whether to offer a search box at all, and

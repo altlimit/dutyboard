@@ -1,13 +1,112 @@
 <script setup>
 import { computed, onMounted, ref } from "vue";
-import { useRouter } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import { api } from "../lib/altengine.js";
 import { user as me } from "../lib/session.js";
 import { config } from "../config.js";
 import { ago } from "../lib/duties.js";
+import { profileDraft, profilePayload, runStateLabel } from "../lib/runners.js";
+import ProfileForm from "../components/ProfileForm.vue";
 
 const props = defineProps({ projectId: { type: String, required: true } });
 const router = useRouter();
+const route = useRoute();
+/** Just made from the boards page: say what comes next, once. */
+const created = computed(() => route.query.created || "");
+
+// The project and how agents run on it. Owner edits; a member reads the same form, disabled.
+const profile = ref(profileDraft());
+const hasProfile = ref(false);
+const profileNotice = ref("");
+
+async function saveProfile() {
+  busy.value = true;
+  error.value = "";
+  profileNotice.value = "";
+  try {
+    await api("/projects/profile", { project_id: props.projectId, ...profilePayload(profile.value) });
+    hasProfile.value = true;
+    profileNotice.value = "Saved. Machines working this board use it from their next duty.";
+  } catch (err) {
+    error.value = err.message;
+  } finally {
+    busy.value = false;
+  }
+}
+
+// The board's rules: what is in force, and what a rules duty has proposed.
+const rules = ref({ version: 0, body: "", draft: null });
+const rulesEdit = ref("");
+const editingRules = ref(false);
+
+async function loadRules() {
+  rules.value = await api("/board/rules", { project_id: props.projectId });
+  rulesEdit.value = rules.value.body;
+}
+
+async function acceptRules() {
+  busy.value = true;
+  error.value = "";
+  try {
+    await api("/board/rules/accept", { project_id: props.projectId });
+    await loadRules();
+  } catch (err) {
+    error.value = err.message;
+  } finally {
+    busy.value = false;
+  }
+}
+
+async function saveRules() {
+  busy.value = true;
+  error.value = "";
+  try {
+    await api("/board/rules/set", { project_id: props.projectId, body: rulesEdit.value });
+    editingRules.value = false;
+    await loadRules();
+  } catch (err) {
+    error.value = err.message;
+  } finally {
+    busy.value = false;
+  }
+}
+
+// Machines working this board, whoever's they are.
+const runners = ref([]);
+
+async function unlinkRunner(r) {
+  if (!confirm(`Take ${r.machine_name} off this board? Duties it holds stay held until someone moves them.`)) return;
+  busy.value = true;
+  error.value = "";
+  try {
+    await api("/machines/unlink", { machine_id: r.machine_id, project_id: props.projectId });
+    runners.value = (await api("/board/runners", { project_id: props.projectId })).runners;
+  } catch (err) {
+    error.value = err.message;
+  } finally {
+    busy.value = false;
+  }
+}
+
+async function setAgents(m, allowed) {
+  busy.value = true;
+  error.value = "";
+  memberNotice.value = "";
+  try {
+    const res = await api("/board/members/agents", { project_id: props.projectId, uid: m.uid, can_run_agents: allowed });
+    const who = m.name || m.identifier;
+    memberNotice.value = allowed
+      ? `${who} can now link their own machines to this board.`
+      : `${who} can no longer run agents here${res.unlinked ? `; ${res.unlinked} of their machines were unlinked` : ""}.`;
+    await loadMembers();
+  } catch (err) {
+    error.value = err.message;
+  } finally {
+    busy.value = false;
+  }
+}
+
+const linkCommand = computed(() => `alt install altlimit/dutyboard\ncd /path/to/the/repository\ndutyboard --server ${config.api}`);
 
 const tokens = ref([]);
 const loading = ref(true);
@@ -136,8 +235,12 @@ async function load() {
     role.value = board.role || "owner";
     ownerName.value = (board.project && board.project.owner_name) || "";
     searchable.value = board.search === true;
+    hasProfile.value = !!(board.project && (board.project.profile || board.project.runner));
+    profile.value = profileDraft(board.project && board.project.profile, board.project && board.project.runner);
+    runners.value = board.runners || [];
     await Promise.all([
       loadMembers(),
+      loadRules(),
       // Tokens are the owner's. A member is refused them, so they are not asked for.
       isOwner.value ? api("/tokens/list", { project_id: props.projectId }).then((l) => (tokens.value = l.tokens)) : null,
     ]);
@@ -221,6 +324,94 @@ onMounted(load);
 
     <p v-if="error" class="notice notice--error" role="alert">{{ error }}</p>
 
+    <section v-if="created === 'runner' || (role && !runners.length && hasProfile)" aria-labelledby="next-h" class="notice stack">
+      <h2 id="next-h" style="margin: 0">Put this board on a machine</h2>
+      <p style="margin: 0">
+        On the computer that should do the work — with Claude Code installed and signed in — run this inside the
+        project's repository. It pairs the machine, links the repository to this board, and starts working.
+      </p>
+      <pre class="token" style="white-space: pre-wrap">{{ linkCommand }}</pre>
+      <div class="row">
+        <button type="button" @click="copy(linkCommand)">Copy</button>
+        <router-link :to="{ name: 'runners' }">Or set it up on a machine you already paired</router-link>
+      </div>
+      <p class="small muted" style="margin: 0">
+        Its first duties get the machine ready for the project and draft this board's rules for you to accept.
+      </p>
+    </section>
+
+    <section v-if="role && runners.length" aria-labelledby="runners-h" class="panel stack">
+      <h2 id="runners-h" style="margin: 0">Machines working this board</h2>
+      <ul class="members">
+        <li v-for="r in runners" :key="r.machine_id">
+          <span>
+            <strong>{{ r.machine_name }}</strong>
+            <span class="livedot" :class="r.online ? 'livedot--live' : 'livedot--off'" style="margin-left: 0.45rem">
+              {{ r.online === null ? "presence unknown" : r.online ? "online" : "offline" }}
+            </span>
+            <span v-if="me && r.owner_uid === me.uid" class="badge members__you">yours</span>
+          </span>
+          <span class="small muted">
+            <template v-if="!r.runs.length">idle</template>
+            <template v-else>
+              <span v-for="(x, i) in r.runs" :key="x.duty_id">
+                <template v-if="i">, </template>
+                <router-link :to="{ name: 'duty', params: { projectId, dutyId: x.duty_id } }">{{ runStateLabel(x.state) }}</router-link>
+              </span>
+            </template>
+          </span>
+          <button v-if="isOwner || (me && r.owner_uid === me.uid)" type="button" class="link small" :disabled="busy" @click="unlinkRunner(r)">
+            Unlink<span class="sr-only"> {{ r.machine_name }}</span>
+          </button>
+        </li>
+      </ul>
+    </section>
+
+    <section v-if="role" aria-labelledby="rules-h" class="panel stack">
+      <h2 id="rules-h" style="margin: 0">Rules</h2>
+      <p class="muted small" style="margin: 0">
+        Given to every agent session on this board. A rules duty drafts them from the project itself; nothing
+        it writes is in force until {{ isOwner ? "you accept it" : "the owner accepts it" }}.
+      </p>
+
+      <div v-if="rules.draft" class="notice notice--warn stack">
+        <h3 style="margin: 0">Proposed rules <span class="muted small">— by {{ rules.draft.agent_id || "an agent" }}, {{ ago(rules.draft.created_at) }}</span></h3>
+        <pre class="rules">{{ rules.draft.body }}</pre>
+        <div v-if="isOwner" class="row">
+          <button class="primary" type="button" :disabled="busy" @click="acceptRules">Accept these rules</button>
+          <button type="button" :disabled="busy" @click="rulesEdit = rules.draft.body; editingRules = true">Edit before accepting</button>
+        </div>
+      </div>
+
+      <template v-if="!editingRules">
+        <pre v-if="rules.body" class="rules">{{ rules.body }}</pre>
+        <p v-else class="muted small" style="margin: 0">No rules in force yet.</p>
+        <div v-if="isOwner"><button type="button" @click="rulesEdit = rules.body; editingRules = true">Edit rules</button></div>
+        <p v-if="rules.version" class="hint" style="margin: 0">Version {{ rules.version }}, {{ ago(rules.updated_at) }}.</p>
+      </template>
+      <form v-else class="stack" @submit.prevent="saveRules">
+        <div class="field">
+          <label for="rules-edit">Rules, in markdown</label>
+          <textarea id="rules-edit" v-model="rulesEdit" rows="16" maxlength="32000" class="mono" />
+        </div>
+        <div class="row">
+          <button class="primary" type="submit" :disabled="busy || !rulesEdit.trim()">Save rules</button>
+          <button type="button" @click="editingRules = false">Cancel</button>
+        </div>
+      </form>
+    </section>
+
+    <form v-if="role" aria-labelledby="profile-h" class="panel stack" @submit.prevent="saveProfile">
+      <h2 id="profile-h" style="margin: 0">The project</h2>
+      <p class="muted small" style="margin: 0">
+        What the project is and how its work lands.
+        <template v-if="!isOwner">Only the owner can change it: some of these are commands a machine runs.</template>
+      </p>
+      <p v-if="profileNotice" class="notice" role="status" style="margin: 0">{{ profileNotice }}</p>
+      <ProfileForm v-model="profile" id-prefix="set" :disabled="!isOwner || busy" />
+      <div v-if="isOwner"><button class="primary" type="submit" :disabled="busy">Save</button></div>
+    </form>
+
     <section v-if="role" aria-labelledby="members-h" class="panel stack">
       <h2 id="members-h" style="margin: 0">Members</h2>
       <p class="muted small" style="margin: 0">
@@ -238,6 +429,11 @@ onMounted(load);
             <span v-if="m.name" class="muted small members__id">{{ m.identifier }}</span>
           </span>
           <span class="muted small nowrap">added {{ ago(m.added_at) }}</span>
+          <label v-if="isOwner" class="small nowrap" style="display: inline-flex; gap: 0.35rem; font-weight: 450; margin: 0">
+            <input type="checkbox" style="width: auto; min-height: 0" :checked="m.can_run_agents" :disabled="busy" @change="setAgents(m, $event.target.checked)" />
+            can run agents
+          </label>
+          <span v-else-if="m.can_run_agents" class="badge">runs agents</span>
           <button v-if="isOwner" type="button" class="link small" :disabled="busy" @click="removeMember(m)">
             Remove<span class="sr-only"> {{ m.name || m.identifier }}</span>
           </button>
@@ -261,6 +457,9 @@ onMounted(load);
       </form>
     </section>
 
+    <details v-if="isOwner" :open="created === 'token' || !!fresh || undefined">
+    <summary>Connect an agent by hand, with a token</summary>
+    <div class="stack" style="margin-top: 0.75rem">
     <div v-if="isOwner">
       <h2>Agents &amp; tokens</h2>
       <p class="muted">
@@ -351,6 +550,8 @@ onMounted(load);
         </table>
       </div>
     </section>
+    </div>
+    </details>
 
     <section v-if="searchable" aria-labelledby="reindex-h" class="panel stack">
       <h2 id="reindex-h" style="margin: 0">Searching finished work</h2>

@@ -3,6 +3,7 @@ import { computed, onUnmounted, reactive, ref, watch } from "vue";
 import { aggregate, api, putSigned, query, subscribeLive } from "../lib/altengine.js";
 import { STATUS_COLUMNS, PRIORITIES, ago, columnOrder, sortColumn } from "../lib/duties.js";
 import BoardColumn from "../components/BoardColumn.vue";
+import { runnerSummary } from "../lib/runners.js";
 
 const props = defineProps({ projectId: { type: String, required: true } });
 
@@ -55,6 +56,9 @@ const columns = ref({});
  *  runs at setup time and would hit the temporal dead zone. */
 const paged = ref(false);
 const agents = ref([]);
+/** The machines working this board, and the one line the header says about them. */
+const runners = ref([]);
+const runnerStatus = computed(() => runnerSummary(runners.value));
 
 /**
  * Searching finished work.
@@ -340,6 +344,7 @@ async function openBoard() {
     const res = await api("/board/open", { project_id: props.projectId });
     board.value = res.project || null;
     agents.value = res.agents || [];
+    runners.value = res.runners || [];
     searchable.value = res.search === true;
     connect(res.live || null);
   } catch (err) {
@@ -368,8 +373,10 @@ let touched = new Set();
 function scheduleRefresh(frame) {
   const ev = frame && frame.data;
   // About the board's runners, profile or rules, not its duties: nothing in the columns moved, so
-  // re-reading them would be six queries for a change this page does not show.
-  if (ev && (ev.t === "runner" || ev.t === "board")) return;
+  // re-reading them would be six queries for a change this page does not show. A runner event
+  // re-reads only the runners, for the header.
+  if (ev && ev.t === "runner") return refreshRunners();
+  if (ev && ev.t === "board") return;
   if (!ev || !ev.id) {
     touched = null; // an event we do not understand: re-read everything rather than guess
   } else {
@@ -390,6 +397,21 @@ function scheduleRefresh(frame) {
     // whole payload exists to avoid.
     refresh(keys, { agents: !keys });
   }, 400);
+}
+
+/** The machines working this board, for the header. Coalesced: a machine starting three duties
+ *  reports three times in a second, and one read answers all of them. */
+let runnersTimer = null;
+function refreshRunners() {
+  if (runnersTimer) return;
+  runnersTimer = setTimeout(async () => {
+    runnersTimer = null;
+    try {
+      runners.value = (await api("/board/runners", { project_id: props.projectId })).runners || [];
+    } catch {
+      /* the pill keeps what it had */
+    }
+  }, 1000);
 }
 
 function connect(mint) {
@@ -529,6 +551,14 @@ onUnmounted(() => {
           >
             {{ liveState === "live" ? "Live" : liveState }}
           </span>
+          <router-link
+            class="runnerpill livedot"
+            :class="`livedot--${runnerStatus.tone}`"
+            :to="{ name: 'settings', params: { projectId } }"
+            :title="runners.length ? runners.map((r) => r.machine_name).join(', ') : 'Put this board on a machine'"
+          >
+            {{ runnerStatus.text }}
+          </router-link>
         </p>
       </div>
       <div class="row board-actions">

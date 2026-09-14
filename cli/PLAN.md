@@ -1,6 +1,6 @@
 # `dutyboard` — the runner and provisioner
 
-Status: **phases 1–3 built** (server, provisioner, daemon) — see §15 and "Built so far" at the end. Written 2026-09-14. Decisions marked **(assumed)** are defaults
+Status: **phases 1–4 built** (server, provisioner, daemon, console) — see §15 and "Built so far" at the end. Written 2026-09-14. Decisions marked **(assumed)** are defaults
 chosen while planning; change them here before the phase that depends on them starts.
 
 ## 1. Why this exists
@@ -628,7 +628,7 @@ Each phase ends deployed and usable.
 
 ## Built so far (2026-09-14)
 
-Phases 1–3 exist and are tested; phases 4–6 do not yet. Where the build differs from the plan above:
+Phases 1–4 exist and are tested; phases 5–6 do not yet. Where the build differs from the plan above:
 
 - **Local bridge transport**: loopback TCP plus a secret in `run/daemon.json` (0600), not a Unix
   socket or named pipe — one code path on every OS, with the same trust boundary (this user).
@@ -639,8 +639,10 @@ Phases 1–3 exist and are tested; phases 4–6 do not yet. Where the build diff
   need them; interactive wiring comes later.
 - **Tool registry** (§7) shipped with phase 3: `tools_list` and `tools_register` in the bridge,
   verified on register and at daemon start, on every session's PATH.
+- **Console** (§12): the board wizard is one form rather than steps; machines have their own page
+  (`/machines`) with the settings the plan put under Runners, and `/pair` approves a code.
 - **Not built yet**: CI detection and watching, the altengine deploy tools (§10), per-type hints
-  (§7), the console (§12, phase 4). Setup sessions are told what to detect and record instead.
+  (§7). Setup sessions are told what to detect and record instead.
 
 Verified by:
 

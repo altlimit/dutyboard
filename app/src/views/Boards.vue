@@ -1,7 +1,12 @@
 <script setup>
 import { nextTick, onMounted, ref } from "vue";
+import { useRouter } from "vue-router";
 import { api, refresh } from "../lib/altengine.js";
 import { ago } from "../lib/duties.js";
+import { profileDraft, profilePayload } from "../lib/runners.js";
+import ProfileForm from "../components/ProfileForm.vue";
+
+const router = useRouter();
 
 const boards = ref([]);
 const shared = ref([]);
@@ -12,6 +17,10 @@ const showForm = ref(false);
 const name = ref("");
 const slug = ref("");
 const nameInput = ref(null);
+// A board a `dutyboard` runner works is made with its profile; one for an agent you connect by
+// hand with a token needs none. On by default, because the runner is how most boards are worked.
+const forRunner = ref(true);
+const profile = ref(profileDraft());
 
 async function load() {
   loading.value = true;
@@ -43,11 +52,17 @@ async function create() {
   creating.value = true;
   error.value = "";
   try {
-    await api("/projects/create", { name: name.value, project_id: slug.value || undefined });
+    const res = await api("/projects/create", {
+      name: name.value,
+      project_id: slug.value || undefined,
+      ...(forRunner.value ? profilePayload(profile.value) : {}),
+    });
     name.value = "";
     slug.value = "";
+    profile.value = profileDraft();
     showForm.value = false;
-    await load();
+    // Straight to where the next step is: putting it on a machine, or minting a token.
+    router.push({ name: "settings", params: { projectId: res.project_id }, query: { created: forRunner.value ? "runner" : "token" } });
   } catch (err) {
     error.value = err.message;
   } finally {
@@ -64,8 +79,8 @@ onMounted(load);
       <div>
         <h1>Your boards</h1>
         <p class="muted" style="margin: 0">
-          A board is one stream of work. Agents connect to it with a token and only ever see
-          the duties on it.
+          A board is one stream of work. A machine running <code class="mono">dutyboard</code> works it with
+          Claude Code, or an agent connects to it with a token — either way it only ever sees the duties on it.
         </p>
       </div>
       <button
@@ -93,6 +108,16 @@ onMounted(load);
         <input id="b-slug" v-model="slug" maxlength="60" placeholder="derived from the name" />
         <p class="hint">Agents refer to the board by this id, so keep it short and stable. It cannot be changed later.</p>
       </div>
+      <label class="choice choice--block">
+        <input v-model="forRunner" type="checkbox" />
+        <span>
+          Worked by a <code class="mono">dutyboard</code> runner
+          <span class="hint" style="display: block; margin: 0">
+            A machine sets itself up for the project, drafts its rules for you to accept, and works its duties.
+          </span>
+        </span>
+      </label>
+      <ProfileForm v-if="forRunner" v-model="profile" id-prefix="new" :disabled="creating" />
       <div>
         <button class="primary" type="submit" :disabled="creating || !name">
           {{ creating ? "Creating…" : "Create board" }}
@@ -117,7 +142,7 @@ onMounted(load);
       </ul>
 
       <p v-else class="empty">
-        {{ shared.length ? "No boards of your own yet." : "No boards yet. Create one and mint a token for your first agent." }}
+        {{ shared.length ? "No boards of your own yet." : "No boards yet. Create one, then put it on a machine." }}
       </p>
 
       <section v-if="shared.length" aria-labelledby="shared-h" class="stack">

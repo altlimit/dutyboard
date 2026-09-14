@@ -17,6 +17,7 @@ const showPriority = computed(() => d.value.priority === "immediate_blocker");
 
     <span class="duty__meta">
       <span v-if="showPriority" class="badge badge--immediate_blocker">{{ priorityLabel(d.priority) }}</span>
+      <span v-if="d.kind === 'setup' || d.kind === 'rules'" class="badge badge--active">{{ d.kind }}</span>
       <span class="badge">{{ originLabel(d, user) }}</span>
       <span v-if="d.assigned_agent_id" class="nowrap">
         <span class="sr-only">{{ d.status === "active" ? "held by " : "last worked by " }}</span>{{ d.assigned_agent_id }}

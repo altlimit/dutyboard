@@ -367,6 +367,30 @@ async function dropLink(ctx, link) {
   await ctx.publish(link.project_id, null, { t: "runner", machine_id: link.machine_id, state: "unlinked" });
 }
 
+/**
+ * The machines working one board, whoever's they are — what the board's header and settings show.
+ * Answers what each is doing there and whether it is online.
+ */
+export async function runnersOf(ctx, projectKey) {
+  const { rows } = await ctx.store.query("machine_links", {
+    where: [{ field: "project_id", op: "=", value: projectKey }],
+    limit: MAX_LINKS_PER_BOARD,
+  });
+  const present = await machinesPresent(ctx, rows.map((l) => l.machine_id));
+  return rows.map((l) => ({
+    ...linkView(l),
+    owner_uid: l.owner_uid,
+    online: present.get(l.machine_id),
+  }));
+}
+
+/** `POST /board/runners` — anyone on the board. */
+export async function boardRunners(ctx, body) {
+  const caller = requireHuman(ctx.caller);
+  const project = await resolveProject(caller, body.project_id, ctx.store);
+  return { project_id: project.key, runners: await runnersOf(ctx, project.key) };
+}
+
 // --- the machine's own routes ------------------------------------------------------------
 
 async function myLinks(ctx) {

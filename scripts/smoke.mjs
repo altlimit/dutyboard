@@ -1008,6 +1008,14 @@ async function main() {
     ownerView.online === true && ownerView.links.length === 1 && ownerView.links[0].runs[0].state === "parked",
     ownerView,
   );
+  const onBoard = await call("/board/runners", { project_id: mBoard }, human);
+  check(
+    "the board shows who is working it, online, and on what",
+    onBoard.runners.length === 1 && onBoard.runners[0].online === true && onBoard.runners[0].runs[0].duty_id === pauseMenu.duty_id,
+    onBoard.runners,
+  );
+  const openedWithRunners = await call("/board/open", { project_id: mBoard }, human);
+  check("and opening the board brings the same, for its header", (openedWithRunners.runners || []).length === 1, openedWithRunners.runners);
   await call("/machines/update", { machine_id: paired.machine_id, paused: true }, human);
   check("pausing it from the console tells the daemon at once", !!(await socket.next((f) => f.data && f.data.t === "pause")));
   socket.close();
@@ -1213,6 +1221,7 @@ async function main() {
     "/live/token": () => ({ project_id: projectId }),
     "/board/members/agents": () => ({ project_id: projectId, uid: other0.user.uid, can_run_agents: true }),
     "/board/profile": () => ({ project_id: projectId }),
+    "/board/runners": () => ({ project_id: projectId }),
     "/board/profile/propose": (d) => ({ duty_id: d, test_command: "no" }),
     "/board/rules": () => ({ project_id: projectId }),
     "/board/rules/set": () => ({ project_id: projectId, body: "no" }),

@@ -249,6 +249,12 @@ onUnmounted(() => {
         <p class="row small muted" style="margin: 0">
           <span class="badge" :class="`badge--${duty.status}`">{{ statusLabel(duty.status) }}</span>
           <span class="badge" :class="`badge--${duty.priority}`">{{ priorityLabel(duty.priority) }}</span>
+          <span v-if="duty.kind === 'setup'" class="badge badge--active" title="Gets one machine ready for the project">setup</span>
+          <span v-if="duty.kind === 'rules'" class="badge badge--active" title="Drafts the board's rules for the owner to accept">rules</span>
+          <span v-if="duty.reserved_for" class="badge" :title="`Only ${duty.reserved_for} can work this`">for {{ duty.reserved_for }}</span>
+          <span v-if="duty.affinity && duty.status !== 'active'" class="badge" :title="`Its half-finished work is on ${duty.affinity.machine_name || duty.affinity.machine_id}, which resumes it`">
+            waits for {{ duty.affinity.machine_name || "its machine" }}
+          </span>
           <span>{{ originLabel(duty, user, "raised by") }}</span>
           <span v-if="duty.assigned_agent_id">
             {{ duty.status === "active" ? "held by" : "last worked by" }} {{ duty.assigned_agent_id }}

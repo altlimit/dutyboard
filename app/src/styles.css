@@ -613,3 +613,34 @@ th { font-size: 0.85rem; color: var(--text-dim); font-weight: 600; }
    rather than fix one, and it turns the root into a scroll container, which silently
    kills every `position: sticky` on the page — the top bar and the column heads included.
    The layout above has to fit on its own, and there is a test that checks it does. */
+
+/* --- runners --------------------------------------------------------------- */
+fieldset { border: 0; margin: 0; padding: 0; min-width: 0; }
+fieldset legend { margin-bottom: 0.4rem; }
+.choices { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 10rem), 1fr)); gap: 0.4rem; }
+.choice {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  font-weight: 450;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.45rem 0.6rem;
+  margin: 0;
+  cursor: pointer;
+}
+.choice--block { align-items: flex-start; }
+.choice input { width: auto; margin: 0.2rem 0 0; min-height: 0; }
+.choice:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); }
+.facts { display: grid; grid-template-columns: max-content 1fr; gap: 0.3rem 1rem; margin: 0; }
+.facts dt { color: var(--text-dim); }
+.facts dd { margin: 0; overflow-wrap: anywhere; }
+.machines { list-style: none; margin-inline: 0; margin-bottom: 0; padding: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 1rem; }
+.machines > li { min-width: 0; }
+.runs { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.2rem; }
+.livedot--off::before { background: var(--border-strong); }
+.livedot--warn::before { background: var(--warn); }
+details > summary { cursor: pointer; font-weight: 550; }
+.rules { white-space: pre-wrap; font-family: var(--mono); font-size: 0.85rem; background: var(--surface-2); border-radius: 8px; padding: 0.75rem; margin: 0; max-height: 28rem; overflow: auto; }
+.runnerpill { display: inline-flex; gap: 0.35rem; align-items: center; text-decoration: none; color: inherit; }
+
