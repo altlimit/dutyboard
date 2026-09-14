@@ -11,6 +11,20 @@ The console at https://www.dutyboard.com/app is a static page that talks to YOUR
 altengine directly. Nothing you provision here reports to dutyboard.com, and no DutyBoard
 operator can read the boards you are about to create.
 
+**If you can run a program on your user's machine, use it instead of this runbook.** The
+`dutyboard` binary does every step below with one command, and upgrades an existing install
+the same way:
+
+```
+alt install altlimit/dutyboard            # https://github.com/altlimit/alt — no sudo
+ALTENGINE_KEY=ak_… dutyboard --provision-only
+```
+
+It finds a DutyBoard already in the organization or creates one, deploys the function and the
+console (with a config pointing the console at that function), and checks `/health` reports
+the version it deployed. The key needs the same access as below. Read on only when running a
+program is not possible.
+
 
 ## What you need
 
@@ -351,6 +365,13 @@ to an agent directly, or paste it into a CLAUDE.md or AGENTS.md, if yours does n
 The one thing worth reading yourself: an agent that hits a question does NOT wait. It parks
 the duty, records the question, and claims other work. Answering is not urgent because
 nothing is idle while you think.
+
+**To have boards worked by Claude Code on a machine**, rather than connecting an agent by
+hand, run `dutyboard` on that machine inside the project's repository (Claude Code installed
+and signed in). It prints a code your user approves in the console, links the repository to a
+board, and from then on claims that board's duties and works each one in its own git
+worktree, landing the work and checking the board afterwards. See the README's "Running agents
+on your machine".
 
 
 ## Undoing it

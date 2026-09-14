@@ -628,7 +628,8 @@ Each phase ends deployed and usable.
 
 ## Built so far (2026-09-14)
 
-Phases 1–5 exist and are tested; phase 6 (docs and moving musictheory over) remains. Where the build differs from the plan above:
+Phases 1–5 exist and are tested. Phase 6: the README, llms.txt and the site cover the runner; moving
+musictheory over needs a release and its owner at a Windows terminal (see below). Where the build differs from the plan above:
 
 - **Local bridge transport**: loopback TCP plus a secret in `run/daemon.json` (0600), not a Unix
   socket or named pipe — one code path on every OS, with the same trust boundary (this user).
@@ -655,4 +656,20 @@ Verified by:
 - `npm run smoke:runner` (30 checks: the daemon working a board on the emulator with a fake agent,
   including an altengine deploy through the bridge);
 - one run with real Claude Code (Haiku) completing a duty, integrating and landing the commit.
+
+### Moving musictheory over (phase 6, not done)
+
+Needs a `v*` release so `alt install altlimit/dutyboard` has a Windows binary, and the owner at the
+machine, because pairing is approved in the console. Its tooling is PowerShell and Godot on Windows,
+so the daemon runs on Windows, not in WSL.
+
+1. On Windows: `alt install altlimit/dutyboard`, then `dutyboard` inside `D:\Projects\musictheory`;
+   approve the code; link the folder to the `cadence` board; accept the login service.
+2. In the console, fill the board's profile: type Game, test command `tools/run_tests.ps1 -Layer all`,
+   deploy method `altengine` with instance `cadence` (its six-step deploy becomes
+   `altengine_deploy_static` on `build/web-nothreads`).
+3. Let the setup duty register Godot, and move the "Direction the owner has set" and "Conventions"
+   sections of its CLAUDE.md into the rules the rules duty drafts, before accepting them.
+4. Remove the old poller: `tools/dutyboard/register-task.ps1 -Remove`, and the DutyBoard section
+   of its CLAUDE.md.
 
