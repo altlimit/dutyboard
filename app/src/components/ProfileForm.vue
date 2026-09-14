@@ -69,6 +69,11 @@ defineProps({ idPrefix: { type: String, default: "pf" }, disabled: { type: Boole
       <label :for="`${idPrefix}-wf`">Workflow file</label>
       <input :id="`${idPrefix}-wf`" v-model="draft.deploy_workflow" class="mono" placeholder="deploy.yml" />
     </div>
+    <div v-if="draft.deploy_method === 'altengine'" class="field">
+      <label :for="`${idPrefix}-instances`">altengine instances it may deploy to</label>
+      <input :id="`${idPrefix}-instances`" v-model="draft.deploy_instances" class="mono" placeholder="cadence" />
+      <p class="hint">Comma-separated. A session can deploy to these and nothing else, with the machine's stored key.</p>
+    </div>
     <div v-if="draft.deploy_method === 'command'" class="field">
       <label :for="`${idPrefix}-cmd`">Deploy command</label>
       <input :id="`${idPrefix}-cmd`" v-model="draft.deploy_command" class="mono" placeholder="npm run deploy" />

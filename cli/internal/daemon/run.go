@@ -380,6 +380,13 @@ func (d *Daemon) job(run *Run, v board.BoardView, path, system, task string, rec
 	if run.Kind == "setup" {
 		j.AddDirs = []string{run.Spec.Repo}
 	}
+	j.OnActivity = func(line string) {
+		if run.state() != "working" {
+			return // integrating and the like say more than the tool call that started them
+		}
+		run.set("working", clip(line, 280))
+		d.reportSoon(run.Board)
+	}
 	j.MCPConfig = d.writeMCPConfig(run)
 	return j
 }

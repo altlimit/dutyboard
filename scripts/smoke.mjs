@@ -872,6 +872,14 @@ async function main() {
   const strangersBoard = await call("/machine/link", { project_id: theirBoard }, mkey, { expectStatus: true });
   check("a machine cannot link a board its owner is not on", strangersBoard.status === 404, strangersBoard.json);
 
+  // A board from before runners, linked: it gains runner settings, one duty at a time.
+  const legacyBoard = `smoke-legacy-${Date.now().toString(36)}`;
+  await call("/projects/create", { name: "Legacy", project_id: legacyBoard }, human);
+  await call("/machine/link", { project_id: legacyBoard, setup: false }, mkey);
+  const legacyProfile = await call("/board/profile", { project_id: legacyBoard }, human);
+  check("linking a board made before runners gives it one duty at a time", legacyProfile.runner && legacyProfile.runner.parallel === 1, legacyProfile.runner);
+  await call("/projects/delete", { project_id: legacyBoard, confirm: legacyBoard }, human);
+
   const linked = await call("/machine/link", { project_id: mBoard, path_hint: "~/dutyboard/machines" }, mkey);
   check("linking a board gives the machine a setup duty of its own", linked.created && !!linked.setup_duty_id, linked);
   check("and no second rules duty, since the board has one already", linked.rules_duty_id === null, linked);

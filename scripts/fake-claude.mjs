@@ -89,6 +89,8 @@ if (title.includes("[crash]")) {
   finish("the process fell over", 1);
 }
 if (title.includes("[slow]")) {
+  // What Claude Code emits when it starts a command — the daemon turns it into the duty's "now" line.
+  say({ type: "assistant", message: { content: [{ type: "tool_use", name: "Bash", input: { command: "tools/run_tests.sh --all" } }] } });
   record({ event: "slow-start", dutyId });
   await new Promise((r) => setTimeout(r, 120_000));
   record({ event: "slow-end", dutyId });

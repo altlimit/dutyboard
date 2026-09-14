@@ -1,9 +1,15 @@
 <script setup>
 import { computed } from "vue";
 import { ago, originLabel, priorityLabel } from "../lib/duties.js";
+import { activityLine } from "../lib/runners.js";
 import { user } from "../lib/session.js";
 
-const props = defineProps({ duty: { type: Object, required: true }, projectId: { type: String, required: true } });
+const props = defineProps({
+  duty: { type: Object, required: true },
+  projectId: { type: String, required: true },
+  activity: { type: Object, default: null }, // { machine, state, detail } while a machine works it
+});
+const now = computed(() => (props.duty.status === "active" && props.activity ? activityLine(props.activity) : ""));
 
 const d = computed(() => props.duty);
 // A blocker is the only priority worth calling out on a card; the other two are the
@@ -29,6 +35,8 @@ const showPriority = computed(() => d.value.priority === "immediate_blocker");
       </span>
       <span class="nowrap">{{ ago(d.updated_at) }}</span>
     </span>
+
+    <span v-if="now" class="duty__now" :title="`On ${activity.machine}`">{{ now }}</span>
 
     <span v-if="d.status === 'needs_decision' && d.last_question" class="duty__ask">{{ d.last_question }}</span>
     <!-- Work that was delivered and came back. Worth seeing from the board: a queued card

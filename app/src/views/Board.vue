@@ -3,7 +3,7 @@ import { computed, onUnmounted, reactive, ref, watch } from "vue";
 import { aggregate, api, putSigned, query, subscribeLive } from "../lib/altengine.js";
 import { STATUS_COLUMNS, PRIORITIES, ago, columnOrder, sortColumn } from "../lib/duties.js";
 import BoardColumn from "../components/BoardColumn.vue";
-import { runnerSummary } from "../lib/runners.js";
+import { activityByDuty, runnerSummary } from "../lib/runners.js";
 
 const props = defineProps({ projectId: { type: String, required: true } });
 
@@ -59,6 +59,7 @@ const agents = ref([]);
 /** The machines working this board, and the one line the header says about them. */
 const runners = ref([]);
 const runnerStatus = computed(() => runnerSummary(runners.value));
+const activity = computed(() => activityByDuty(runners.value));
 
 /**
  * Searching finished work.
@@ -719,6 +720,7 @@ onUnmounted(() => {
         :col="col"
         :state="columns[col.key]"
         :project-id="projectId"
+        :activity="activity"
         @more="loadColumn($event, { append: true })"
       />
     </div>
@@ -749,6 +751,7 @@ onUnmounted(() => {
         :col="STATUS_COLUMNS.find((c) => c.key === focusColumn)"
         :state="columns[focusColumn]"
         :project-id="projectId"
+        :activity="activity"
         standalone
         @more="loadColumn($event, { append: true })"
       />

@@ -17,6 +17,7 @@ import (
 	"log"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -65,6 +66,8 @@ type Daemon struct {
 	rules        map[string]rulesEntry
 	polled       map[string]board.PollBoard
 	reported     map[string]string
+	reportedAt   map[string]time.Time
+	reportDue    map[string]bool
 	requests     map[string]bool // setup requests being handled
 	limitedUntil time.Time
 	paused       bool
@@ -111,6 +114,8 @@ func New(opt Options) (*Daemon, error) {
 		rules:      map[string]rulesEntry{},
 		polled:     map[string]board.PollBoard{},
 		reported:   map[string]string{},
+		reportedAt: map[string]time.Time{},
+		reportDue:  map[string]bool{},
 		requests:   map[string]bool{},
 		wakeCh:     make(chan struct{}, 1),
 		relink:     make(chan struct{}, 1),
@@ -522,6 +527,9 @@ func (d *Daemon) report(ctx context.Context, boardID string) {
 	d.mu.Lock()
 	same := d.reported[boardID] == key
 	d.reported[boardID] = key
+	if !same {
+		d.reportedAt[boardID] = time.Now()
+	}
 	d.mu.Unlock()
 	if same {
 		return
@@ -529,6 +537,39 @@ func (d *Daemon) report(ctx context.Context, boardID string) {
 	if err := d.api.ReportState(ctx, boardID, runs); err != nil {
 		d.log.Printf("reporting state on %s: %v", boardID, err)
 	}
+}
+
+// activityEvery is how often what a session is doing is reported, at most, per board. A session can
+// start a dozen things a minute; the console needs to see roughly what, not every one.
+func activityEvery() time.Duration {
+	if s, err := strconv.Atoi(os.Getenv("DUTYBOARD_ACTIVITY_SECONDS")); err == nil && s >= 0 {
+		return time.Duration(s) * time.Second
+	}
+	return 15 * time.Second
+}
+
+// reportSoon reports a board's state now if it has not been reported recently, and otherwise once
+// the interval is up — so a burst of activity is one write, carrying its latest line.
+func (d *Daemon) reportSoon(boardID string) {
+	d.mu.Lock()
+	if d.reportDue[boardID] {
+		d.mu.Unlock()
+		return
+	}
+	wait := activityEvery() - time.Since(d.reportedAt[boardID])
+	d.reportDue[boardID] = true
+	d.mu.Unlock()
+	if wait < 0 {
+		wait = 0
+	}
+	time.AfterFunc(wait, func() {
+		d.mu.Lock()
+		delete(d.reportDue, boardID)
+		d.mu.Unlock()
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		d.report(ctx, boardID)
+	})
 }
 
 func randomHex(n int) string {

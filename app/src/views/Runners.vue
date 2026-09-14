@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref } from "vue";
 import { api } from "../lib/altengine.js";
 import { config } from "../config.js";
 import { ago } from "../lib/duties.js";
@@ -18,8 +18,8 @@ const setupFor = ref({}); // machine_id → { project_id, path }
 
 const installCommand = computed(() => `alt install altlimit/dutyboard\ndutyboard --server ${config.api}`);
 
-async function load() {
-  loading.value = true;
+async function load({ quiet = false } = {}) {
+  if (!quiet) loading.value = true;
   error.value = "";
   try {
     const [m, b] = await Promise.all([api("/machines/list"), api("/projects/list")]);
@@ -80,7 +80,16 @@ async function copy(text) {
   }
 }
 
-onMounted(load);
+// Machines span boards, and a person watches this page rather than one board's channel, so it
+// re-reads on a short interval while it is open — and only while the tab is visible.
+let timer = null;
+onMounted(() => {
+  load();
+  timer = setInterval(() => {
+    if (!document.hidden && !busy.value) load({ quiet: true });
+  }, 10_000);
+});
+onUnmounted(() => clearInterval(timer));
 </script>
 
 <template>

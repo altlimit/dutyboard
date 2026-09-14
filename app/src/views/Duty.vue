@@ -3,6 +3,7 @@ import { computed, onUnmounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { api, getDocs, query, subscribeLive } from "../lib/altengine.js";
 import { ALL_STATUSES, PRIORITIES, THREAD_KIND_LABELS, ago, exactTime, originLabel, priorityLabel, statusLabel } from "../lib/duties.js";
+import { activityByDuty, activityLine } from "../lib/runners.js";
 import Attachments from "../components/Attachments.vue";
 import { user } from "../lib/session.js";
 
@@ -142,9 +143,29 @@ function scheduleRefresh() {
   }, 400);
 }
 
+/** What a machine says it is doing on this duty, re-read when a runner event says it changed. The
+ *  duty itself is not re-read for those — nothing about it moved. */
+const activity = ref(null);
+let activityTimer = null;
+function refreshActivity() {
+  if (activityTimer) return;
+  activityTimer = setTimeout(async () => {
+    activityTimer = null;
+    try {
+      const res = await api("/board/runners", { project_id: props.projectId });
+      activity.value = activityByDuty(res.runners)[props.dutyId] || null;
+    } catch {
+      /* keeps what it had */
+    }
+  }, 500);
+}
+
 function connect() {
   if (socket) socket.close();
-  socket = subscribeLive({ projectId: props.projectId, dutyIds: [props.dutyId] }, () => scheduleRefresh());
+  refreshActivity();
+  socket = subscribeLive({ projectId: props.projectId, dutyIds: [props.dutyId] }, (frame) =>
+    frame && frame.data && frame.data.t === "runner" ? refreshActivity() : scheduleRefresh(),
+  );
 }
 
 /** Run a write, then reload — unless the write already told us everything that changed,
@@ -228,6 +249,7 @@ watch(
 onUnmounted(() => {
   if (socket) socket.close();
   if (refreshTimer) clearTimeout(refreshTimer);
+  if (activityTimer) clearTimeout(activityTimer);
 });
 </script>
 
@@ -260,6 +282,10 @@ onUnmounted(() => {
             {{ duty.status === "active" ? "held by" : "last worked by" }} {{ duty.assigned_agent_id }}
           </span>
           <span :title="exactTime(duty.updated_at)">updated {{ ago(duty.updated_at) }}</span>
+        </p>
+        <p v-if="activity && duty.status === 'active'" class="duty__now duty__now--page" role="status">
+          <span class="livedot" :class="activity.online === false ? 'livedot--off' : 'livedot--live'">{{ activity.machine }}</span>
+          {{ activityLine(activity) }}
         </p>
       </div>
 

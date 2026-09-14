@@ -643,4 +643,18 @@ fieldset legend { margin-bottom: 0.4rem; }
 details > summary { cursor: pointer; font-weight: 550; }
 .rules { white-space: pre-wrap; font-family: var(--mono); font-size: 0.85rem; background: var(--surface-2); border-radius: 8px; padding: 0.75rem; margin: 0; max-height: 28rem; overflow: auto; }
 .runnerpill { display: inline-flex; gap: 0.35rem; align-items: center; text-decoration: none; color: inherit; }
+/* What a machine is doing on a duty right now. Its own line, dim and single, so a board full of
+   running work stays readable. */
+.duty__now {
+  display: block;
+  margin-top: 0.35rem;
+  font-size: 0.8rem;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* A card never grows past its column: a long line truncates instead of pushing the grid wider. */
+.column__list > li, .duty { min-width: 0; }
+.duty__now--page { white-space: normal; display: flex; gap: 0.5rem; align-items: baseline; margin: 0.4rem 0 0; }
 

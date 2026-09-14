@@ -26,7 +26,7 @@ import { putOp, deleteOp } from "./store.js";
 import { requireHuman, requireMachine, resolveProject, memberKey, linkKey } from "./identity.js";
 import { liveConfigured, mintMachineLive, machinesPresent, publishMachine } from "./live.js";
 import { runnableDuties, activeDuties, seedDuty, stripMeta } from "./duties.js";
-import { profileView } from "./profile.js";
+import { mergeRunner, profileView } from "./profile.js";
 import { createProjectFor } from "./projects.js";
 
 const PAIRING_TTL_MS = 10 * 60 * 1000;
@@ -480,6 +480,15 @@ export async function linkMachine(ctx, body) {
   };
   const ops = [putOp("machine_links", key, link)];
 
+  // A board made before runners existed has no runner settings, and so no limit on how many duties
+  // run at once — which a daemon would read as "as many as this machine allows". The first machine
+  // to link it gives it the defaults, one duty at a time, and the owner raises it from there.
+  let runnerSet = false;
+  if (!project.runner) {
+    ops.push(putOp("projects", project.key, { ...stripMeta(project), runner: mergeRunner(null, {}), updated_at: now }));
+    runnerSet = true;
+  }
+
   const setup =
     body.setup === false || (await hasUnfinished(ctx, project.key, [{ field: "reserved_for", op: "=", value: caller.agentPrefix }, { field: "kind", op: "=", value: "setup" }]))
       ? null
@@ -507,6 +516,7 @@ export async function linkMachine(ctx, body) {
   if (setup) await ctx.publish(project.key, setup.id, { t: "duty", id: setup.id, status: "queued" });
   if (rules) await ctx.publish(project.key, rules.id, { t: "duty", id: rules.id, status: "queued" });
   await ctx.publish(project.key, null, { t: "runner", machine_id: caller.machineId, state: "linked" });
+  if (runnerSet) await ctx.publish(project.key, null, { t: "board", what: "profile" });
   return {
     ok: true,
     created: true,

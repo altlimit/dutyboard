@@ -118,7 +118,7 @@ async function main() {
   chmodSync(fake, 0o755);
   const log = join(work, "fake-claude.log");
   const daemon = spawn(bin, ["--no-service"], {
-    env: { ...process.env, DUTYBOARD_HOME: home, DUTYBOARD_NO_KEYRING: "1", DUTYBOARD_CLAUDE: fake, FAKE_CLAUDE_LOG: log, DUTYBOARD_RETRY_SECONDS: "1" },
+    env: { ...process.env, DUTYBOARD_HOME: home, DUTYBOARD_NO_KEYRING: "1", DUTYBOARD_CLAUDE: fake, FAKE_CLAUDE_LOG: log, DUTYBOARD_RETRY_SECONDS: "1", DUTYBOARD_ACTIVITY_SECONDS: "1" },
     stdio: ["ignore", "pipe", "pipe"],
   });
   let daemonOut = "";
@@ -199,6 +199,11 @@ async function main() {
     // --- deleted mid-session ----------------------------------------------------
     const slow = await call("/duty/enqueue", { project_id: boardId, title: "[slow] Take forever", brief: "Sleeps." }, human);
     await until("slow started", () => events(log).some((e) => e.event === "slow-start" && e.dutyId === slow.duty_id));
+    const nowLine = await until("activity reported", async () => {
+      const r = await call("/board/runners", { project_id: boardId }, human);
+      return (r.runners[0]?.runs || []).find((x) => x.duty_id === slow.duty_id && /run_tests/.test(x.detail || ""));
+    }, 15_000);
+    check("the board shows what a session is doing right now", !!nowLine, nowLine);
     await call("/duty/delete", { duty_id: slow.duty_id, confirm: slow.duty_id }, human);
     const removed = await until("slow worktree removed", () => !worktrees().includes(slow.duty_id), 20_000);
     check("deleting a duty stops its session and removes its worktree", !!removed && !events(log).some((e) => e.event === "slow-end"), worktrees());

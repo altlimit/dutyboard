@@ -48,6 +48,21 @@ export const runStateLabel = (s) => RUN_STATES[s] || s;
 
 export const typeLabel = (key) => (PROJECT_TYPES.find((t) => t.key === key) || { label: key || "—" }).label;
 
+/**
+ * What each machine says it is doing, by duty: `{ [duty_id]: { machine, state, detail } }`. Built
+ * from `/board/runners`, which a runner event says to re-read.
+ */
+export function activityByDuty(runners) {
+  const out = {};
+  for (const r of runners || []) {
+    for (const x of r.runs || []) out[x.duty_id] = { machine: r.machine_name, online: r.online, state: x.state, detail: x.detail || "" };
+  }
+  return out;
+}
+
+/** The line a card or a duty page shows: the detail when there is one, else the state. */
+export const activityLine = (a) => (a ? a.detail || runStateLabel(a.state) : "");
+
 /** A one-line summary of a board's runners, for its header. */
 export function runnerSummary(runners) {
   if (!runners || !runners.length) return { tone: "off", text: "No runner" };
@@ -75,6 +90,7 @@ export function profileDraft(profile, runner) {
     deploy_method: (p.deploy && p.deploy.method) || "none",
     deploy_workflow: (p.deploy && p.deploy.workflow) || "",
     deploy_command: (p.deploy && p.deploy.command) || "",
+    deploy_instances: ((p.deploy && p.deploy.altengine_instances) || []).join(", "),
     git_mode: (p.git && p.git.mode) || "push",
     parallel: r.parallel || 1,
     model: r.model || "",
@@ -90,6 +106,12 @@ export function profilePayload(d) {
   const deploy = { method: d.deploy_method };
   if (d.deploy_method === "ci" || d.deploy_method === "ci-dispatch") deploy.workflow = d.deploy_workflow.trim();
   if (d.deploy_method === "command") deploy.command = d.deploy_command.trim();
+  // Sent whatever the method, because the function replaces `deploy` whole: leaving a field out
+  // would erase what setup recorded there.
+  deploy.altengine_instances = d.deploy_instances
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
   return {
     profile: {
       type: d.type,

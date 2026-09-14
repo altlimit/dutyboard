@@ -12,6 +12,8 @@ const props = defineProps({
   // Standalone: the phone layout, where the chips are the heading and the hint is worth
   // showing rather than hiding from everyone but a screen reader.
   standalone: { type: Boolean, default: false },
+  // What machines say they are doing, by duty — shown on the cards they are working.
+  activity: { type: Object, default: () => ({}) },
 });
 
 defineEmits(["more"]);
@@ -33,7 +35,7 @@ const more = computed(() => !!props.state.cursor);
 
     <ul class="column__list">
       <li v-for="duty in state.rows" :key="duty.key">
-        <DutyCard :duty="duty" :project-id="projectId" />
+        <DutyCard :duty="duty" :project-id="projectId" :activity="activity[duty.key]" />
       </li>
     </ul>
 

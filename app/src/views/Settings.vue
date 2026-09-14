@@ -1,7 +1,7 @@
 <script setup>
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { api } from "../lib/altengine.js";
+import { api, subscribeLive } from "../lib/altengine.js";
 import { user as me } from "../lib/session.js";
 import { config } from "../config.js";
 import { ago } from "../lib/duties.js";
@@ -306,7 +306,24 @@ async function deleteBoard() {
   }
 }
 
-onMounted(load);
+// The machines on this board change what they report as they work, so the list follows the board's
+// channel rather than showing what was true when the page opened.
+let socket = null;
+let runnersTimer = null;
+onMounted(() => {
+  load();
+  socket = subscribeLive({ projectId: props.projectId }, (frame) => {
+    if (!frame || !frame.data || frame.data.t !== "runner" || runnersTimer) return;
+    runnersTimer = setTimeout(async () => {
+      runnersTimer = null;
+      runners.value = (await api("/board/runners", { project_id: props.projectId }).catch(() => ({ runners: runners.value }))).runners;
+    }, 800);
+  });
+});
+onUnmounted(() => {
+  if (socket) socket.close();
+  if (runnersTimer) clearTimeout(runnersTimer);
+});
 </script>
 
 <template>
@@ -356,7 +373,7 @@ onMounted(load);
             <template v-else>
               <span v-for="(x, i) in r.runs" :key="x.duty_id">
                 <template v-if="i">, </template>
-                <router-link :to="{ name: 'duty', params: { projectId, dutyId: x.duty_id } }">{{ runStateLabel(x.state) }}</router-link>
+                <router-link :to="{ name: 'duty', params: { projectId, dutyId: x.duty_id } }">{{ x.detail || runStateLabel(x.state) }}</router-link>
               </span>
             </template>
           </span>
