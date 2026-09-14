@@ -992,6 +992,7 @@ async function main() {
   const daemonView = await call("/machine/poll", {}, mkey);
   const boardView = daemonView.boards.find((b) => b.project_id === mBoard) || { runnable: [] };
   check("and the machine sees it as its own to resume", boardView.runnable.some((d) => d.duty_id === pauseMenu.duty_id && d.resumes), boardView);
+  check("and how many machines work the board", boardView.machines === 1, boardView.machines);
 
   const setupRequest = await call("/machine/request", { machine_id: paired.machine_id, project_id: mBoard, path: "machines" }, human);
   const heardSetup = await socket.next((f) => f.data && f.data.t === "setup");

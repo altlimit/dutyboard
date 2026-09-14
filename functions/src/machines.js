@@ -566,15 +566,19 @@ export async function pollMachine(ctx, body) {
     links.map(async (l) => {
       const project = projects.get(l.project_id);
       if (!project) return null;
-      const [active, runnable] = await Promise.all([
+      const [active, runnable, machines] = await Promise.all([
         activeDuties(ctx, project.key),
         runnableDuties(ctx, project.key, caller.agentPrefix, limit),
+        // Whether anyone else could resume this machine's parked work — which decides whether that
+        // work is worth snapshotting to the repository's remote when it parks.
+        ctx.store.countAtMost("machine_links", [{ field: "project_id", op: "=", value: project.key }], MAX_LINKS_PER_BOARD),
       ]);
       const mine = (d) => d.assigned_agent_id === caller.agentPrefix || (d.assigned_agent_id || "").startsWith(caller.agentPrefix + "/");
       return {
         project_id: project.key,
         name: project.name,
         parallel: (project.runner && project.runner.parallel) || null,
+        machines,
         rules_version: project.rules_version || 0,
         active: active.map((d) => ({ duty_id: d.key, agent_id: d.assigned_agent_id, kind: d.kind || "work", mine: mine(d) })),
         runnable: runnable.map((d) => ({

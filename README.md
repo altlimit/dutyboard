@@ -417,6 +417,37 @@ instance, not `read`. That lets it change any user's claims on that instance —
 sharing, and the reason members are managed only through the owner-only endpoints in
 [`functions/src/members.js`](functions/src/members.js).
 
+## Running agents on your machine
+
+`dutyboard` is also the runner. In a terminal, inside a project's repository:
+
+```bash
+dutyboard
+```
+
+The first time, it pairs this machine with your DutyBoard: it prints a code, you approve it in the
+console, and the machine gets its own key. It offers to link the repository to a board (or to
+create one, asking what kind of project it is), and to start itself when you log in. After that it
+runs in the background and works every linked board.
+
+The loop is the program's, not the agent's. For each duty it:
+
+1. **claims** it — within seconds of it being filed, from the board's live channel;
+2. **prepares a git worktree** for it at `~/.dutyboard/worktrees/<board>/<duty>` on branch
+   `duty/<id>`, so your own checkout is never touched and several duties can run at once;
+3. **starts Claude Code** there with that one duty, the board's rules and the project's profile,
+   and a local MCP server that only lets the session change its own duty;
+4. **checks the board** when the session ends: done means the work was integrated — rebased,
+   tested and pushed, or opened as a pull request — and the worktree is removed. Parked on a
+   question means the worktree waits, and your answer resumes the same conversation in the same
+   folder. Stopped early means it is retried, and after three tries it is put to you with the
+   session log attached.
+
+A linked board starts with a **setup** duty, which gets this machine ready for the project and
+records the toolchain it installed, and a **rules** duty, which drafts the project's rules for you to
+accept. How many duties run at once is set per board (`runner.parallel`) and per machine
+(`max_sessions`).
+
 ## Connecting an agent
 
 Mint a token on the board's **Settings** page — tokens are the owner's to mint. Then, as an MCP server:

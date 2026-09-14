@@ -13,6 +13,7 @@ import (
 
 	"github.com/altlimit/dutyboard/cli/internal/altengine"
 	"github.com/altlimit/dutyboard/cli/internal/assets"
+	"github.com/altlimit/dutyboard/cli/internal/localmcp"
 	"github.com/altlimit/dutyboard/cli/internal/provision"
 	"github.com/altlimit/dutyboard/cli/internal/state"
 	"github.com/altlimit/dutyboard/cli/internal/ui"
@@ -30,10 +31,25 @@ type Flags struct {
 	Instance      string
 	Origins       string
 	ShowVersion   bool
+	Server        string
+	Name          string
+	Root          string
+	NoService     bool
 }
 
 // Main runs the program and returns its exit code.
 func Main(args []string) int {
+	// `dutyboard mcp` is started by an agent, not a person: MCP over stdio, bridged to the daemon.
+	if len(args) > 0 && args[0] == "mcp" {
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		if err := localmcp.ServeStdio(ctx, os.Stdin, os.Stdout); err != nil && !errors.Is(err, context.Canceled) {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		return 0
+	}
+
 	var f Flags
 	fs := flag.NewFlagSet("dutyboard", flag.ContinueOnError)
 	fs.BoolVar(&f.ProvisionOnly, "provision-only", false, "provision or upgrade DutyBoard on altengine, then exit")
@@ -43,6 +59,10 @@ func Main(args []string) int {
 	fs.StringVar(&f.Instance, "instance", "", "use, or create, the deployment on this functions instance without asking")
 	fs.StringVar(&f.Origins, "origins", "", "extra console origins to allow, comma-separated (default: $DUTYBOARD_ORIGINS)")
 	fs.BoolVar(&f.ShowVersion, "version", false, "print the version")
+	fs.StringVar(&f.Server, "server", "", "the DutyBoard API URL to pair this machine with")
+	fs.StringVar(&f.Name, "name", "", "this machine's name, when pairing")
+	fs.StringVar(&f.Root, "root", "", "the folder setups requested from the console clone into (default ~/dutyboard)")
+	fs.BoolVar(&f.NoService, "no-service", false, "do not offer to start dutyboard at login; run in this terminal")
 	fs.Usage = func() {
 		fmt.Fprintln(fs.Output(), "dutyboard — runs your DutyBoard's work on this machine.")
 		fmt.Fprintln(fs.Output(), "\nRun with no flags to connect this machine and start working. Flags:")
@@ -68,7 +88,7 @@ func Main(args []string) int {
 	case f.ProvisionOnly:
 		_, err = Provision(ctx, u, f)
 	default:
-		err = errors.New("the daemon is not built yet — use --provision-only (see cli/PLAN.md, phase 3)")
+		err = Start(ctx, u, f)
 	}
 	if err != nil {
 		if errors.Is(err, context.Canceled) {

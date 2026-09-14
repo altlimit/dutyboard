@@ -19,6 +19,7 @@
     "demo": "node scripts/demo.mjs",
     "preview": "node scripts/serve.mjs",
     "smoke": "node scripts/smoke.mjs",
+    "smoke:runner": "node scripts/smoke-runner.mjs",
     "build:bundle": "npm run build:fn && node scripts/publish-bundle.mjs"
   },
   "dependencies": {

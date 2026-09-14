@@ -1,6 +1,6 @@
 # `dutyboard` — the runner and provisioner
 
-Status: **phases 1 (server) and 2 (provisioner) built** — see §15. Written 2026-09-14. Decisions marked **(assumed)** are defaults
+Status: **phases 1–3 built** (server, provisioner, daemon) — see §15 and "Built so far" at the end. Written 2026-09-14. Decisions marked **(assumed)** are defaults
 chosen while planning; change them here before the phase that depends on them starts.
 
 ## 1. Why this exists
@@ -625,3 +625,28 @@ Each phase ends deployed and usable.
   `worktree.copy`; the first failure should read as a setup question, not a broken duty.
 - **Invocation cost**: live wake keeps polling to roughly 100 `/machine/poll` calls a day per
   machine, plus one call per duty transition.
+
+## Built so far (2026-09-14)
+
+Phases 1–3 exist and are tested; phases 4–6 do not yet. Where the build differs from the plan above:
+
+- **Local bridge transport**: loopback TCP plus a secret in `run/daemon.json` (0600), not a Unix
+  socket or named pipe — one code path on every OS, with the same trust boundary (this user).
+- **Headless session identity**: a per-session token in the MCP server's environment, so the
+  daemon knows which run a message belongs to without trusting anything the session says.
+- **Linking a folder** links it on the server and records it locally; it does not commit
+  `.dutyboard/`, `.mcp.json` or a `CLAUDE.md` import yet (§11 step 3). Headless sessions do not
+  need them; interactive wiring comes later.
+- **Tool registry** (§7) shipped with phase 3: `tools_list` and `tools_register` in the bridge,
+  verified on register and at daemon start, on every session's PATH.
+- **Not built yet**: CI detection and watching, the altengine deploy tools (§10), per-type hints
+  (§7), the console (§12, phase 4). Setup sessions are told what to detect and record instead.
+
+Verified by:
+
+- `npm run smoke` (191 checks, server);
+- `go test ./...` in `cli/` (the provisioner's hosted path against a fake altengine; worktrees,
+  integration, conflicts and snapshots against real git);
+- `npm run smoke:runner` (25 checks: the daemon working a board on the emulator with a fake agent);
+- one run with real Claude Code (Haiku) completing a duty, integrating and landing the commit.
+
