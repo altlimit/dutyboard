@@ -19,7 +19,7 @@
 import { badRequest, forbidden, notFound, str } from "./http.js";
 import { ulid } from "./ids.js";
 import { putOp, deleteOp } from "./store.js";
-import { projectOfDuty, authorOf } from "./identity.js";
+import { projectOfDuty, authorOf, checkAgentId } from "./identity.js";
 import { loadDuty, stripMeta } from "./duties.js";
 
 const attachmentId = () => "att_" + ulid();
@@ -175,7 +175,7 @@ export async function attachToDuty(ctx, body) {
     name,
     content_type: contentType,
     size,
-    ...authorOf(ctx.caller, str(body.agent_id ?? ctx.defaultAgentId, "agent_id", { max: 64 })),
+    ...authorOf(ctx.caller, checkAgentId(ctx.caller, str(body.agent_id ?? ctx.defaultAgentId, "agent_id", { max: 64 }))),
     created_at: now,
   };
 

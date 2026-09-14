@@ -367,6 +367,9 @@ function columnHolding(dutyKey) {
 let touched = new Set();
 function scheduleRefresh(frame) {
   const ev = frame && frame.data;
+  // About the board's runners, profile or rules, not its duties: nothing in the columns moved, so
+  // re-reading them would be six queries for a change this page does not show.
+  if (ev && (ev.t === "runner" || ev.t === "board")) return;
   if (!ev || !ev.id) {
     touched = null; // an event we do not understand: re-read everything rather than guess
   } else {

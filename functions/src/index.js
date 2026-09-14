@@ -40,8 +40,29 @@ import {
   listThread,
 } from "./duties.js";
 import { handleMcp } from "./mcp.js";
-import { addMember, listMembers, removeMember, syncAccess } from "./members.js";
+import { addMember, listMembers, removeMember, setMemberAgents, syncAccess } from "./members.js";
 import { reindexBoard, searchConfigured, searchDuties } from "./searching.js";
+import { getProfile, updateProfile, proposeProfile, getRules, setRules, acceptRules, submitRules } from "./profile.js";
+import {
+  startPairing,
+  pollPairing,
+  lookupPairing,
+  approvePairing,
+  denyPairing,
+  listMachines,
+  updateMachine,
+  revokeMachine,
+  unlinkMachineByPerson,
+  machineMe,
+  linkMachine,
+  unlinkMachine,
+  reportState,
+  pollMachine,
+  machineLive,
+  requestSetup,
+  reportRequest,
+  noteMachineUse,
+} from "./machines.js";
 import { VERSION } from "./version.js";
 
 
@@ -57,6 +78,10 @@ function configure(env) {
     channelInstance: env.DUTYBOARD_CHANNEL || "dutyboard-live",
     blobInstance: env.DUTYBOARD_BLOB || "dutyboard-files",
     searchInstance: env.DUTYBOARD_SEARCH || "dutyboard-search",
+    // Where the console is served, for a daemon that has just started pairing and needs to tell a
+    // person where to approve it. The function cannot work this out: the console is a static site
+    // anywhere, and this is only ever called by the thing it serves.
+    consoleUrl: env.DUTYBOARD_CONSOLE_URL || "",
   };
 }
 
@@ -83,15 +108,48 @@ const ROUTES = {
   "/board/members/list": listMembers,
   "/board/members/add": addMember,
   "/board/members/remove": removeMember,
+  "/board/members/agents": setMemberAgents,
+  "/board/profile": getProfile,
+  "/board/profile/propose": proposeProfile,
+  "/board/rules": getRules,
+  "/board/rules/set": setRules,
+  "/board/rules/accept": acceptRules,
+  "/board/rules/submit": submitRules,
   "/me/access": syncAccess,
   "/projects/create": createProject,
   "/projects/list": listProjects,
   "/projects/rename": renameProject,
   "/projects/delete": deleteProject,
+  "/projects/profile": updateProfile,
   "/tokens/mint": createToken,
   "/tokens/list": listTokens,
   "/tokens/revoke": revokeToken,
   "/live/token": liveToken,
+  "/connect/lookup": lookupPairing,
+  "/connect/approve": approvePairing,
+  "/connect/deny": denyPairing,
+  "/machines/list": listMachines,
+  "/machines/update": updateMachine,
+  "/machines/revoke": revokeMachine,
+  "/machines/unlink": unlinkMachineByPerson,
+  "/machine/me": machineMe,
+  "/machine/link": linkMachine,
+  "/machine/unlink": unlinkMachine,
+  "/machine/state": reportState,
+  "/machine/poll": pollMachine,
+  "/machine/live": machineLive,
+  "/machine/request": requestSetup,
+  "/machine/request/report": reportRequest,
+};
+
+/**
+ * The two routes that take no credential, because the thing calling them does not have one yet: a
+ * daemon starting a pairing, and the same daemon asking whether it has been approved. The device
+ * code it holds is the credential for the second.
+ */
+const PUBLIC_ROUTES = {
+  "/connect/start": startPairing,
+  "/connect/poll": pollPairing,
 };
 
 /**
@@ -103,7 +161,7 @@ const ROUTES = {
  * ownership check at all and was found by hand, months later, because nothing forced the
  * question to be asked for each new endpoint.
  */
-export const ROUTE_PATHS = Object.keys(ROUTES);
+export const ROUTE_PATHS = [...Object.keys(ROUTES), ...Object.keys(PUBLIC_ROUTES)];
 
 /**
  * Bodies big enough to carry an inline attachment, for the two doors that can receive one.
@@ -178,6 +236,10 @@ export default {
         // Whether finished work is findable. Optional like the others: a board without it
         // works, it just cannot answer "have we done this before".
         search: !!(env.search && cfg.searchInstance),
+        // Whether a `dutyboard` daemon can pair with this deployment, and where to send the person
+        // who approves it.
+        machines: true,
+        console_url: cfg.consoleUrl || null,
         // Whether the constraint that stops two agents holding one duty is actually in
         // place. It is created on demand, so it can fail — and a mutex that is silently
         // absent is worse than one nobody claimed to have.
@@ -193,6 +255,13 @@ export default {
     try {
       const cfg = configure(env);
       const store = makeStore(env, cfg.datastoreInstance, cfg.datastoreNamespace);
+
+      const open = PUBLIC_ROUTES[path];
+      if (open) {
+        if (request.method !== "POST") throw new HttpError(405, "METHOD_NOT_ALLOWED", `use POST for '${path}'`);
+        return json(await open({ env, cfg, store, caller: { kind: "anonymous" }, requestId }, await readJson(request)));
+      }
+
       const caller = await identify(request, env, cfg, store);
       const ctx = {
         env,
@@ -206,6 +275,7 @@ export default {
       // Fire-and-forget in spirit; awaited because a function has no waitUntil. It
       // writes at most once a minute per token, so it is not on the hot path.
       await noteTokenUse(ctx, caller);
+      await noteMachineUse(ctx, caller);
 
       if (path === "/mcp") return await handleMcp(ctx, request, ATTACH_BODY_BYTES);
 

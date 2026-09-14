@@ -29,7 +29,14 @@
     { "fields": ["owner_uid", "project_id", "status", "updated_at:desc"], "for": "console: one board column, most recently touched first" },
     { "fields": ["owner_uid", "project_id", "status", "prio_rank", "created_at"], "for": "console: the Queued column, in the order the scheduler will take them — the same order as the index above it, so the top of that column is the duty an agent claims next" },
     { "fields": ["owner_uid", "project_id", "updated_at:desc"], "for": "console: whole-board activity" },
-    { "fields": ["project_id", "status", "updated_at"], "for": "member: a board column or the working set, read by someone the board is shared with" }
+    { "fields": ["project_id", "status", "updated_at"], "for": "member: a board column or the working set, read by someone the board is shared with" },
+    {
+      "fields": ["lane"],
+      "unique": true,
+      "for": "THE PARALLEL LIMIT. `lane` is '<project>#<n>' while a duty is active on a board with runner.parallel set, and null otherwise, so two claims racing for the last free lane cannot both land. The function creates this on demand too."
+    },
+    { "fields": ["project_id", "kind", "status"], "for": "the function: is a rules duty already open on this board" },
+    { "fields": ["project_id", "reserved_for", "kind", "status"], "for": "the function: is a setup duty already open for this machine" }
   ],
   "threads": [
     { "fields": ["duty_id", "created_at"], "for": "the function: a duty's decision log" },
@@ -54,6 +61,24 @@
       "unique": true,
       "for": "THE MUTEX, not a query. Two agents cannot both hold one duty because the datastore refuses the second write of the same active_duty_id, which fails that whole claim transaction and leaves the duty untouched. Nulls do not collide, so any number of agents may be idle. The function creates this on demand too (see store.ensureUniqueIndex) — auto-indexing would never make it, because what a query needs is never unique."
     }
+  ],
+  "machines": [
+    { "fields": ["owner_uid", "created_at:desc"], "for": "the function: a person's machines" },
+    { "fields": ["machine_id"], "for": "the function: a machine by the id the console knows it by" },
+    { "fields": ["pairing_id"], "unique": true, "for": "THE PAIRING MUTEX: one pairing becomes at most one machine, however many polls race for its key" }
+  ],
+  "pairings": [
+    { "fields": ["user_code"], "unique": true, "for": "the function: the pairing a person typed the code of; unique so a code names one machine" },
+    { "fields": ["expires_at"], "for": "the function: sweeping pairings nobody finished" }
+  ],
+  "machine_links": [
+    { "fields": ["machine_id"], "for": "the function: the boards one machine works" },
+    { "fields": ["project_id"], "for": "the function: the machines on one board" },
+    { "fields": ["project_id", "owner_uid"], "for": "the function: one person's machines on a board, when they leave it" }
+  ],
+  "machine_requests": [
+    { "fields": ["machine_id", "status"], "for": "the function: what one machine has been asked to set up" },
+    { "fields": ["project_id"], "for": "the function: sweeping a deleted board's requests" }
   ],
   "memberships": [
     { "fields": ["uid"], "for": "the function: the boards one person is a member of — their claim, and their board list" },

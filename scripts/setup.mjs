@@ -123,7 +123,7 @@ async function waitForAltengine(seconds = 30) {
 async function provisionLocal({ signup, access, indexes }) {
   await waitForAltengine();
 
-  const [authId, dsId] = await Promise.all([
+  const [authId, dsId, channelId] = await Promise.all([
     instanceId("auth", AUTH),
     instanceId("datastore", DS),
     instanceId("channel", CHANNEL),
@@ -144,6 +144,12 @@ async function provisionLocal({ signup, access, indexes }) {
 
   await req("PUT", `/admin/datastore/${dsId}/config`, {
     config: { autoId: "uuid", autoIndex: true },
+  });
+
+  // Presence is how the console knows a `dutyboard` daemon is online, and how a parked duty knows
+  // whether the machine holding its worktree is still there to resume it. Off by default.
+  await req("PUT", `/admin/channel/${channelId}/config`, {
+    config: { presence: true, publishRateLimit: 0, connectRateLimit: 0 },
   });
 
   let created = 0;
@@ -167,7 +173,7 @@ async function provisionLocal({ signup, access, indexes }) {
   console.log(`✔ DutyBoard provisioned on ${BASE}`);
   console.log(`    auth       ${AUTH}      email + name, signup open, passwordless on`);
   console.log(`    datastore  ${DS}           auto-index on, ${created} indexes declared`);
-  console.log(`    channel    ${CHANNEL}      live board updates`);
+  console.log(`    channel    ${CHANNEL}      live board updates, presence on`);
   console.log(`    blob       ${BLOB}     attachments (created on first use)`);
   console.log(`    search     ${SEARCH}    finding finished work (created on first use)`);
   console.log(`    functions  ${FN}           CORS: ${CONSOLE_ORIGINS.join(", ")}`);
@@ -291,6 +297,12 @@ async function provisionHosted({ signup, access, indexes }) {
     instance: DS,
     changes: { autoId: "uuid", autoIndex: true },
   });
+
+  // See the local branch: runner presence depends on it.
+  if (exists("channel", CHANNEL)) {
+    await mcp("patch_instance_config", { service: "channel", instance: CHANNEL, changes: { presence: true } });
+    console.log(`  channel    ${CHANNEL} — presence on`);
+  }
 
   // Indexes have no MCP-shaped ceremony: the data plane takes them directly, and creating
   // one that already exists is a no-op rather than a conflict.

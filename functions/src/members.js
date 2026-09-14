@@ -31,6 +31,7 @@
 
 import { badRequest, conflict, forbidden, notFound, str } from "./http.js";
 import { memberKey, requireHuman, resolveProject } from "./identity.js";
+import { unlinkPersonFromBoard } from "./machines.js";
 
 /** People on one board besides its owner. */
 export const MAX_MEMBERS = 25;
@@ -102,6 +103,7 @@ const memberView = (m) => ({
   identifier: m.identifier || "",
   name: m.name || "",
   added_at: m.created_at || null,
+  can_run_agents: !!m.can_run_agents,
 });
 
 /** `POST /board/members/list` — the owner and everyone else on a board. Members may read it:
@@ -188,8 +190,34 @@ export async function removeMember(ctx, body) {
   const existing = await ctx.store.get("memberships", key);
   if (!existing) return { ok: true, removed: false };
   await ctx.store.delete("memberships", [key]);
+  // Their machines go with them. The link would stop working anyway — linking checks membership —
+  // but only when it was made; a link is checked on every call by its own row, so it has to go.
+  await unlinkPersonFromBoard(ctx, project.key, uid);
   await writeBoardsClaim(ctx, uid).catch((err) => console.log("claim write failed (healed on next load):", err && err.message));
   return { ok: true, removed: true, uid };
+}
+
+/**
+ * `POST /board/members/agents` — owner only. `{ project_id, uid, can_run_agents }`.
+ *
+ * Whether a member may link their own machines to this board. Off by default: a member's daemon
+ * runs an AI on this board's work with that member's credentials and repository access, which is
+ * a different thing from filing duties, and the owner is who decides it. Turning it off unlinks
+ * every machine of theirs from the board at once.
+ */
+export async function setMemberAgents(ctx, body) {
+  const caller = requireHuman(ctx.caller);
+  const project = await resolveProject(caller, body.project_id, ctx.store, { ownerOnly: true });
+  const uid = str(body.uid, "uid", { required: true, max: 64 });
+  if (typeof body.can_run_agents !== "boolean") throw badRequest("'can_run_agents' must be true or false");
+  const key = memberKey(project.key, uid);
+  const existing = await ctx.store.get("memberships", key);
+  if (!existing) throw notFound("that person is not a member of this board");
+  const { key: _k, _created, _updated, ...data } = existing;
+  const next = { ...data, can_run_agents: body.can_run_agents };
+  await ctx.store.putOne("memberships", key, next);
+  const unlinked = body.can_run_agents ? 0 : await unlinkPersonFromBoard(ctx, project.key, uid);
+  return { ok: true, member: memberView(next), unlinked };
 }
 
 /**

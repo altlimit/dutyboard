@@ -1,6 +1,6 @@
 # `dutyboard` — the runner and provisioner
 
-Status: **plan, not built.** Written 2026-09-14. Decisions marked **(assumed)** are defaults
+Status: **phase 1 (server) built** — see §15. Written 2026-09-14. Decisions marked **(assumed)** are defaults
 chosen while planning; change them here before the phase that depends on them starts.
 
 ## 1. Why this exists
@@ -151,28 +151,36 @@ Additions to existing rows:
 
 | Route | Caller | Purpose |
 |---|---|---|
-| `/connect/start`, `/connect/poll` | none (rate-limited) | device pairing |
-| `/connect/approve`, `/connect/deny` | human | approve a code on `/pair` |
+| `/connect/start`, `/connect/poll` | none | device pairing; the key is minted at the poll that finds it approved, once |
+| `/connect/lookup`, `/connect/approve`, `/connect/deny` | human | read and approve a code on `/pair` |
 | `/machines/list`, `/machines/revoke`, `/machines/update` | human (machine owner) | runners section; online from `env.channel.presence("machine.<id>")` |
+| `/machines/unlink` | human (machine owner or board owner) | take a machine off a board |
+| `/board/members/agents` | owner | grant or withdraw a member's `can_run_agents`; withdrawing unlinks their machines |
 | `/machine/me` | machine | own settings, links, pending requests |
 | `/machine/link`, `/machine/unlink` | machine | link a folder: board owner, or member with `can_run_agents` |
 | `/machine/state` | machine | run state changes only (not a heartbeat); publishes `{t:"runner"}` |
 | `/machine/poll` | machine | batched: held duty + runnable count for every linked board |
 | `/machine/live` | machine | subscribe token for `machine.<id>` + `board.<p>` per link, TTL 4h, `presenceId` = machine id |
 | `/machine/request`, `/machine/request/report` | human / machine | "set up on a machine" |
-| `/projects/create` | human | accepts `profile`, `runner`; enqueues `rules` if the board has none |
-| `/projects/profile` | human | edit profile/runner; publishes `{t:"board", what:"profile"}` |
-| `/board/rules/get` | human, agent | accepted rules + version |
-| `/board/rules/set`, `/board/rules/accept` | human | edit, or accept the draft; publishes `{t:"board", what:"rules"}` |
+| `/projects/create` | human | accepts `profile`, `runner`; a board made with either starts with a `rules` duty |
+| `/projects/profile` | owner | edit profile/runner; publishes `{t:"board", what:"profile"}` |
+| `/board/profile` | human, agent | profile, runner, `rules_version` |
+| `/board/profile/propose` | agent holding a `setup` duty | `toolchain`, `test_command`, `deploy`, `worktree` |
+| `/board/rules` | human, agent | rules in force + version; people also get the draft, agents only `has_draft` |
+| `/board/rules/set`, `/board/rules/accept` | owner | edit, or accept the draft; publishes `{t:"board", what:"rules"}` |
+| `/board/rules/submit` | agent holding a `rules` duty | write the draft |
 
 ### MCP tools (hosted)
 
 - `board_profile` — read the profile.
-- `board_profile_propose` — set `toolchain` and `deploy`; only while holding a `setup` duty.
-  A human edit afterwards wins.
+- `board_profile_propose` — set `toolchain`, `test_command`, `deploy`, `worktree`; only while
+  holding a `setup` duty. A human edit afterwards wins.
 - `board_rules` — read the accepted rules.
 - `board_rules_submit` — write the draft; only while holding a `rules` duty.
-- `duty_claim`'s response gains `rules_version`, `kind`.
+- `duty_claim`'s response gains `rules_version`, and every duty brief carries `kind`.
+- A parked duty is kept for its machine by `duty_checkpoint` with `affinity: true` (machine keys
+  only), which sets `duties.affinity`.
+- `/health` gains `machines: true` and `console_url` (from the `DUTYBOARD_CONSOLE_URL` secret).
 
 ### Channels
 

@@ -8,17 +8,25 @@
 // makes one static bundle usable against a local emulator and a hosted deployment
 // without rebuilding.
 
+/**
+ * Written at DEPLOY time, not build time: `/app/config.js` sets `window.DUTYBOARD_CONFIG` before
+ * this bundle loads. It is how one prebuilt console — the one the `dutyboard` binary carries —
+ * is pointed at whichever deployment it was uploaded next to, with no rebuild. The build's own
+ * `VITE_*` values are what is used when that file sets nothing, which is the dev server's case.
+ */
+const deployed = (typeof window !== "undefined" && window.DUTYBOARD_CONFIG) || {};
+
 const env = {
-  baseUrl: import.meta.env.VITE_ALTENGINE_URL || "http://127.0.0.1:9191",
+  baseUrl: deployed.baseUrl || import.meta.env.VITE_ALTENGINE_URL || "http://127.0.0.1:9191",
   // Hosted, this must be the auth instance's ID rather than its name: sign-in carries no
   // API key, so there is no org to resolve a name inside and the platform answers 404.
   // The datastore and channel below are named — those calls carry an identity token.
-  auth: import.meta.env.VITE_AUTH_INSTANCE || "dutyboard-auth",
-  datastore: import.meta.env.VITE_DATASTORE_INSTANCE || "dutyboard",
-  channel: import.meta.env.VITE_CHANNEL_INSTANCE || "dutyboard-live",
-  functions: import.meta.env.VITE_FUNCTIONS_INSTANCE || "dutyboard",
-  api: import.meta.env.VITE_API_URL || "",
-  fn: import.meta.env.VITE_FUNCTION_NAME || "board",
+  auth: deployed.auth || import.meta.env.VITE_AUTH_INSTANCE || "dutyboard-auth",
+  datastore: deployed.datastore || import.meta.env.VITE_DATASTORE_INSTANCE || "dutyboard",
+  channel: deployed.channel || import.meta.env.VITE_CHANNEL_INSTANCE || "dutyboard-live",
+  functions: deployed.functions || import.meta.env.VITE_FUNCTIONS_INSTANCE || "dutyboard",
+  api: deployed.api || import.meta.env.VITE_API_URL || "",
+  fn: deployed.fn || import.meta.env.VITE_FUNCTION_NAME || "board",
 };
 
 /** What this build was compiled to talk to, before anyone retargets it. Exported so the

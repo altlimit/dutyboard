@@ -52,10 +52,15 @@ function check(label, cond, detail) {
   }
 }
 
-async function call(path, body, token, { expectStatus } = {}) {
+async function call(path, body, token, { expectStatus, board } = {}) {
   const res = await fetch(API + path, {
     method: "POST",
-    headers: { "content-type": "application/json", ...(token ? { authorization: `Bearer ${token}` } : {}) },
+    headers: {
+      "content-type": "application/json",
+      ...(token ? { authorization: `Bearer ${token}` } : {}),
+      // How a machine key says which of its boards a call is about.
+      ...(board ? { "x-dutyboard-board": board } : {}),
+    },
     body: JSON.stringify(body || {}),
   });
   const json = await res.json().catch(() => ({}));
@@ -118,6 +123,76 @@ async function withAccess(tokens) {
   const t = await authCall("/token/refresh", { refresh_token: tokens.refresh_token });
   tokens.refresh_token = t.refresh_token;
   return (tokens.id_token = t.id_token);
+}
+
+/** Pair a machine the way a daemon does, approved by `humanToken`. */
+async function pair(humanToken, name) {
+  const started = await call("/connect/start", { name, os: "linux", arch: "amd64", cli_version: "smoke" });
+  await call("/connect/approve", { user_code: started.user_code }, humanToken);
+  return call("/connect/poll", { device_code: started.device_code });
+}
+
+/** One MCP call, as a daemon's local proxy makes it: the machine key, and the board named. */
+async function machineTool(key, board, name, args) {
+  const res = await fetch(`${API}/mcp`, {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${key}`, "x-dutyboard-board": board },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } }),
+  });
+  return (await res.json()).result;
+}
+
+/**
+ * A daemon's socket: connect with a minted token, subscribe, and collect every delivery so a test
+ * can wait for the one it expects. Resolves once the platform acknowledges the subscription —
+ * before that, presence would not show the machine and a test would race it.
+ */
+function openSocket(minted) {
+  const base = BASE.replace(/^http/, "ws");
+  const from = minted.ws_url ? new URL(minted.ws_url, base) : null;
+  const u = new URL(from ? from.pathname + from.search : `/v1/channel/dutyboard-live/subscribe`, base);
+  if (!u.searchParams.has("token")) u.searchParams.set("token", minted.token);
+  const frames = [];
+  const ws = new WebSocket(u.toString());
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("socket did not subscribe within 5s")), 5000);
+    ws.onmessage = (ev) => {
+      let frame;
+      try {
+        frame = JSON.parse(ev.data);
+      } catch {
+        return;
+      }
+      if (frame.type === "subscribed") {
+        clearTimeout(timer);
+        resolve(socket);
+      } else if (frame.channel) frames.push(frame);
+    };
+    ws.onerror = () => reject(new Error("socket error"));
+    ws.onopen = () => ws.send(JSON.stringify({ type: "subscribe", channels: minted.channels }));
+    const socket = {
+      async next(pred, ms = 3000) {
+        const until = Date.now() + ms;
+        for (;;) {
+          const hit = frames.find(pred);
+          if (hit || Date.now() > until) return hit || null;
+          await new Promise((r) => setTimeout(r, 50));
+        }
+      },
+      close: () => ws.close(),
+    };
+  });
+}
+
+/** Retry `probe` until it returns true or `ms` passes. For state that settles asynchronously —
+ *  presence after a socket closes — where asserting on the first read would make a flaky test. */
+async function eventually(probe, ms = 3000) {
+  const until = Date.now() + ms;
+  for (;;) {
+    if (await probe()) return true;
+    if (Date.now() > until) return false;
+    await new Promise((r) => setTimeout(r, 100));
+  }
 }
 
 async function main() {
@@ -705,6 +780,10 @@ async function main() {
     ["/projects/delete", { project_id: projectId, confirm: projectId }],
     ["/board/members/add", { project_id: projectId, email }],
     ["/board/members/remove", { project_id: projectId, uid: signup.user.uid }],
+    ["/board/members/agents", { project_id: projectId, uid: other0.user.uid, can_run_agents: true }],
+    ["/projects/profile", { project_id: projectId, runner: { parallel: 5 } }],
+    ["/board/rules/set", { project_id: projectId, body: "rules by a member" }],
+    ["/board/rules/accept", { project_id: projectId }],
   ];
   const allowed = [];
   for (const [path, body] of ownerOnly) {
@@ -723,6 +802,220 @@ async function main() {
   const refreshedAfterRemoval = await withAccess(other0);
   const afterHeal = await dsQuery("duties", { where: [{ field: "project_id", op: "=", value: projectId }], limit: 50 }, refreshedAfterRemoval);
   check("and once their token is refreshed they read nothing", afterHeal.status === 200 && afterHeal.docs.length === 0, afterHeal.status);
+
+
+  // --- a machine: pairing, links, and a board run by a daemon ---------------
+  //
+  // One `dutyboard` daemon holds one key for every board it works, and the link row for a board is
+  // what lets that key act there. Everything a daemon relies on is walked here with a real key: the
+  // pairing that makes one, the setup and rules duties a linked board starts with, the lanes that
+  // bound parallel work, a parked duty kept for the machine holding its worktree — proven with a
+  // real socket, because presence is what decides it — and the permission a member needs.
+  check("health says machines can pair", health.machines === true, health);
+  check("a board made the old way does not start with duties it never asked for", project.rules_duty_id === null, project);
+
+  const started = await call("/connect/start", { name: "Smoke WSL", os: "linux", arch: "amd64", cli_version: "smoke" });
+  check("a daemon starts pairing with no credential", /^[A-Z2-9]{4}-[A-Z2-9]{4}$/.test(started.user_code) && !!started.device_code, started);
+  const waiting = await call("/connect/poll", { device_code: started.device_code });
+  check("and hears 'pending' until someone approves it", waiting.status === "pending", waiting);
+  const agentApproves = await call("/connect/approve", { user_code: started.user_code }, agent, { expectStatus: true });
+  check("an agent token cannot approve a machine", agentApproves.status === 403, agentApproves);
+  const looked = await call("/connect/lookup", { user_code: started.user_code.toLowerCase().replace("-", "") }, human);
+  check("a person looks the code up however they typed it", looked.machine_name === "Smoke WSL" && looked.status === "pending", looked);
+  await call("/connect/approve", { user_code: started.user_code }, human);
+  const paired = await call("/connect/poll", { device_code: started.device_code });
+  check("once approved, the next poll hands over a machine key", paired.status === "approved" && /^dbm_/.test(paired.machine_key || ""), { ...paired, machine_key: !!paired.machine_key });
+  const handedTwice = await call("/connect/poll", { device_code: started.device_code }, null, { expectStatus: true });
+  check("exactly once", handedTwice.status === 404, handedTwice);
+  const mkey = paired.machine_key;
+  const prefix = paired.agent_prefix;
+
+  const refused = await call("/connect/start", { name: "Not this one" });
+  await call("/connect/deny", { user_code: refused.user_code }, human);
+  const heardNo = await call("/connect/poll", { device_code: refused.device_code });
+  check("a denied pairing tells the daemon no, and hands over nothing", heardNo.status === "denied" && !heardNo.machine_key, heardNo);
+
+  const mBoard = `smoke-machines-${Date.now().toString(36)}`;
+  const mCreated = await call(
+    "/projects/create",
+    {
+      name: "Machines",
+      project_id: mBoard,
+      profile: { type: "game", repo_url: "https://github.com/example/cadence.git", default_branch: "main", stack: ["godot"] },
+      runner: { parallel: 1 },
+    },
+    human,
+  );
+  check("a board made with a profile starts with its rules to write", !!mCreated.rules_duty_id, mCreated);
+  const escape = await call("/projects/profile", { project_id: mBoard, profile: { worktree: { copy: ["../../.ssh/id_ed25519"] } } }, human, { expectStatus: true });
+  check("a profile path that leaves the project is refused", escape.status === 400, escape.json);
+
+  const unnamed = await call("/duty/poll", {}, mkey, { expectStatus: true });
+  check("a machine key has to name the board it means", unnamed.status === 403 && /x-dutyboard-board/.test(JSON.stringify(unnamed.json)), unnamed.json);
+  const notLinked = await call("/duty/poll", {}, mkey, { expectStatus: true, board: mBoard });
+  check("and cannot act on a board it is not linked to", notLinked.status === 403, notLinked.json);
+
+  const bystanderToken = await withAccess(other0);
+  const theirBoard = `smoke-theirs-${Date.now().toString(36)}`;
+  await call("/projects/create", { name: "Theirs", project_id: theirBoard }, bystanderToken);
+  const strangersBoard = await call("/machine/link", { project_id: theirBoard }, mkey, { expectStatus: true });
+  check("a machine cannot link a board its owner is not on", strangersBoard.status === 404, strangersBoard.json);
+
+  const linked = await call("/machine/link", { project_id: mBoard, path_hint: "~/dutyboard/machines" }, mkey);
+  check("linking a board gives the machine a setup duty of its own", linked.created && !!linked.setup_duty_id, linked);
+  check("and no second rules duty, since the board has one already", linked.rules_duty_id === null, linked);
+  const relinked = await call("/machine/link", { project_id: mBoard }, mkey);
+  check("linking again changes nothing", relinked.created === false && relinked.setup_duty_id === null, relinked);
+
+  const me = await call("/machine/me", {}, mkey);
+  check("the machine reads its board and the profile with it", me.links.length === 1 && me.links[0].profile.type === "game", me.links);
+
+  const lane1 = `${prefix}/1`;
+  const lane2 = `${prefix}/2`;
+  const signsAsAlpha = await call("/duty/poll", { agent_id: "alpha" }, mkey, { expectStatus: true, board: mBoard });
+  check("a machine cannot sign as someone else's agent", signsAsAlpha.status === 403, signsAsAlpha.json);
+
+  const machinePoll = await call("/duty/poll", { agent_id: lane1 }, mkey, { board: mBoard });
+  check(
+    "its setup duty is first in its queue",
+    machinePoll.runnable_duties[0] && machinePoll.runnable_duties[0].id === linked.setup_duty_id && machinePoll.runnable_duties[0].kind === "setup",
+    machinePoll.runnable_duties,
+  );
+  const rawAgent = (await call("/tokens/mint", { project_id: mBoard, name: "raw agent", default_agent_id: "raw" }, human)).token;
+  const rawPoll = await call("/duty/poll", { limit: 10 }, rawAgent);
+  check("an agent that is not that machine is not offered it", !rawPoll.runnable_duties.some((d) => d.id === linked.setup_duty_id), rawPoll.runnable_duties);
+  const rawSetup = await call("/duty/claim", { duty_id: linked.setup_duty_id }, rawAgent, { expectStatus: true });
+  check("and cannot claim it", rawSetup.status === 409 && /reserved/.test(JSON.stringify(rawSetup.json)), rawSetup.json);
+
+  const setupClaim = await call("/duty/claim", { duty_id: linked.setup_duty_id, agent_id: lane1 }, mkey, { board: mBoard });
+  check("the machine claims its setup duty", setupClaim.status === "active" && setupClaim.duty.kind === "setup", setupClaim);
+  const pauseMenu = await call("/duty/enqueue", { project_id: mBoard, title: "Add a pause menu", brief: "Esc opens it." }, human);
+  const duringSetup = await call("/duty/claim", { duty_id: pauseMenu.duty_id }, rawAgent, { expectStatus: true });
+  check("nothing else is claimed while setup has the board to itself", duringSetup.status === 409 && /to itself/.test(JSON.stringify(duringSetup.json)), duringSetup.json);
+
+  const rawProposes = await call("/board/profile/propose", { duty_id: linked.setup_duty_id, test_command: "rm -rf /" }, rawAgent, { expectStatus: true });
+  check("only the agent holding the setup duty records what setup found", rawProposes.status === 403, rawProposes.json);
+  const proposed = await call(
+    "/board/profile/propose",
+    {
+      duty_id: linked.setup_duty_id,
+      agent_id: lane1,
+      toolchain: [{ name: "godot", version: "4.7.1", why: "engine" }],
+      test_command: "tools/run_tests.sh",
+      worktree: { prep: "godot --headless --import", prep_inputs: ["project.godot"], cache: [".godot"], copy: [".env"] },
+      deploy: { method: "ci-dispatch", workflow: "deploy.yml" },
+    },
+    mkey,
+    { board: mBoard },
+  );
+  check(
+    "setup writes what it found onto the board, and leaves the rest alone",
+    proposed.profile.toolchain[0].name === "godot" && proposed.profile.deploy.method === "ci-dispatch" && proposed.profile.type === "game",
+    proposed.profile,
+  );
+  await call("/duty/complete", { duty_id: linked.setup_duty_id, agent_id: lane1, outcome_summary: "Godot 4.7.1 installed and registered." }, mkey, { board: mBoard });
+
+  const rulesClaim = await call("/duty/claim", { duty_id: mCreated.rules_duty_id, agent_id: lane1 }, mkey, { board: mBoard });
+  check("the rules duty is claimed next, before any rules exist", rulesClaim.duty.kind === "rules" && rulesClaim.rules_version === 0, rulesClaim);
+  const profileTool = await machineTool(mkey, mBoard, "board_profile", {});
+  check("a session reads the profile over MCP", !profileTool.isError && profileTool.structuredContent.profile.test_command === "tools/run_tests.sh", profileTool);
+  const handedIn = await machineTool(mkey, mBoard, "board_rules_submit", {
+    duty_id: mCreated.rules_duty_id,
+    agent_id: lane1,
+    body: "# Rules\n\n- Never commit secrets.\n- Run tools/run_tests.sh before completing.",
+  });
+  check("and hands in rules over MCP", !handedIn.isError, handedIn);
+  await call("/duty/complete", { duty_id: mCreated.rules_duty_id, agent_id: lane1, outcome_summary: "Drafted the rules." }, mkey, { board: mBoard });
+  const draftOnly = await call("/board/rules", {}, rawAgent);
+  check("an agent is told a draft is waiting, not what it says", draftOnly.version === 0 && draftOnly.has_draft === true && draftOnly.draft === undefined, draftOnly);
+  const accepted = await call("/board/rules/accept", { project_id: mBoard }, human);
+  check("a person puts the draft in force", accepted.version === 1, accepted);
+  const inForce = await call("/board/rules", {}, rawAgent);
+  check("and every agent on the board reads it", inForce.version === 1 && /Never commit secrets/.test(inForce.body) && inForce.has_draft === false, inForce);
+
+  // Lanes. One at a time first, then two, with two claims racing for the last free lane.
+  const saveFix = await call("/duty/enqueue", { project_id: mBoard, title: "Fix the save file", brief: "Saves vanish on reload." }, human);
+  const first = await call("/duty/claim", { duty_id: pauseMenu.duty_id, agent_id: lane1 }, mkey, { board: mBoard });
+  check("a claim names the rules version in force", first.rules_version === 1, first.rules_version);
+  const overLimit = await call("/duty/claim", { duty_id: saveFix.duty_id, agent_id: lane2 }, mkey, { expectStatus: true, board: mBoard });
+  check("a board that runs one duty at a time refuses a second", overLimit.status === 409 && overLimit.json.error.details.parallel === 1, overLimit.json);
+  await call("/projects/profile", { project_id: mBoard, runner: { parallel: 2 } }, human);
+  const tutorial = await call("/duty/enqueue", { project_id: mBoard, title: "Write the tutorial", brief: "Three screens." }, human);
+  const race = await Promise.all([
+    call("/duty/claim", { duty_id: saveFix.duty_id, agent_id: lane2 }, mkey, { expectStatus: true, board: mBoard }),
+    call("/duty/claim", { duty_id: tutorial.duty_id }, rawAgent, { expectStatus: true }),
+  ]);
+  check(
+    "with one lane left, two claims race for it and exactly one lands",
+    race.filter((r) => r.status === 200).length === 1 && race.filter((r) => r.status === 409).length === 1,
+    race.map((r) => r.status),
+  );
+  const winner = race[0].status === 200 ? { duty: saveFix.duty_id, agent: lane2, key: mkey, board: mBoard } : { duty: tutorial.duty_id, agent: "raw", key: rawAgent };
+  await call("/duty/complete", { duty_id: winner.duty, agent_id: winner.agent, outcome_summary: "Done in the race." }, winner.key, { board: winner.board });
+
+  // A parked duty stays with the machine whose worktree has the half-finished work — while that
+  // machine is there to resume it.
+  await call(
+    "/duty/checkpoint",
+    { duty_id: pauseMenu.duty_id, agent_id: lane1, kind: "question", message: "Esc or P?", suggested_options: ["Esc", "P"], set_status: "needs_decision", affinity: true },
+    mkey,
+    { board: mBoard },
+  );
+  await call("/duty/resolve", { duty_id: pauseMenu.duty_id, resolution_text: "Esc." }, human);
+  const offeredToRaw = async () => (await call("/duty/poll", { limit: 10 }, rawAgent)).runnable_duties.some((d) => d.id === pauseMenu.duty_id);
+  check("while the machine holding its worktree is offline, anyone may take the answered duty", await offeredToRaw());
+
+  const liveMint = await call("/machine/live", {}, mkey);
+  check(
+    "the machine's channel token covers its own channel and its board's",
+    liveMint.channels.includes(`machine.${paired.machine_id}`) && liveMint.channels.includes(`board.${mBoard}`),
+    liveMint.channels,
+  );
+  const socket = await openSocket(liveMint);
+  check("while it is online, nobody else is offered it", await eventually(async () => !(await offeredToRaw())));
+  const rawResume = await call("/duty/claim", { duty_id: pauseMenu.duty_id }, rawAgent, { expectStatus: true });
+  check("or can claim it", rawResume.status === 409 && /parked on machine/.test(JSON.stringify(rawResume.json)), rawResume.json);
+  const daemonView = await call("/machine/poll", {}, mkey);
+  const boardView = daemonView.boards.find((b) => b.project_id === mBoard) || { runnable: [] };
+  check("and the machine sees it as its own to resume", boardView.runnable.some((d) => d.duty_id === pauseMenu.duty_id && d.resumes), boardView);
+
+  const setupRequest = await call("/machine/request", { machine_id: paired.machine_id, project_id: mBoard, path: "machines" }, human);
+  const heardSetup = await socket.next((f) => f.data && f.data.t === "setup");
+  check("a setup asked for in the console reaches the daemon on its own channel", heardSetup && heardSetup.data.request_id === setupRequest.request.request_id, heardSetup);
+  const outsidePath = await call("/machine/request", { machine_id: paired.machine_id, project_id: mBoard, path: "../elsewhere" }, human, { expectStatus: true });
+  check("but never for a folder outside the machine's projects folder", outsidePath.status === 400, outsidePath.json);
+  const reportedDone = await call("/machine/request/report", { request_id: setupRequest.request.request_id, status: "done", result: "cloned" }, mkey);
+  check("the daemon reports the setup done", reportedDone.request.status === "done", reportedDone);
+  await call("/machine/state", { project_id: mBoard, runs: [{ duty_id: pauseMenu.duty_id, state: "parked", detail: "waiting on Esc" }] }, mkey);
+  const ownerView = (await call("/machines/list", {}, human)).machines.find((m) => m.machine_id === paired.machine_id) || {};
+  check(
+    "the owner sees the machine online, the board it works, and what it is doing there",
+    ownerView.online === true && ownerView.links.length === 1 && ownerView.links[0].runs[0].state === "parked",
+    ownerView,
+  );
+  await call("/machines/update", { machine_id: paired.machine_id, paused: true }, human);
+  check("pausing it from the console tells the daemon at once", !!(await socket.next((f) => f.data && f.data.t === "pause")));
+  socket.close();
+  check("and once the machine goes away, the duty is open to others again", await eventually(offeredToRaw));
+
+  // A member's machine, which needs the owner's say-so.
+  await call("/board/members/add", { project_id: mBoard, email: bystanderEmail }, human);
+  const theirMachine = await pair(bystanderToken, "Bystander laptop");
+  const noSaySo = await call("/machine/link", { project_id: mBoard }, theirMachine.machine_key, { expectStatus: true });
+  check("a member's machine cannot join a board until the owner allows it", noSaySo.status === 403, noSaySo.json);
+  await call("/board/members/agents", { project_id: mBoard, uid: other0.user.uid, can_run_agents: true }, human);
+  const theirLink = await call("/machine/link", { project_id: mBoard, setup: false }, theirMachine.machine_key);
+  check("once allowed, it links", theirLink.created === true, theirLink);
+  await call("/board/members/agents", { project_id: mBoard, uid: other0.user.uid, can_run_agents: false }, human);
+  const cutOff = await call("/duty/poll", {}, theirMachine.machine_key, { expectStatus: true, board: mBoard });
+  check("taking the permission away cuts that machine off on its very next call", cutOff.status === 403, cutOff.json);
+  await call("/machines/revoke", { machine_id: theirMachine.machine_id }, bystanderToken);
+  await call("/projects/delete", { project_id: theirBoard, confirm: theirBoard }, bystanderToken);
+
+  const mRemoved = await call("/projects/delete", { project_id: mBoard, confirm: mBoard }, human);
+  check("deleting a board unlinks every machine on it", mRemoved.removed.machine_links === 1, mRemoved.removed);
+  const afterBoardGone = await call("/duty/poll", {}, mkey, { expectStatus: true, board: mBoard });
+  check("and the machine can no longer act there", afterBoardGone.status === 403, afterBoardGone.json);
 
   // --- what is actually deployed ------------------------------------------
   //
@@ -902,6 +1195,33 @@ async function main() {
     "/tokens/list": () => ({ project_id: projectId }),
     "/tokens/revoke": () => ({ project_id: projectId, token_id: "tok_nope" }),
     "/live/token": () => ({ project_id: projectId }),
+    "/board/members/agents": () => ({ project_id: projectId, uid: other0.user.uid, can_run_agents: true }),
+    "/board/profile": () => ({ project_id: projectId }),
+    "/board/profile/propose": (d) => ({ duty_id: d, test_command: "no" }),
+    "/board/rules": () => ({ project_id: projectId }),
+    "/board/rules/set": () => ({ project_id: projectId, body: "no" }),
+    "/board/rules/accept": () => ({ project_id: projectId }),
+    "/board/rules/submit": (d) => ({ duty_id: d, body: "no" }),
+    "/projects/profile": () => ({ project_id: projectId, runner: { parallel: 3 } }),
+    "/connect/lookup": () => ({ user_code: "ZZZZ-ZZZZ" }),
+    "/connect/approve": () => ({ user_code: "ZZZZ-ZZZZ" }),
+    "/connect/deny": () => ({ user_code: "ZZZZ-ZZZZ" }),
+    "/connect/poll": () => ({ device_code: "not-a-device-code" }),
+    "/machines/update": () => ({ machine_id: paired.machine_id, paused: false }),
+    "/machines/revoke": () => ({ machine_id: paired.machine_id }),
+    "/machines/unlink": () => ({ machine_id: paired.machine_id, project_id: projectId }),
+    "/machine/me": () => ({}),
+    "/machine/link": () => ({ project_id: projectId }),
+    "/machine/unlink": () => ({ project_id: projectId }),
+    "/machine/state": () => ({ project_id: projectId, runs: [] }),
+    "/machine/poll": () => ({}),
+    "/machine/live": () => ({}),
+    "/machine/request": () => ({ machine_id: paired.machine_id, project_id: projectId }),
+    "/machine/request/report": () => ({ request_id: "mr_nope", status: "done" }),
+    // Public by design: a daemon starting a pairing has no credential to check yet.
+    "/connect/start": null,
+    // Acts on whoever is calling: an outsider gets their own, empty, list.
+    "/machines/list": null,
     // These two take no target: they act on whoever is calling. An outsider calling them
     // gets their OWN empty world, which is correct rather than a leak — so they are
     // excluded deliberately, and named here so the exclusion is a decision on the record.
@@ -917,14 +1237,22 @@ async function main() {
   const otherProject = `smoke-outsider-${Date.now()}`;
   await call("/projects/create", { name: "Outsider board", project_id: otherProject }, other.id_token);
   const otherAgent = (await call("/tokens/mint", { project_id: otherProject, name: "outsider" }, other.id_token)).token;
+  // And a machine key belonging to someone else, pointed at this board — the leaked daemon key.
+  const otherMachine = await pair(other.id_token, "Outsider machine");
+  await call("/machine/link", { project_id: otherProject, setup: false }, otherMachine.machine_key);
 
   const leaks = [];
   let probes = 0;
+  const outsiders = [
+    ["a stranger", other.id_token, null],
+    ["another board's agent", otherAgent, null],
+    ["another person's machine naming this board", otherMachine.machine_key, projectId],
+  ];
   for (const path of ROUTE_PATHS) {
     const build = outsiderArgs[path];
     if (!build) continue;
-    for (const [who, token] of [["a stranger", other.id_token], ["another board's agent", otherAgent]]) {
-      const res = await call(path, build(await freshDuty()), token, { expectStatus: true });
+    for (const [who, token, board] of outsiders) {
+      const res = await call(path, build(await freshDuty()), token, { expectStatus: true, board });
       probes++;
       // 401/403/404 are all correct refusals; which one is a separate design question
       // (404 where naming a thing would confirm it exists). Anything below 400 is a leak.
@@ -939,6 +1267,7 @@ async function main() {
   check("the board survived every probe", survived.status === 200, survived.status);
 
   await call("/projects/delete", { project_id: otherProject, confirm: otherProject }, other.id_token);
+  await call("/machines/revoke", { machine_id: otherMachine.machine_id }, other.id_token);
 
   // --- revocation ---------------------------------------------------------
   const tokenList = await call("/tokens/list", { project_id: projectId }, human);
@@ -948,6 +1277,10 @@ async function main() {
   await call("/tokens/revoke", { project_id: projectId, token_id: minted.token_id }, human);
   const afterRevoke = await call("/duty/poll", { agent_id: "alpha" }, agent, { expectStatus: true });
   check("a revoked token stops working", afterRevoke.status === 401, afterRevoke);
+
+  await call("/machines/revoke", { machine_id: paired.machine_id }, human);
+  const afterMachineRevoke = await call("/machine/me", {}, mkey, { expectStatus: true });
+  check("a revoked machine key stops working", afterMachineRevoke.status === 401, afterMachineRevoke);
 
   // --- cleanup ------------------------------------------------------------
   const wrongConfirm = await call("/projects/delete", { project_id: projectId, confirm: "nope" }, human, { expectStatus: true });

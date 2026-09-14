@@ -4,12 +4,15 @@
 // to be able to type it. That makes creation a uniqueness check rather than an auto-id.
 
 import { badRequest, conflict, forbidden, str, intIn } from "./http.js";
+import { putOp } from "./store.js";
 import { slugify } from "./ids.js";
 import { requireHuman, resolveProject } from "./identity.js";
 import { liveConfigured, mintLive } from "./live.js";
 import { sweepAttachments } from "./attachments.js";
 import { searchConfigured, unindexDuties } from "./searching.js";
 import { sharedBoards, sweepMembers, syncAccess } from "./members.js";
+import { mergeProfile, mergeRunner } from "./profile.js";
+import { rulesDuty, sweepBoardMachines } from "./machines.js";
 
 const SWEEP_PAGE = 200;
 
@@ -46,15 +49,27 @@ export async function createProject(ctx, body) {
     );
   }
 
-  await ctx.store.putOne("projects", key, {
+  // A profile is what makes this a board a `dutyboard` daemon can run. Both are validated before
+  // anything is written, so a bad field refuses the board rather than making half of one.
+  const withRunner = body.profile != null || body.runner != null;
+  const profile = body.profile != null ? mergeProfile(null, body.profile) : null;
+  const runner = withRunner ? mergeRunner(null, body.runner) : null;
+
+  const row = {
     name,
     slug: key,
     owner_uid: caller.uid,
     owner_name: caller.name,
+    ...(withRunner ? { profile, runner, rules_version: 0 } : {}),
     created_at: now,
     updated_at: now,
-  });
-  return { project_id: key, name };
+  };
+  // A board made for a runner starts with its rules to write. One made the old way — for an agent
+  // connected by hand — does not: a duty it never asked for would be the first thing that agent
+  // claimed.
+  const rules = withRunner ? rulesDuty({ key, owner_uid: caller.uid }, now) : null;
+  await ctx.store.transaction([putOp("projects", key, row), ...(rules ? [rules.op] : [])]);
+  return { project_id: key, name, rules_duty_id: rules ? rules.id : null };
 }
 
 /** `POST /projects/list` — the boards this person owns, and the ones shared with them.
@@ -121,6 +136,9 @@ export async function openBoard(ctx, body) {
       name: project.name,
       created_at: project.created_at,
       owner_name: project.owner_name || "",
+      profile: project.profile || null,
+      runner: project.runner || null,
+      rules_version: project.rules_version || 0,
     },
     // Which of the two this caller is, so the console can leave out what a member cannot do
     // rather than offer it and refuse.
@@ -175,6 +193,8 @@ export async function deleteProject(ctx, body) {
     tokens: await sweep(ctx, "tokens", project.key),
     // And everyone who was on it, with the board taken back out of their claims.
     members: await sweepMembers(ctx, project.key),
+    // And every machine working it, each told so its daemon stops.
+    machine_links: await sweepBoardMachines(ctx, project.key),
   };
   await ctx.store.delete("projects", [project.key]);
   return { ok: true, deleted: project.key, removed };

@@ -336,6 +336,10 @@ If your instances are named differently, set `DUTYBOARD_DATASTORE`, `DUTYBOARD_A
 matching `VITE_*` vars for the console, and add the names as `env`-exposure secrets on the
 functions instance so the deployed code resolves them too.
 
+`DUTYBOARD_CONSOLE_URL`, also an `env`-exposure secret, is where the console is served. The
+function cannot work it out, and a `dutyboard` daemon that has just started pairing reads it from
+`/health` to tell you where to approve it.
+
 `DUTYBOARD_BLOB` has no `VITE_*` twin, and that is not an omission: the console never names
 the blob instance. It asks the function for an upload URL and sends the file to whatever
 comes back, so where attachments are stored is the function's business alone. `/health`
@@ -474,16 +478,31 @@ only when you first try it hosted.
 | `/board/reindex` | human | Index work finished before search was turned on. Resumable. |
 | `/board/members/list` | human | The owner and everyone else on a board. |
 | `/board/members/add` · `/board/members/remove` | owner | Share a board by email, or stop sharing it. |
+| `/board/members/agents` | owner | Let a member link their own machines to the board, or stop them. |
+| `/board/profile` · `/board/rules` | both | What the project is and how it is run; the rules in force (people also see a pending draft). |
+| `/board/profile/propose` | agent | While holding a `setup` duty: record the toolchain, test command, deploy method and worktree prep. |
+| `/board/rules/submit` | agent | While holding a `rules` duty: hand in proposed rules, as a draft. |
+| `/board/rules/set` · `/board/rules/accept` | owner | Write the rules by hand, or put the draft in force. |
 | `/me/access` | human | Repair this person's `boards` claim; says whether their token is behind. |
-| `/projects/*` | human | `create`, `list` (owned and shared), `rename` and `delete` (owner only). |
+| `/projects/*` | human | `create` (optionally with a `profile` and `runner`), `list` (owned and shared), `rename`, `profile` and `delete` (owner only). |
 | `/tokens/*` | owner | `mint`, `list`, `revoke`. |
 | `/live/token` | human | A subscribe-only channel token for one board. |
+| `/connect/start` · `/connect/poll` | anyone | A `dutyboard` daemon pairing: start, then poll until approved for its `dbm_` machine key (handed over once). |
+| `/connect/lookup` · `/connect/approve` · `/connect/deny` | human | Approve or refuse a pairing by the code the daemon printed. |
+| `/machines/*` | human | `list` your machines (online, boards, what each is doing), `update`, `revoke`, `unlink` (also the board's owner). |
+| `/machine/*` | machine | `me`, `link` / `unlink` a board, `poll` every linked board at once, `live` (channel token), `state`, `request` (a person asks a machine to set a board up) and `request/report`. |
 | `/mcp` | agent | The same tools over JSON-RPC. |
 | `/health` | anyone | No credential; safe to check a deploy with. |
 
 Errors are `{"error": {code, message, details?, request_id}}` with a real status: `409` for
 a claim that lost a race or a second active duty, `403` for a token pointed at the wrong
 board, `400` naming the field and the values it accepts.
+
+A `dbm_` machine key reaches only the boards its machine is linked to, and names the one a call
+is about in an `x-dutyboard-board` header; with it, every agent endpoint above works exactly as it
+does for a project token. Its agent ids are its own prefix and `<prefix>/<n>`. On a board whose
+`runner.parallel` is set, a claim beyond that many active duties is a `409`, and a `setup` or
+`rules` duty only runs with the board to itself.
 
 ## The rules the state machine actually enforces
 

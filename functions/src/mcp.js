@@ -20,6 +20,7 @@ import { HttpError, json, readBoundedText } from "./http.js";
 import { pollDuties, claimDuty, enqueueDuty, checkpointDuty, completeDuty, failDuty, listThread, PRIORITIES, THREAD_KINDS } from "./duties.js";
 import { attachToDuty, listAttachments, MAX_BYTES, MAX_INLINE_BYTES } from "./attachments.js";
 import { searchDuties } from "./searching.js";
+import { getProfile, proposeProfile, getRules, submitRules, DEPLOY_METHODS } from "./profile.js";
 import { VERSION } from "./version.js";
 
 const PROTOCOL_VERSION = "2025-06-18";
@@ -59,7 +60,10 @@ BEFORE STARTING SOMETHING THAT SOUNDS FAMILIAR
 duty_search looks through the duties already finished on this board — their titles, briefs and outcome summaries. The board remembers work you have no memory of, done by other agents or by you in a session that is gone. Search before you rebuild something, and when you need to know HOW a thing was done: the outcome summary usually says, and the duty_id it gives you opens the full thread.
 
 SHOWING RATHER THAN DESCRIBING
-duty_attach puts a file on a duty — a screenshot of what you built, a recording of the failure, the log that explains it. duty_attachments reads what is there, including what a person attached for you; if a duty has attachments, look at them before asking about it.`;
+duty_attach puts a file on a duty — a screenshot of what you built, a recording of the failure, the log that explains it. duty_attachments reads what is there, including what a person attached for you; if a duty has attachments, look at them before asking about it.
+
+THE PROJECT ITSELF
+board_profile says what this project is — its type, repository, toolchain, test command, how it deploys — and board_rules gives the rules a person has put in force for it. Follow those rules in every duty. A duty of kind 'setup' is how a machine gets ready for the project: record what you found with board_profile_propose. A duty of kind 'rules' asks you to write the rules: hand them in with board_rules_submit, and a person decides whether they take effect.`;
 
 const s = (description, extra = {}) => ({ type: "string", description, ...extra });
 
@@ -239,6 +243,84 @@ const TOOLS = [
       required: ["duty_id", "name"],
     },
     handler: attachToDuty,
+  },
+  {
+    name: "board_profile",
+    title: "What this project is",
+    description:
+      "The board's profile — project type, repository, stack, toolchain, test command, how it deploys, how a worktree for it is prepared — and its runner settings, plus the version of the rules in force. Read it before a setup or rules duty, and whenever you need the project's real commands rather than guessing them.",
+    inputSchema: { type: "object", properties: {} },
+    handler: getProfile,
+  },
+  {
+    name: "board_profile_propose",
+    title: "Record what setup found",
+    description:
+      "While holding an active 'setup' duty: write down what this project needs and how it is run, so every machine and every later session uses the same answers. Send only the parts you established. Takes effect at once; the board's owner can change any of it.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        duty_id: s("The setup duty you are holding."),
+        toolchain: {
+          type: "array",
+          description: "What the project needs installed, e.g. {name: 'godot', version: '4.7.1', why: 'engine; project.godot says 4.7'}.",
+          items: {
+            type: "object",
+            properties: { name: s("Tool name."), version: s("Exact version, when it matters."), why: s("What needs it.") },
+            required: ["name"],
+          },
+        },
+        test_command: s("The command that runs the project's full test suite, from the project root."),
+        deploy: {
+          type: "object",
+          description: "How the project ships.",
+          properties: {
+            method: s("How it deploys.", { enum: DEPLOY_METHODS }),
+            workflow: s("For ci / ci-dispatch: the workflow file, e.g. 'deploy.yml'."),
+            branch: s("The branch a push to deploys, when it is not the default branch."),
+            command: s("For command: what to run."),
+            altengine_instances: { type: "array", items: { type: "string" }, description: "For altengine: the instances this project may deploy to." },
+          },
+        },
+        worktree: {
+          type: "object",
+          description: "How a fresh checkout of this project is made ready to work in. Paths are relative to the project root.",
+          properties: {
+            prep: s("Command that prepares a fresh checkout, e.g. 'npm ci'."),
+            prep_inputs: { type: "array", items: { type: "string" }, description: "Files whose change means prep must run again, e.g. 'package-lock.json'." },
+            cache: { type: "array", items: { type: "string" }, description: "Expensive ignored folders worth handing from one checkout to the next, e.g. 'node_modules', '.godot'." },
+            copy: { type: "array", items: { type: "string" }, description: "Files outside git a checkout needs, copied from the project folder, e.g. '.env'." },
+          },
+        },
+        agent_id: s("Which agent you are. Defaults to the id configured on this connection."),
+      },
+      required: ["duty_id"],
+    },
+    handler: proposeProfile,
+  },
+  {
+    name: "board_rules",
+    title: "The project's rules",
+    description:
+      "The rules in force on this board, as markdown: what every duty here must respect — security, reuse, performance, testing, conventions. `has_draft` says whether proposed rules are waiting for a person; a draft is not in force.",
+    inputSchema: { type: "object", properties: {} },
+    handler: getRules,
+  },
+  {
+    name: "board_rules_submit",
+    title: "Hand in proposed rules",
+    description:
+      "While holding an active 'rules' duty: submit the rules you wrote, as markdown. They become a draft that a person reviews and accepts; submitting again replaces your draft. Make them specific to this project and checkable — real commands, real paths — not general advice.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        duty_id: s("The rules duty you are holding."),
+        body: s("The rules, as markdown."),
+        agent_id: s("Which agent you are. Defaults to the id configured on this connection."),
+      },
+      required: ["duty_id", "body"],
+    },
+    handler: submitRules,
   },
 ];
 

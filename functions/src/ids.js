@@ -97,4 +97,32 @@ export function mintToken() {
   return "db_" + B64URL(randomBytes(24));
 }
 
+/** A machine key — 256 bits, because it reaches every board its machine is linked to rather
+ *  than one. Handed over once, at the end of pairing; only its SHA-256 is stored. */
+export function mintMachineKey() {
+  return "dbm_" + B64URL(randomBytes(32));
+}
+
+/** The secret half of a pairing: the daemon holds it and polls with it. Never shown to a
+ *  person, so it can be as long as it likes. */
+export const mintDeviceCode = () => B64URL(randomBytes(32));
+
+export const machineId = () => "m_" + ulid();
+export const requestId = () => "mr_" + ulid();
+
+/** No I, O, 0 or 1: a person reads this off one screen and types it into another. */
+const USER_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+
+/**
+ * The half of a pairing a person types — `KQTR-8841`.
+ *
+ * 40 bits, which would be thin for a secret and is fine for this: approving a code needs a
+ * signed-in person, the code dies in ten minutes, and what it grants goes to the machine that
+ * started the pairing, not to whoever guessed it.
+ */
+export function userCode() {
+  const chars = Array.from(randomBytes(8), (b) => USER_CODE_ALPHABET[b % 32]).join("");
+  return `${chars.slice(0, 4)}-${chars.slice(4)}`;
+}
+
 export const sha256Hex = sha256;

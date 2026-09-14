@@ -27,17 +27,48 @@
 //      behind a child, finished — frees the agent in the SAME transaction. Otherwise an
 //      agent that asked a question would sit idle waiting for an answer, which is the
 //      exact failure this whole design exists to avoid.
+//
+// And, for boards run by `dutyboard` daemons, a third:
+//
+//   3. A board with `runner.parallel` set has that many LANES, and an active duty occupies
+//      one. A lane is `<board>#<n>` under a unique index, written in the claim's own
+//      transaction — the same trick as `holder` — so two claims racing for the last free lane
+//      cannot both win. A `setup` or `rules` duty needs the board to itself: it is claimed only
+//      when nothing else is active, and nothing else is claimed while it is.
 
 import { badRequest, conflict, forbidden, notFound, str, oneOf, intIn, clip } from "./http.js";
 import { dutyId, threadId } from "./ids.js";
 import { putOp } from "./store.js";
-import { resolveProject, projectOfDuty, requireHuman, authorOf } from "./identity.js";
+import { resolveProject, projectOfDuty, requireHuman, authorOf, checkAgentId } from "./identity.js";
 import { sweepAttachments } from "./attachments.js";
 import { indexFinished, unindexDuties } from "./searching.js";
+import { machinesPresent } from "./live.js";
 
 export const STATUSES = ["queued", "active", "needs_decision", "blocked", "done", "failed"];
 export const PRIORITIES = ["immediate_blocker", "next", "backlog"];
 export const THREAD_KINDS = ["question", "resolution", "checkpoint", "note"];
+
+/**
+ * What a duty is for. `work` is everything a person files. The other two are how a daemon sets a
+ * project up, and they change what every other duty on the board runs against — the toolchain,
+ * the rules — which is why they are exclusive (invariant 3).
+ */
+export const KINDS = ["work", "setup", "rules"];
+const EXCLUSIVE_KINDS = new Set(["setup", "rules"]);
+
+/**
+ * How long a parked duty waits for the machine that holds its worktree, when presence cannot say
+ * whether that machine is online. Long enough for a laptop lid to close and open; short enough
+ * that a machine that is gone does not strand the work.
+ */
+const AFFINITY_GRACE_MS = 30 * 60 * 1000;
+
+/** Reserved and parked duties are filtered after the query, so it reads a little further than
+ *  asked. Both are rare — one setup duty per linked machine, a handful of parked ones. */
+const RUNNABLE_OVERFETCH = 20;
+
+/** Active duties a claim reads to find a free lane. Far above any `parallel` a board may set. */
+const MAX_ACTIVE_READ = 50;
 
 /** Priority is an enum to people and a sort key to the scheduler. Alphabetical order of
  *  the names is wrong (`backlog` < `immediate_blocker`), so the rank is stored alongside. */
@@ -93,6 +124,11 @@ const FREES_AGENT = new Set(["needs_decision", "blocked", "done", "failed", "que
 const BRIEF_IN_POLL = 220; // characters — poll answers straight into an agent's context
 
 const agentKey = (projectId, agentId) => `${projectId}:${agentId}`;
+const laneKey = (projectKey, n) => `${projectKey}#${n}`;
+
+/** Is `agentId` one of the agents a reservation names? A reservation is a machine's agent prefix,
+ *  and every session on that machine is `<prefix>/<n>`. */
+const reservedTo = (reserved, agentId) => !!agentId && (agentId === reserved || agentId.startsWith(reserved + "/"));
 
 // --- reading --------------------------------------------------------------
 
@@ -129,23 +165,76 @@ export async function pollDuties(ctx, body) {
     await touchAgent(ctx, project, agentId);
   }
 
+  const rows = await runnableDuties(ctx, project.key, agentId, limit);
+  return {
+    project_id: project.key,
+    active_duty: active,
+    runnable_duties: rows.map((d) => briefOf(d)),
+  };
+}
+
+/**
+ * The top of a board's queue, as `agentId` may take it.
+ *
+ * Everything queued, highest priority then oldest — minus what this agent could not claim if it
+ * tried: a duty reserved for another machine, and a parked duty whose worktree is on another
+ * machine that is still around to resume it. Poll and claim apply the same rules through
+ * `claimBlocker`, so nothing is offered that the claim would then refuse.
+ */
+export async function runnableDuties(ctx, projectKey, agentId, limit) {
   const { rows } = await ctx.store.query("duties", {
     where: [
-      { field: "project_id", op: "=", value: project.key },
+      { field: "project_id", op: "=", value: projectKey },
       { field: "status", op: "=", value: "queued" },
     ],
     order: [
       { field: "prio_rank", dir: "asc" },
       { field: "created_at", dir: "asc" },
     ],
-    limit,
+    limit: limit + RUNNABLE_OVERFETCH,
   });
+  const present = await presenceFor(ctx, rows);
+  const now = Date.now();
+  return rows.filter((d) => !claimBlocker(ctx, d, agentId, present, now)).slice(0, limit);
+}
 
-  return {
-    project_id: project.key,
-    active_duty: active,
-    runnable_duties: rows.map((d) => briefOf(d)),
-  };
+/** `status = active` on one board. Bounded: nothing about a board makes this large. */
+export async function activeDuties(ctx, projectKey) {
+  const { rows } = await ctx.store.query("duties", {
+    where: [
+      { field: "project_id", op: "=", value: projectKey },
+      { field: "status", op: "=", value: "active" },
+    ],
+    limit: MAX_ACTIVE_READ,
+  });
+  return rows;
+}
+
+/** Presence for every machine some other caller's parked duty is waiting on — one ask per machine. */
+async function presenceFor(ctx, duties) {
+  const mine = ctx.caller.machineId;
+  const waiting = duties.filter((d) => d.affinity && d.affinity.machine_id !== mine).map((d) => d.affinity.machine_id);
+  return waiting.length ? machinesPresent(ctx, waiting) : new Map();
+}
+
+/**
+ * Why `agentId` may not claim this duty, or null when it may.
+ *
+ * A reservation is absolute: a setup duty installs tools on ONE machine, and done anywhere else it
+ * is done on the wrong computer. Affinity is not: it keeps a parked duty for the machine whose
+ * worktree has the half-finished work, but only while that machine is there to pick it up.
+ */
+function claimBlocker(ctx, duty, agentId, present, now) {
+  if (duty.reserved_for && !reservedTo(duty.reserved_for, agentId)) {
+    return `duty '${duty.key}' is reserved for '${duty.reserved_for}'`;
+  }
+  const affinity = duty.affinity;
+  if (affinity && affinity.machine_id !== ctx.caller.machineId) {
+    const online = present.get(affinity.machine_id);
+    const waiting = online === true || (online == null && now - (affinity.at || 0) < AFFINITY_GRACE_MS);
+    if (waiting) return `duty '${duty.key}' is parked on machine '${affinity.machine_name || affinity.machine_id}', which will resume it`;
+  }
+  return null;
 }
 
 /** `POST /duty/thread` — the decision log for one duty, oldest first. */
@@ -188,6 +277,13 @@ export async function claimDuty(ctx, body) {
   if (duty.status !== "queued") {
     throw conflict(`duty '${duty.key}' is ${duty.status}, not queued`, { status: duty.status });
   }
+  const blocker = claimBlocker(ctx, duty, agentId, await presenceFor(ctx, [duty]), now);
+  if (blocker) throw conflict(blocker, { reserved_for: duty.reserved_for || null, affinity: duty.affinity || null });
+
+  // The board row carries how many duties may be active at once, and which rules are current —
+  // both of which a claim needs and `projectOfDuty` deliberately does not read.
+  const [board, active] = await Promise.all([ctx.store.get("projects", project.key), activeDuties(ctx, project.key)]);
+  const lane = pickLane(duty, board, active, project.key);
 
   const aKey = agentKey(project.key, agentId);
   const agent = (await ctx.store.get("agents", aKey)) || newAgent(project, agentId, now);
@@ -212,6 +308,7 @@ export async function claimDuty(ctx, body) {
   await Promise.all([
     ctx.store.ensureUniqueIndex("agents", ["active_duty_id"]),
     ctx.store.ensureUniqueIndex("duties", ["holder"]),
+    ctx.store.ensureUniqueIndex("duties", ["lane"]),
   ]);
 
   const claimed = {
@@ -219,6 +316,10 @@ export async function claimDuty(ctx, body) {
     status: "active",
     assigned_agent_id: agentId,
     holder: holderKey(project.key, agentId),
+    lane,
+    // Whoever claims it now has the work; a worktree left on another machine is that machine's
+    // to clean up, and the daemon that parks it again sets this again.
+    affinity: null,
     updated_at: now,
   };
   try {
@@ -240,6 +341,13 @@ export async function claimDuty(ctx, body) {
           active_duty_id: mine.active_duty_id,
         });
       }
+      // Still queued, so nobody took THIS duty: what refused it was the lane, taken by another
+      // duty's claim in the same instant.
+      if (lane && now2 && now2.status === "queued") {
+        throw conflict(`another claim took this board's last free lane at the same moment — poll again`, {
+          parallel: boardParallel(board),
+        });
+      }
       throw conflict(`duty '${duty.key}' was claimed by another agent`, {
         assigned_agent_id: now2 ? now2.assigned_agent_id || null : null,
       });
@@ -255,7 +363,55 @@ export async function claimDuty(ctx, body) {
   });
   // `claimed` is the row that was just written, minus the envelope stripMeta removed — so
   // the key comes back from the duty it was built from rather than a re-read.
-  return { status: "active", duty_id: duty.key, duty: briefOf({ ...claimed, key: duty.key }, { full: true }) };
+  return {
+    status: "active",
+    duty_id: duty.key,
+    duty: briefOf({ ...claimed, key: duty.key }, { full: true }),
+    // So a daemon can tell, from the claim alone, whether the rules it has are current.
+    rules_version: (board && board.rules_version) || 0,
+  };
+}
+
+const boardParallel = (board) => (board && board.runner && board.runner.parallel) || null;
+
+/**
+ * The lane this claim will occupy, or null on a board that does not limit parallel work.
+ *
+ * Throws when the board has no room — which is a 409 the daemon expects and moves on from, not
+ * an error. A board with no `runner.parallel` predates the setting and keeps its old behaviour:
+ * any number of agents at once, and no lane written.
+ */
+function pickLane(duty, board, active, projectKey) {
+  const exclusive = active.find((d) => EXCLUSIVE_KINDS.has(d.kind));
+  if (exclusive) {
+    throw conflict(`duty '${exclusive.key}' (${exclusive.kind}) has the board to itself until it finishes`, {
+      exclusive_duty_id: exclusive.key,
+    });
+  }
+  const parallel = boardParallel(board);
+  if (EXCLUSIVE_KINDS.has(duty.kind)) {
+    if (active.length) {
+      throw conflict(`a ${duty.kind} duty needs the board to itself, and ${active.length} other duties are active`, {
+        active: active.length,
+      });
+    }
+    // Lane 1 always, so an exclusive claim and an ordinary one racing on an empty board collide
+    // on the same key and only one lands.
+    return laneKey(projectKey, 1);
+  }
+  if (!parallel) return null;
+  if (active.length >= parallel) {
+    throw conflict(`this board runs ${parallel} ${parallel === 1 ? "duty" : "duties"} at a time, and ${parallel === 1 ? "it is" : "all are"} taken`, {
+      parallel,
+    });
+  }
+  const used = new Set(active.map((d) => d.lane).filter(Boolean));
+  for (let n = 1; n <= parallel; n++) {
+    if (!used.has(laneKey(projectKey, n))) return laneKey(projectKey, n);
+  }
+  // Active rows from before lanes existed carry none, so the count above can pass while every
+  // numbered lane is in use by rows that do. Full is full.
+  throw conflict(`this board runs ${parallel} duties at a time, and all are taken`, { parallel });
 }
 
 /**
@@ -288,6 +444,8 @@ export async function enqueueDuty(ctx, body) {
   const now = Date.now();
   const priority = oneOf(body.priority, "priority", PRIORITIES, "next");
   const agentId = agentIdFrom(ctx, body, { required: false });
+  const kind = oneOf(body.kind, "kind", KINDS, "work");
+  const reservedFor = reservation(ctx, body);
 
   const duty = {
     project_id: project.key,
@@ -310,6 +468,10 @@ export async function enqueueDuty(ctx, body) {
     blocked_by: null,
     last_question: null,
     last_resolution: null,
+    kind,
+    reserved_for: reservedFor,
+    affinity: null,
+    lane: null,
     created_at: now,
     updated_at: now,
   };
@@ -325,7 +487,7 @@ export async function enqueueDuty(ctx, body) {
       const held = await ctx.store.get("duties", agent.active_duty_id);
       if (held && held.status === "active") {
         duty.parent_id = duty.parent_id || held.key;
-        ops.push(putOp("duties", held.key, { ...stripMeta(held), status: "blocked", blocked_by: id, holder: null, updated_at: now }));
+        ops.push(putOp("duties", held.key, { ...stripMeta(held), status: "blocked", blocked_by: id, holder: null, lane: null, updated_at: now }));
         ops.push(putOp("agents", aKey, { ...stripMeta(agent), active_duty_id: null, last_seen_at: now }));
         blocked = held.key;
       }
@@ -344,7 +506,63 @@ export async function enqueueDuty(ctx, body) {
     });
   }
 
-  return { duty_id: id, status: "queued", priority, blocked_duty_id: blocked };
+  return { duty_id: id, status: "queued", priority, kind, reserved_for: reservedFor, blocked_duty_id: blocked };
+}
+
+/**
+ * Who a new duty is reserved for, if anyone.
+ *
+ * A machine may reserve work for itself — that is how a session that finds a missing tool asks
+ * for a setup duty on its own computer. A person may reserve for any agent prefix. A project
+ * token may not: it has no machine, so there is nothing for it to reserve to.
+ */
+function reservation(ctx, body) {
+  const wanted = str(body.reserved_for, "reserved_for", { max: 64, fallback: "" });
+  if (!wanted) return null;
+  if (ctx.caller.kind === "human") return wanted;
+  if (ctx.caller.machineId) {
+    if (wanted !== ctx.caller.agentPrefix) {
+      throw forbidden(`this machine can reserve work only for itself ('${ctx.caller.agentPrefix}')`);
+    }
+    return wanted;
+  }
+  throw forbidden("a project token cannot reserve work — only a machine or a person can");
+}
+
+/**
+ * A duty row for work the server files on its own — the rules duty a new board starts with, the
+ * setup duty a newly linked machine gets. Returned as a put op so it lands in the caller's
+ * transaction. Not counted against MAX_OPEN_DUTIES: each is bounded by what triggers it (one per
+ * board, one per link).
+ */
+export function seedDuty(project, { title, brief, kind, priority = "next", reservedFor = null, now = Date.now() }) {
+  const id = dutyId();
+  const op = putOp("duties", id, {
+    project_id: project.key,
+    owner_uid: project.owner_uid,
+    parent_id: null,
+    title,
+    brief,
+    status: "queued",
+    priority,
+    prio_rank: RANK[priority],
+    origin: "human",
+    created_by: null,
+    created_by_name: "DutyBoard",
+    assigned_agent_id: null,
+    outcome_summary: null,
+    spawned_by: null,
+    blocked_by: null,
+    last_question: null,
+    last_resolution: null,
+    kind,
+    reserved_for: reservedFor,
+    affinity: null,
+    lane: null,
+    created_at: now,
+    updated_at: now,
+  });
+  return { id, op };
 }
 
 /**
@@ -408,7 +626,19 @@ export async function checkpointDuty(ctx, body) {
     state = setStatus;
     // Leaving `active` releases the holder slot, in the same write that changes the status.
     const next = { ...stripMeta(duty), status: setStatus, updated_at: now };
-    if (setStatus !== "active") next.holder = null;
+    if (setStatus !== "active") {
+      next.holder = null;
+      next.lane = null;
+      // A daemon parking this keeps it for the machine that has the worktree (see claimBlocker).
+      // Only a machine can ask, and only for itself; everyone else's park leaves it open to all.
+      if (body.affinity === true && ctx.caller.machineId) {
+        next.affinity = {
+          machine_id: ctx.caller.machineId,
+          machine_name: (ctx.caller.machineRow && ctx.caller.machineRow.name) || "",
+          at: now,
+        };
+      }
+    }
     if (setStatus === "needs_decision") {
       next.last_question = options.length ? `${message} Options: ${options.join(" / ")}` : message;
       next.last_resolution = null;
@@ -462,7 +692,7 @@ async function finishDuty(ctx, body, terminal) {
   }
 
   const ops = [
-    putOp("duties", duty.key, { ...stripMeta(duty), status: terminal, outcome_summary: summary, holder: null, updated_at: now }),
+    putOp("duties", duty.key, { ...stripMeta(duty), status: terminal, outcome_summary: summary, holder: null, lane: null, affinity: null, updated_at: now }),
     putOp("threads", threadId(), {
       duty_id: duty.key,
       project_id: project.key,
@@ -591,6 +821,9 @@ export async function reopenDuty(ctx, body) {
       // able to see is coming back, on the duty and in the thread.
       reopen_count: (duty.reopen_count || 0) + 1,
       holder: null,
+      lane: null,
+      // Redone from scratch, in a fresh worktree: whatever the last one left is the old attempt.
+      affinity: null,
       updated_at: now,
     }),
   ];
@@ -642,6 +875,7 @@ export async function resolveDuty(ctx, body) {
       last_resolution: text,
       resolved_at: now,
       holder: null,
+      lane: null,
       updated_at: now,
     }),
   ];
@@ -670,7 +904,9 @@ export async function updateDuty(ctx, body) {
     if (next.status !== "active") {
       next.assigned_agent_id = null;
       next.holder = null;
+      next.lane = null;
     }
+    if (next.status === "done" || next.status === "failed") next.affinity = null;
   }
 
   const ops = [putOp("duties", duty.key, next)];
@@ -753,6 +989,7 @@ async function unblockParent(ctx, duty, now, ops) {
       prio_rank: RANK.immediate_blocker,
       blocked_by: null,
       holder: null,
+      lane: null,
       updated_at: now,
     }),
   );
@@ -769,7 +1006,7 @@ function isUniqueViolation(err) {
 function agentIdFrom(ctx, body, { required }) {
   const id = str(body.agent_id ?? ctx.defaultAgentId, "agent_id", { max: 64, fallback: "" });
   if (!id && required) throw badRequest("'agent_id' is required");
-  return id;
+  return checkAgentId(ctx.caller, id);
 }
 
 async function touchAgent(ctx, project, agentId) {
@@ -817,8 +1054,10 @@ function briefOf(duty, { full = false } = {}) {
     brief: full ? duty.brief : clip(duty.brief, BRIEF_IN_POLL),
     priority: duty.priority,
     origin: duty.origin,
+    kind: duty.kind || "work",
     unblocked_context: null,
   };
+  if (duty.reserved_for) out.reserved_for = duty.reserved_for;
   if (duty.last_resolution) {
     out.unblocked_context = {
       last_question: duty.last_question || null,

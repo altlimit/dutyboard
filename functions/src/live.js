@@ -25,8 +25,66 @@ import { requireHuman, resolveProject } from "./identity.js";
 const TOKEN_TTL_SECONDS = 3600;
 const MAX_DUTY_CHANNELS = 8;
 
+/** A daemon's socket lives as long as its token, and the platform closes it at expiry. Four hours
+ *  is the platform's ceiling; the daemon rotates before it rather than reconnecting after. */
+const MACHINE_TOKEN_TTL_SECONDS = 14400;
+
 export const boardChannel = (projectId) => `board.${projectId}`;
 export const dutyChannel = (id) => `duty.${id}`;
+
+/**
+ * One daemon's own channel: commands only the server publishes — set a project up, pause, resume,
+ * re-mint your token, you are revoked. Work does NOT arrive here; it arrives on the board
+ * channels the daemon already watches, which is what the console listens to as well.
+ */
+export const machineChannel = (id) => `machine.${id}`;
+
+/** Publish to a machine's channel. Best-effort for the same reason board events are: the daemon
+ *  re-checks everything on reconnect and every fifteen minutes, so a lost command is late, not
+ *  lost. */
+export async function publishMachine(ctx, machineId, payload) {
+  if (!liveConfigured(ctx)) return;
+  try {
+    await ctx.env.channel.publish({ instance: ctx.cfg.channelInstance }, machineChannel(machineId), { ...payload, ts: Date.now() });
+  } catch (err) {
+    console.log("machine publish failed (ignored):", err && err.message);
+  }
+}
+
+/**
+ * Which of these machines has a socket open right now. `true`/`false` per id, or `null` for all
+ * of them when presence cannot be asked — the channel instance has it switched off, or there is
+ * no channel at all. Callers treat null as "unknown" and fall back to time.
+ */
+export async function machinesPresent(ctx, machineIds) {
+  const out = new Map();
+  if (!liveConfigured(ctx) || typeof ctx.env.channel.presence !== "function") {
+    for (const id of machineIds) out.set(id, null);
+    return out;
+  }
+  await Promise.all(
+    [...new Set(machineIds)].map(async (id) => {
+      try {
+        const snap = await ctx.env.channel.presence({ instance: ctx.cfg.channelInstance }, machineChannel(id));
+        out.set(id, !!(snap && snap.occupancy > 0));
+      } catch {
+        out.set(id, null);
+      }
+    }),
+  );
+  return out;
+}
+
+/** A subscribe-only token for a daemon: its own channel and the board channel of every board it
+ *  is linked to. Presence is the machine id, which is what makes "runner online" answerable. */
+export async function mintMachineLive(ctx, machineId, projectIds) {
+  const channels = [machineChannel(machineId), ...projectIds.map(boardChannel)];
+  const minted = await ctx.env.channel.token(
+    { instance: ctx.cfg.channelInstance },
+    { channels, ttlSeconds: MACHINE_TOKEN_TTL_SECONDS, presenceId: machineId },
+  );
+  return { ...minted, channels };
+}
 
 /**
  * A publisher bound to one request. Failures are swallowed: live updates are an

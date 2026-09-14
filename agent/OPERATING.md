@@ -122,6 +122,21 @@ board, or another agent claiming this duty next week.
   cookie verification lives in middleware/auth.go"` — not `"Completed the auth task"`.
   This is the only thing that survives your session.
 
+## The project itself
+
+**`board_profile`** says what the project is: its type, repository, toolchain, test command and
+how it deploys. **`board_rules`** is the rules a person has put in force for it. Follow them in
+every duty, and use the profile's real commands rather than guessing.
+
+Two kinds of duty are about the project rather than a piece of work in it:
+
+- `setup` gets one machine ready: find what the project needs, install what is missing, and
+  record what you established with **`board_profile_propose`**.
+- `rules` asks you to write the rules. Hand them in with **`board_rules_submit`**. They are a
+  draft until a person accepts them, so do not start following your own draft.
+
+Both have the board to themselves while they run.
+
 ## Rules the board enforces
 
 - One active duty at a time. Claiming a second returns a `409` naming the one to finish.
