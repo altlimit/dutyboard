@@ -688,6 +688,11 @@ async function main() {
   check("a member adds work to the board", !!memberDuty.duty_id, memberDuty);
   const memberDutyRow = await dsGet("duties", memberDuty.duty_id, human);
   check("and the owner sees it, because the row still names the board's owner", memberDutyRow.owner_uid && memberDutyRow.title === "Filed by a member", memberDutyRow);
+  check(
+    "the duty records which person filed it, not just that a person did",
+    memberDutyRow.created_by === other0.user.uid && memberDutyRow.created_by_name === "Bystander",
+    { created_by: memberDutyRow.created_by, created_by_name: memberDutyRow.created_by_name },
+  );
 
   const memberNote = await call("/duty/checkpoint", { duty_id: soon.duty_id, kind: "note", message: "a member's note" }, memberToken);
   check("a member writes on a duty's thread, as themselves", memberNote.entry && memberNote.entry.author_id === other0.user.uid, memberNote.entry);

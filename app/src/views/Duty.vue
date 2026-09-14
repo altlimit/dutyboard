@@ -2,7 +2,7 @@
 import { computed, onUnmounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { api, getDocs, query, subscribeLive } from "../lib/altengine.js";
-import { ALL_STATUSES, PRIORITIES, THREAD_KIND_LABELS, ago, exactTime, priorityLabel, statusLabel } from "../lib/duties.js";
+import { ALL_STATUSES, PRIORITIES, THREAD_KIND_LABELS, ago, exactTime, originLabel, priorityLabel, statusLabel } from "../lib/duties.js";
 import Attachments from "../components/Attachments.vue";
 import { user } from "../lib/session.js";
 
@@ -249,7 +249,7 @@ onUnmounted(() => {
         <p class="row small muted" style="margin: 0">
           <span class="badge" :class="`badge--${duty.status}`">{{ statusLabel(duty.status) }}</span>
           <span class="badge" :class="`badge--${duty.priority}`">{{ priorityLabel(duty.priority) }}</span>
-          <span>{{ duty.origin === "agent" ? "raised by an agent" : "raised by you" }}</span>
+          <span>{{ originLabel(duty, user, "raised by") }}</span>
           <span v-if="duty.assigned_agent_id">
             {{ duty.status === "active" ? "held by" : "last worked by" }} {{ duty.assigned_agent_id }}
           </span>

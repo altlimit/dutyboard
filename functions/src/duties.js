@@ -299,6 +299,11 @@ export async function enqueueDuty(ctx, body) {
     priority,
     prio_rank: RANK[priority],
     origin: ctx.caller.kind === "agent" ? "agent" : "human",
+    // WHICH person. `origin` said "a human", which was the same thing as "the owner" until a
+    // board could be shared; now a member files work too, and a card that says "from you" to
+    // everyone who opens the board is wrong for all but one of them.
+    created_by: ctx.caller.kind === "human" ? ctx.caller.uid : null,
+    created_by_name: ctx.caller.kind === "human" ? ctx.caller.name : null,
     assigned_agent_id: null,
     outcome_summary: null,
     spawned_by: str(body.spawned_by, "spawned_by", { max: 64, fallback: null }) || null,

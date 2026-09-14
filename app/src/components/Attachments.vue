@@ -12,6 +12,7 @@
 import { computed, ref } from "vue";
 import { api, putSigned } from "../lib/altengine.js";
 import { ago } from "../lib/duties.js";
+import { user } from "../lib/session.js";
 
 const props = defineProps({
   dutyId: { type: String, required: true },
@@ -122,7 +123,7 @@ async function remove(a) {
           <span v-else>{{ a.name }}</span>
           <span class="muted small">
             {{ human(a.size) }} ·
-            {{ a.author_type === "agent" ? a.author_id : a.author_name || "you" }} ·
+            {{ a.author_type === "agent" ? a.author_id : user && a.author_id === user.uid ? "you" : a.author_name || "someone" }} ·
             {{ ago(a.created_at) }}
             <template v-if="a.pending"> · <strong>uploading…</strong></template>
           </span>

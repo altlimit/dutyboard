@@ -85,6 +85,20 @@ const LABELS = {
 export const statusLabel = (s) => LABELS[s] || s;
 export const priorityLabel = (p) => (PRIORITIES.find((x) => x.key === p) || { label: p }).label;
 
+/**
+ * Who a duty came from, as the person looking at it should read it — "from you", "from Ada", or
+ * "from an agent". `verb` is "from" on a card and "raised by" on the duty page.
+ *
+ * A duty filed before boards could be shared has no `created_by`, and needs none: until then only
+ * a board's owner could add one, so its creator IS the owner the row already names.
+ */
+export function originLabel(duty, me, verb = "from") {
+  if (duty.origin === "agent") return `${verb} an agent`;
+  const creator = duty.created_by || duty.owner_uid;
+  if (me && creator === me.uid) return `${verb} you`;
+  return duty.created_by_name ? `${verb} ${duty.created_by_name}` : `${verb} the board's owner`;
+}
+
 export const THREAD_KIND_LABELS = {
   question: "Question",
   resolution: "Your answer",

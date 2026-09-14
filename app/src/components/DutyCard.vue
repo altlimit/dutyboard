@@ -1,6 +1,7 @@
 <script setup>
 import { computed } from "vue";
-import { ago, priorityLabel } from "../lib/duties.js";
+import { ago, originLabel, priorityLabel } from "../lib/duties.js";
+import { user } from "../lib/session.js";
 
 const props = defineProps({ duty: { type: Object, required: true }, projectId: { type: String, required: true } });
 
@@ -16,7 +17,7 @@ const showPriority = computed(() => d.value.priority === "immediate_blocker");
 
     <span class="duty__meta">
       <span v-if="showPriority" class="badge badge--immediate_blocker">{{ priorityLabel(d.priority) }}</span>
-      <span class="badge">{{ d.origin === "agent" ? "from an agent" : "from you" }}</span>
+      <span class="badge">{{ originLabel(d, user) }}</span>
       <span v-if="d.assigned_agent_id" class="nowrap">
         <span class="sr-only">{{ d.status === "active" ? "held by " : "last worked by " }}</span>{{ d.assigned_agent_id }}
       </span>
