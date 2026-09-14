@@ -7,6 +7,8 @@ dist
 !.env.example
 .altengine/
 public
+# …except the console's own static files, which are source (app/public/config.js).
+!app/public/
 # What a release binary carries, staged by scripts/stage-cli-assets.mjs — never committed.
 cli/internal/assets/web/*
 !cli/internal/assets/web/.keep
