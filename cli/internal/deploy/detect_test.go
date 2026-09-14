@@ -24,7 +24,7 @@ func repoWith(t *testing.T, workflows map[string]string) string {
 func TestDetect(t *testing.T) {
 	cases := []struct {
 		name, want, workflow string
-		files               map[string]string
+		files                map[string]string
 	}{
 		{"no workflows", "none", "", nil},
 		{"ci only builds", "none", "", map[string]string{"ci.yml": "on: [push, pull_request]\njobs:\n  build:\n    steps:\n      - run: npm test\n"}},

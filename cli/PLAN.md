@@ -512,7 +512,7 @@ cli/
     hints/      per-type toolchain hints and rule seeds
     deploy/     CI detection, run watching, altengine deploys
     gitx/       git helpers
-    service/    systemd --user, launchd, Task Scheduler
+    service/    systemd --user, launchd, Startup-folder launcher (Windows)
     state/      ~/.dutyboard layout, logs, rotation
 ```
 

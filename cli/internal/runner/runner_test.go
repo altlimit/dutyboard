@@ -7,9 +7,9 @@ func TestActivity(t *testing.T) {
 	cases := map[string]string{
 		`{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Edit","input":{"file_path":"/home/me/.dutyboard/worktrees/game/duty_1/src/ui/pause.gd"}}]}}`: "Editing src/ui/pause.gd",
 		`{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"tools/run_tests.sh --all\necho done"}}]}}`:                         "Running `tools/run_tests.sh --all …`",
-		`{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"x","description":"Run the unit tests"}}]}}`:                          "Run the unit tests",
-		`{"type":"assistant","message":{"content":[{"type":"text","text":"thinking"},{"type":"tool_use","name":"mcp__dutyboard__duty_integrate","input":{}}]}}`:           "Integrating its work",
-		`{"type":"assistant","message":{"content":[{"type":"text","text":"just talking"}]}}`:                                                                                "",
+		`{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"x","description":"Run the unit tests"}}]}}`:                        "Run the unit tests",
+		`{"type":"assistant","message":{"content":[{"type":"text","text":"thinking"},{"type":"tool_use","name":"mcp__dutyboard__duty_integrate","input":{}}]}}`:            "Integrating its work",
+		`{"type":"assistant","message":{"content":[{"type":"text","text":"just talking"}]}}`:                                                                               "",
 		`{"type":"result","result":"done"}`: "",
 	}
 	for line, want := range cases {

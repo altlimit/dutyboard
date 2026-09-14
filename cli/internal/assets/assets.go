@@ -3,19 +3,19 @@
 //
 // Three places they can come from, all presented as one file layout:
 //
-//	function/bundle.js
-//	console/...            the built console (index.html, assets/, config.js)
-//	agent.md
-//	llms.txt               optional
-//	backend/{indexes,access,signup}.json
-//	VERSION
+//		function/bundle.js
+//		console/...            the built console (index.html, assets/, config.js)
+//		agent.md
+//		llms.txt               optional
+//		backend/{indexes,access,signup}.json
+//		VERSION
 //
-//   - Embedded: a release binary carries them (scripts/stage-cli-assets.mjs copies them into web/
-//     before GoReleaser builds). No Node, npm or sitegen on the machine that provisions.
-//   - A source checkout: `--source <repo>`, or found by walking up from the working directory.
-//     This is how `npm run setup` deploys what is in the working tree.
-//   - Downloaded: a `go install` build has nothing embedded, so it fetches `dutyboard-web_<v>.tar.gz`
-//     from the matching GitHub release and checks it against the release's checksums.txt.
+//	  - Embedded: a release binary carries them (scripts/stage-cli-assets.mjs copies them into web/
+//	    before GoReleaser builds). No Node, npm or sitegen on the machine that provisions.
+//	  - A source checkout: `--source <repo>`, or found by walking up from the working directory.
+//	    This is how `npm run setup` deploys what is in the working tree.
+//	  - Downloaded: a `go install` build has nothing embedded, so it fetches `dutyboard-web_<v>.tar.gz`
+//	    from the matching GitHub release and checks it against the release's checksums.txt.
 package assets
 
 import (

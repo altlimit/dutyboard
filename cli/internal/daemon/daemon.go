@@ -460,7 +460,20 @@ func (d *Daemon) startOne(ctx context.Context, b board.PollBoard, started map[st
 	if b.Parallel > 0 && len(b.Active)+started[b.ProjectID] >= b.Parallel {
 		return false
 	}
-	for _, r := range b.Runnable {
+	// Setup, then rules, then the queue: both change what every later duty runs against. The server
+	// orders them this way too; sorting here as well keeps it so against one that does not yet.
+	runnable := append(b.Runnable[:0:0], b.Runnable...)
+	rank := func(kind string) int {
+		switch kind {
+		case "setup":
+			return 0
+		case "rules":
+			return 1
+		}
+		return 2
+	}
+	sort.SliceStable(runnable, func(i, j int) bool { return rank(runnable[i].Kind) < rank(runnable[j].Kind) })
+	for _, r := range runnable {
 		if d.isRunning(r.DutyID) || tried[r.DutyID] {
 			continue
 		}

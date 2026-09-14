@@ -142,6 +142,7 @@ func Run(ctx context.Context, j Job) Outcome {
 	}()
 
 	out := Outcome{Session: j.SessionID}
+	lastActivity := time.Now()
 	sc := bufio.NewScanner(stdout)
 	sc.Buffer(make([]byte, 1<<20), 16<<20)
 	for sc.Scan() {
@@ -153,7 +154,13 @@ func Run(ctx context.Context, j Job) Outcome {
 		readEvent(line, &out)
 		if j.OnActivity != nil {
 			if a := Activity(line, j.Dir); a != "" {
+				lastActivity = time.Now()
 				j.OnActivity(a)
+			} else if thinking(line) && time.Since(lastActivity) > 20*time.Second {
+				// Long thinking between tool calls otherwise leaves the last file it read on the board
+				// as if that were still happening.
+				lastActivity = time.Now()
+				j.OnActivity("Thinking")
 			}
 		}
 	}
@@ -224,6 +231,10 @@ func (l *limited) Write(p []byte) (int, error) {
 	l.n -= len(q)
 	_, _ = l.w.Write(q)
 	return len(p), nil
+}
+
+func thinking(line []byte) bool {
+	return len(line) < 400 && strings.Contains(string(line), `"thinking_tokens"`)
 }
 
 // Activity is the line a person reads for one stream event: what the agent just started doing, or
@@ -312,4 +323,3 @@ func describeTool(name string, in map[string]any, dir string) string {
 	}
 	return "Using " + name
 }
-

@@ -26,13 +26,13 @@ const (
 
 // Result is what an integration did, or why it could not.
 type Result struct {
-	OK      bool     `json:"ok"`
-	Mode    Mode     `json:"mode"`
-	Commit  string   `json:"commit,omitempty"`
-	Branch  string   `json:"branch,omitempty"`
-	PR      string   `json:"pr,omitempty"`
-	NoOp    bool     `json:"no_op,omitempty"`
-	Message string   `json:"message"`
+	OK      bool   `json:"ok"`
+	Mode    Mode   `json:"mode"`
+	Commit  string `json:"commit,omitempty"`
+	Branch  string `json:"branch,omitempty"`
+	PR      string `json:"pr,omitempty"`
+	NoOp    bool   `json:"no_op,omitempty"`
+	Message string `json:"message"`
 	// Conflicts are files a rebase could not merge; resolve them, `git add`, `git rebase --continue`,
 	// and integrate again.
 	Conflicts []string `json:"conflicts,omitempty"`

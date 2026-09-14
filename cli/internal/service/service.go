@@ -1,5 +1,5 @@
 // Package service installs the daemon to start when this user logs in: a systemd user unit on Linux,
-// a launchd agent on macOS, a Task Scheduler task on Windows.
+// a launchd agent on macOS, a hidden launcher in the Startup folder on Windows.
 //
 // A service starts with almost none of the login shell's environment, and the daemon runs Claude,
 // git, and whatever the project's toolchain is. So the PATH the install was run with is written into
@@ -32,6 +32,17 @@ func unitPath() string {
 	return filepath.Join(dir, "systemd", "user", unitName)
 }
 
+// startupPath is the launcher in this user's Startup folder. Not a Task Scheduler task: creating an
+// at-logon task is refused with "Access is denied" to anyone not running as administrator, and the
+// Startup folder is the user's own.
+func startupPath() string {
+	dir := os.Getenv("APPDATA")
+	if dir == "" {
+		dir, _ = os.UserConfigDir()
+	}
+	return filepath.Join(dir, "Microsoft", "Windows", "Start Menu", "Programs", "Startup", "DutyBoard.vbs")
+}
+
 func plistPath() string {
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, "Library", "LaunchAgents", agentName+".plist")
@@ -47,7 +58,8 @@ func Installed() bool {
 		_, err := os.Stat(plistPath())
 		return err == nil
 	case "windows":
-		return exec.Command("schtasks", "/Query", "/TN", taskName).Run() == nil
+		_, err := os.Stat(startupPath())
+		return err == nil || exec.Command("schtasks", "/Query", "/TN", taskName).Run() == nil
 	}
 	return false
 }
@@ -117,13 +129,15 @@ WantedBy=default.target
 		}
 		return "tail -f " + logPath, nil
 	case "windows":
-		// Minimised through cmd, and logging to a file, since a task has no console anyone watches.
-		action := fmt.Sprintf(`cmd /c start "DutyBoard" /min cmd /c ""%s" >> "%s" 2>&1"`, exe, logPath)
-		if out, err := exec.Command("schtasks", "/Create", "/F", "/SC", "ONLOGON", "/RL", "LIMITED", "/TN", taskName, "/TR", action).CombinedOutput(); err != nil {
-			return "", fmt.Errorf("schtasks /Create: %v: %s", err, out)
+		// wscript runs it with no window (the 0), logging to a file since nobody watches a console.
+		if err := os.MkdirAll(filepath.Dir(startupPath()), 0o755); err != nil {
+			return "", err
 		}
-		if out, err := exec.Command("schtasks", "/Run", "/TN", taskName).CombinedOutput(); err != nil {
-			return "", fmt.Errorf("schtasks /Run: %v: %s", err, out)
+		if err := os.WriteFile(startupPath(), []byte(windowsLauncher(exe, logPath)), 0o644); err != nil {
+			return "", err
+		}
+		if out, err := exec.Command("wscript.exe", startupPath()).CombinedOutput(); err != nil {
+			return "", fmt.Errorf("starting it: %v: %s", err, out)
 		}
 		return logPath, nil
 	}
@@ -140,9 +154,20 @@ func Uninstall() error {
 		_ = exec.Command("launchctl", "unload", "-w", plistPath()).Run()
 		return os.Remove(plistPath())
 	case "windows":
-		return exec.Command("schtasks", "/Delete", "/F", "/TN", taskName).Run()
+		_ = exec.Command("schtasks", "/Delete", "/F", "/TN", taskName).Run() // what 2.2.1 and earlier installed, for anyone allowed to
+		return os.Remove(startupPath())
 	}
 	return ErrUnsupported
+}
+
+// windowsLauncher is a VBScript that starts the daemon hidden with its output appended to logPath.
+// The daemon's own home is set in the script too, so a DUTYBOARD_HOME the install ran with holds.
+func windowsLauncher(exe, logPath string) string {
+	command := fmt.Sprintf(`cmd /c ""%s" >> "%s" 2>&1"`, exe, logPath)
+	quote := func(s string) string { return `"` + strings.ReplaceAll(s, `"`, `""`) + `"` }
+	return "Set shell = CreateObject(\"WScript.Shell\")\r\n" +
+		"shell.Environment(\"PROCESS\")(\"DUTYBOARD_HOME\") = " + quote(state.Home()) + "\r\n" +
+		"shell.Run " + quote(command) + ", 0, False\r\n"
 }
 
 func xmlEscape(s string) string {

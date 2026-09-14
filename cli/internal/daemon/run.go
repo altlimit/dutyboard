@@ -384,12 +384,19 @@ func (d *Daemon) job(run *Run, v board.BoardView, path, system, task string, rec
 	if run.Kind == "setup" {
 		j.AddDirs = []string{run.Spec.CopyFrom}
 	}
+	var loggedAt time.Time
 	j.OnActivity = func(line string) {
 		if run.state() != "working" {
 			return // integrating and the like say more than the tool call that started them
 		}
 		run.set("working", clip(line, 280))
 		d.reportSoon(run.Board)
+		// The terminal gets a line now and then, so someone watching it can see the session is alive
+		// without it scrolling every file read past them.
+		if time.Since(loggedAt) >= time.Minute {
+			loggedAt = time.Now()
+			d.log.Printf("%s: %s — %s", run.Board, clip(run.Title, 60), clip(line, 120))
+		}
 	}
 	j.MCPConfig = d.writeMCPConfig(run)
 	return j
@@ -449,4 +456,3 @@ func (d *Daemon) attachLog(ctx context.Context, run *Run, path string) {
 		d.log.Printf("attaching the session log to %s: %v", run.DutyID, err)
 	}
 }
-

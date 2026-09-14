@@ -195,7 +195,22 @@ export async function runnableDuties(ctx, projectKey, agentId, limit) {
   });
   const present = await presenceFor(ctx, rows);
   const now = Date.now();
-  return rows.filter((d) => !claimBlocker(ctx, d, agentId, present, now)).slice(0, limit);
+  return firstThingsFirst(rows.filter((d) => !claimBlocker(ctx, d, agentId, present, now))).slice(0, limit);
+}
+
+/**
+ * A machine's setup duty, then the board's rules duty, then everything else in queue order.
+ *
+ * Both change what every other duty runs against — the tools on the machine, the rules in the
+ * prompt — and queue order alone put a newly linked machine to work on an older blocker before it
+ * had installed anything. Stable, so the rest keep their priority and age order.
+ */
+const KIND_ORDER = { setup: 0, rules: 1 };
+function firstThingsFirst(rows) {
+  return rows
+    .map((d, i) => ({ d, i, k: KIND_ORDER[d.kind] ?? 2 }))
+    .sort((a, b) => a.k - b.k || a.i - b.i)
+    .map((x) => x.d);
 }
 
 /** `status = active` on one board. Bounded: nothing about a board makes this large. */

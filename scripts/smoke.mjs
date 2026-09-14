@@ -910,6 +910,19 @@ async function main() {
   check("which is the owner's board like any other", ownersList.projects.some((p) => p.project_id === madeHere), ownersList.projects.length);
   await call("/projects/delete", { project_id: madeHere, confirm: madeHere }, human);
 
+  // A board with urgent work already waiting: the machine still sets itself up, then writes the rules.
+  const busyBoard = `smoke-busy-${Date.now().toString(36)}`;
+  await call("/projects/create", { name: "Busy", project_id: busyBoard, profile: { type: "webapp", repo_url: "https://github.com/example/busy.git" } }, human);
+  await call("/duty/enqueue", { project_id: busyBoard, title: "Fix the outage", brief: "urgent", priority: "immediate_blocker" }, human);
+  const busyLink = await call("/machine/link", { project_id: busyBoard }, mkey);
+  const busyPoll = await call("/duty/poll", { agent_id: `${prefix}/1`, limit: 5 }, mkey, { board: busyBoard });
+  check(
+    "setup and then rules come before urgent work queued earlier",
+    busyPoll.runnable_duties.map((d) => d.kind).join(",").startsWith("setup,rules,") && busyPoll.runnable_duties[0].id === busyLink.setup_duty_id,
+    busyPoll.runnable_duties.map((d) => [d.kind, d.priority, d.title]),
+  );
+  await call("/projects/delete", { project_id: busyBoard, confirm: busyBoard }, human);
+
   const lane1 = `${prefix}/1`;
   const lane2 = `${prefix}/2`;
   const signsAsAlpha = await call("/duty/poll", { agent_id: "alpha" }, mkey, { expectStatus: true, board: mBoard });

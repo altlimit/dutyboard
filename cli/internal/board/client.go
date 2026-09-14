@@ -187,11 +187,11 @@ func (c *Client) WaitForApproval(ctx context.Context, p *Pairing) (*Paired, erro
 
 // Profile is a board's profile, as the daemon uses it. Unknown fields are ignored.
 type Profile struct {
-	Type          string `json:"type"`
-	Description   string `json:"description"`
-	RepoURL       string `json:"repo_url"`
-	DefaultBranch string `json:"default_branch"`
-	TestCommand   string `json:"test_command"`
+	Type          string   `json:"type"`
+	Description   string   `json:"description"`
+	RepoURL       string   `json:"repo_url"`
+	DefaultBranch string   `json:"default_branch"`
+	TestCommand   string   `json:"test_command"`
 	Stack         []string `json:"stack"`
 	Toolchain     []struct {
 		Name    string `json:"name"`
@@ -199,10 +199,10 @@ type Profile struct {
 		Why     string `json:"why"`
 	} `json:"toolchain"`
 	Deploy struct {
-		Method              string   `json:"method"`
-		Workflow            string   `json:"workflow"`
-		Branch              string   `json:"branch"`
-		Command             string   `json:"command"`
+		Method             string   `json:"method"`
+		Workflow           string   `json:"workflow"`
+		Branch             string   `json:"branch"`
+		Command            string   `json:"command"`
 		AltengineInstances []string `json:"altengine_instances"`
 	} `json:"deploy"`
 	Git struct {
