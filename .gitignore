@@ -7,3 +7,7 @@ dist
 !.env.example
 .altengine/
 public
+# What a release binary carries, staged by scripts/stage-cli-assets.mjs — never committed.
+cli/internal/assets/web/*
+!cli/internal/assets/web/.keep
+release/

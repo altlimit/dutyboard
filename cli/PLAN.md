@@ -1,6 +1,6 @@
 # `dutyboard` — the runner and provisioner
 
-Status: **phase 1 (server) built** — see §15. Written 2026-09-14. Decisions marked **(assumed)** are defaults
+Status: **phases 1 (server) and 2 (provisioner) built** — see §15. Written 2026-09-14. Decisions marked **(assumed)** are defaults
 chosen while planning; change them here before the phase that depends on them starts.
 
 ## 1. Why this exists

@@ -103,19 +103,38 @@ The `db_` prefix is what tells them apart. A token is shown once, at mint, and n
 
 ## Run it
 
-One command, on a machine with none of this installed:
+Install `dutyboard` with [alt](https://github.com/altlimit/alt) — no sudo, no package manager:
+
+```bash
+alt install altlimit/dutyboard
+```
+
+Then put DutyBoard on your altengine organization:
+
+```bash
+dutyboard --provision-only        # asks for an altengine API key, or reads $ALTENGINE_KEY
+```
+
+It finds a DutyBoard already in the organization and upgrades it, or provisions a new one: the
+instances and their config, the indexes and access rules, the function with its grants and CORS
+list, and the console — published to a static instance and pointed at that function. Every step
+is idempotent, so running it again is how you upgrade. The binary carries the function and the
+console it deploys, so the machine running it needs nothing else: no Node, no checkout.
+
+`alt run altlimit/dutyboard --provision-only` does the same without installing anything.
+
+To work on DutyBoard itself, from nothing, against the local emulator:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/altlimit/dutyboard/main/scripts/provision.sh | sh
 ```
 
-It installs [`alt`](https://github.com/altlimit/alt) and, through it,
-[sitegen](https://github.com/altlimit/sitegen) and the altengine emulator; clones the
-repo; installs the npm dependencies; starts the emulator if nothing is answering;
-provisions every instance and its config; deploys the function; and builds the site and
-the console. It is safe to re-run — an instance that exists is left alone, and an emulator
-that is already up is used rather than restarted, so a re-run does not throw away the board
-you were testing on.
+It installs `alt` and, through it, [sitegen](https://github.com/altlimit/sitegen), the
+altengine emulator and `dutyboard`; clones the repo; installs the npm dependencies; starts the
+emulator if nothing is answering; builds the function, the console and the site; and has
+`dutyboard --provision-only` provision the emulator and deploy what was just built. It is safe
+to re-run — an instance that exists is left alone, and an emulator that is already up is used
+rather than restarted, so a re-run does not throw away the board you were testing on.
 
 In a checkout it is `npm run provision`, and `--smoke` adds the end-to-end test at the end.
 
@@ -150,8 +169,8 @@ taskr "Start All"
 | --- | --- |
 | `npm run provision` | Everything below, in order, from nothing. `--hosted` for hosted altengine. |
 | `altengine dev` | The emulator: every data plane plus an admin console, on :9191. |
-| `npm run setup` | Applies `backend/` — instances, auth rules, indexes, the function's CORS list. |
-| `npm run deploy` | Bundles `functions/src` and deploys it. |
+| `npm run setup` | Bundles the function and provisions the emulator from this checkout: instances, `backend/`, the function and its CORS list. `ALTENGINE_URL` retargets it. |
+| `npm run deploy` | The same, against hosted altengine unless `ALTENGINE_URL` says otherwise — and the console is published too. |
 | `npm run dev` | The console, on :5173/app/. |
 | `npm run dev:site` | The marketing site, watched, on :8888. |
 | `npm run build` | Both, into `public/`. |
@@ -162,8 +181,9 @@ taskr "Start All"
 
 `altengine dev` is the *only* altengine CLI command involved: there is no `altengine apply`
 or `altengine deploy`. Provisioning is HTTP — the emulator's admin API locally, the MCP
-endpoint hosted — which is why it lives in [`scripts/setup.mjs`](scripts/setup.mjs) rather
-than in a list of CLI invocations.
+endpoint hosted — which is why it lives in [`cli/internal/provision`](cli/internal/provision)
+rather than in a list of CLI invocations. `npm run setup` and `npm run deploy` run it with
+`go run`, so a checkout needs Go 1.25 as well as Node.
 
 `npm run setup` is not optional. Instances auto-create on first use but their *config*
 does not: a fresh auth instance collects only an email and grants no access at all, so the
@@ -172,8 +192,7 @@ console would sign you up and then get 403 on every read.
 ### Deploying to hosted altengine
 
 ```bash
-export ALTENGINE_KEY=ak_…
-npm run provision -- --hosted
+dutyboard --provision-only          # or, from a checkout: npm run provision -- --hosted
 ```
 
 That key needs the **MCP / AI agent access** toggles on the key form, which are off by
@@ -182,22 +201,25 @@ an instance, and Full is what lets a key do that. `Usage` and `Live desktop insp
 stay None. A key without them fails with "lacks 'write'", which reads like a bug in the
 script and is not one.
 
-That creates the instances, sets the datastore's config, declares the indexes, applies the
-access rules, sets the function's CORS origins, deploys the function, and builds `public/`.
+That creates the instances, sets the datastore's config and turns channel presence on,
+declares the indexes, applies the access rules, deploys the function, publishes the console
+with a `config.js` pointing it at that function, adds the console's origin to the function's
+CORS list and the auth instance's allowed origins, and checks that `/health` reports the
+version it just deployed. The key can be kept in the OS keyring for the next upgrade.
 
-One thing it cannot do, and says so instead of half-succeeding: **set the auth instance's
-sign-up form and allowed origins.** Auth config is split across four independently
-validated sections, and the platform refuses to merge them blindly from a tool call. Paste
-[`backend/signup.json`](backend/signup.json)'s fields and add the origin the console is
-served from.
+**It will not overwrite a site it did not publish.** A static deploy replaces the whole site,
+and a static instance named `dutyboard` may be serving far more than the console —
+dutyboard.com's serves the marketing site too. So an instance that already exists is only
+written to when what it serves was published by the provisioner (its deployments are labelled
+`dutyboard v<version>`) or it serves nothing. Otherwise it says so and leaves the console to you.
+
+If the platform refuses to change the auth instance's sign-up form and allowed origins from an
+API key, it prints what to set in the console instead: [`backend/signup.json`](backend/signup.json)'s
+fields, and the console's origin.
 
 On older altengine it also could not CREATE the auth and channel instances — both mint a
-signing secret at creation, and `create_instance` would not do that. It tries now, and only
-reports them as console work if that refusal actually comes back, so the same command is
-right on both.
-
-Re-run it afterwards; it checks the instance as it actually is and reports only what is
-still missing.
+signing secret at creation, and `create_instance` would not do that. It tries, lists anything
+refused as console work, and waits, re-checking every few seconds, until it is done.
 
 **On sign-up, decide before you finish.** `allowSignup` is on by default, which is what you
 want for exactly as long as it takes to create your own account — after that it is an open
@@ -244,7 +266,7 @@ host that does. Point it at wherever the site actually lives before building.
 
 - **The subdomain is minted, not the instance name.** A functions instance called
   `dutyboard` answers on `https://<random>-fn.altengine.app`, and a static instance called
-  `dutyboard` is served from `https://<random>-web.altengine.app`. `npm run deploy` asks the
+  `dutyboard` is served from `https://<random>-web.altengine.app`. The provisioner asks the
   platform where the function landed rather than guessing — it used to print
   `<instance>-fn.altengine.app`, which 404s, and that is the exact string a person copies
   into `VITE_API_URL`. The subdomain can be renamed in the console; it cannot be chosen over

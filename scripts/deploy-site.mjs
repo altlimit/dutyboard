@@ -4,7 +4,7 @@
 //   npm run build && ALTENGINE_KEY=ak_… npm run deploy:site
 //
 // The same three calls `altengine static deploy` makes, kept in the repo for the same reason
-// scripts/deploy.mjs is: a release should be one npm script with this app's instance names
+// the provisioner in cli/ is: a release should be one npm script with this app's instance names
 // already filled in, and CI should run the same code a person runs by hand.
 //
 //   1. POST the manifest — every file's path, size and sha256. The answer says which of them

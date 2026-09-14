@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // End-to-end exercise of the state machine against a running deployment.
 //
-//   altengine dev && npm run setup && npm run deploy      # in another terminal
+//   altengine dev && npm run setup      # in another terminal
 //   npm run smoke
 //
 // This walks the whole spec: the queue's ordering, the single-active invariant, the

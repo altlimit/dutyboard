@@ -8,17 +8,18 @@
 #   ./scripts/provision.sh            # local emulator, everything provisioned and deployed
 #   ./scripts/provision.sh --hosted   # against hosted altengine (needs ALTENGINE_KEY)
 #
-# What it does, in order: installs the tools (alt, then sitegen and the altengine
-# emulator through it), gets the source, installs the npm dependencies, starts the
-# emulator if nothing is answering, provisions the instances and their config, deploys
-# the function, and builds the site and the console.
+# What it does, in order: installs the tools (alt, then sitegen, the altengine emulator and
+# the `dutyboard` binary through it), gets the source, installs the npm dependencies, starts
+# the emulator if nothing is answering, builds the function, the console and the site, and has
+# `dutyboard --provision-only` provision the instances and their config and deploy what was
+# just built.
 #
-# WHY THIS IS SHELL AND NOT `altengine <something>`. The altengine CLI has exactly one
-# command — `altengine dev`, the emulator. There is no `altengine apply` or
-# `altengine deploy`: provisioning is HTTP, against the emulator's admin API locally and
-# the MCP endpoint hosted, and the two are different enough that the knowledge lives in
-# scripts/setup.mjs rather than being retyped from a README each time. This file is the
-# part that has to run before Node exists to run that.
+# WHY THIS IS STILL SHELL. Provisioning itself is the `dutyboard` binary (cli/), which needs
+# nothing else installed. What it deploys from a checkout has to be built first, though —
+# Node for the function and console, sitegen for the site — and this is the part that runs
+# before any of that exists. To provision without a checkout at all:
+#
+#   alt install altlimit/dutyboard && dutyboard --provision-only
 #
 # Safe to re-run. Every step is idempotent: an instance that exists is left alone, an
 # index that exists is not duplicated, and an emulator that is already up is used rather
@@ -126,6 +127,22 @@ NODE_MAJOR="$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 
 [ "$NODE_MAJOR" -ge 20 ] || die "node $(node -v) is too old — 20 or newer is required"
 say "node       $(node -v)"
 
+# The provisioner. A release binary if there is one; otherwise `go run` from the checkout, which
+# needs Go — so a machine with neither is told which to install rather than failing later.
+if ! have dutyboard; then
+  say "installing dutyboard…"
+  alt install altlimit/dutyboard >/dev/null 2>&1 || note "no dutyboard release to install yet — will use go run"
+fi
+if have dutyboard; then
+  say "dutyboard  $(dutyboard --version 2>/dev/null || echo present)"
+elif have go; then
+  say "go         $(go version | cut -d' ' -f3) (for go run ./cli/cmd/dutyboard)"
+else
+  die "neither dutyboard nor go is available" \
+    "  alt install altlimit/dutyboard      once a release exists" \
+    "  https://go.dev/dl                  to run it from this checkout"
+fi
+
 # sitegen builds the marketing site; without it `npm run build` produces only the console.
 if ! have sitegen; then
   say "installing sitegen…"
@@ -216,15 +233,18 @@ if [ "$TARGET" = local ]; then
   fi
 fi
 
-# --- 4. provision, deploy, build ------------------------------------------------------
-step "Provisioning"
-npm run --silent setup
-
-step "Deploying the function"
-npm run --silent deploy
-
-step "Building the site and the console"
+# --- 4. build, then provision and deploy it ------------------------------------------
+step "Building the function, the console and the site"
 npm run --silent build
+
+step "Provisioning and deploying"
+LOCAL_FLAG=""
+[ "$TARGET" = local ] && LOCAL_FLAG="--local"
+if have dutyboard; then
+  dutyboard --provision-only $LOCAL_FLAG --source "$ROOT"
+else
+  (cd "$ROOT/cli" && go run ./cmd/dutyboard --provision-only $LOCAL_FLAG --source "$ROOT")
+fi
 
 if [ "$RUN_SMOKE" = 1 ] && [ "$TARGET" = local ]; then
   step "Smoke test"
@@ -239,7 +259,7 @@ if [ "$TARGET" = local ]; then
   say "Marketing site:     http://localhost:8888/"
   say "Built output:       public/            (npm run preview serves it as production would)"
 else
-  say "Built output:       public/            — marketing site at /, console at /app"
-  say "Serve that directory anywhere, with one rewrite: /app/* → /app/index.html (200)"
+  say "The console is published to your static instance unless that instance serves a site"
+  say "the provisioner did not publish — the output above says which."
 fi
 printf '\n'

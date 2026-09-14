@@ -1,0 +1,39 @@
+# The `dutyboard` binaries, for `alt install altlimit/dutyboard`.
+#
+# alt picks a release asset by scoring its name for the OS and architecture it is running on, so
+# every archive names both. The web assets archive names neither, which is what keeps alt from ever
+# choosing it over a binary. The release workflow builds and stages those assets before this runs.
+version: 2
+project_name: dutyboard
+
+builds:
+  - id: dutyboard
+    dir: cli
+    main: ./cmd/dutyboard
+    binary: dutyboard
+    env:
+      - CGO_ENABLED=0
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    ldflags:
+      - -s -w -X github.com/altlimit/dutyboard/cli/internal/app.Version={{ .Version }}
+
+archives:
+  - id: dutyboard
+    name_template: "dutyboard_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+
+checksum:
+  name_template: checksums.txt
+  extra_files:
+    - glob: ./release/dutyboard-web_*.tar.gz
+
+release:
+  extra_files:
+    - glob: ./release/dutyboard-web_*.tar.gz
+
+changelog:
+  disable: true

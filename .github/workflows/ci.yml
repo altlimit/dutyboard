@@ -38,3 +38,22 @@ jobs:
       # Every script parses. They are not imported by either build, so a syntax error in one
       # would otherwise surface the first time someone ran a release step.
       - run: for f in scripts/*.mjs functions/build.mjs; do node --check "$f"; done
+
+  cli:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: cli
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache-dependency-path: cli/go.sum
+      # The provisioner's hosted path runs against a fake altengine here (internal/provision), so a
+      # change that would break provisioning a real organization fails before anyone tries it.
+      - run: go vet ./...
+      - run: go test ./...
+      # Nothing is staged, so this is the build `go install` produces: it must compile with an
+      # empty embed directory.
+      - run: go build -o /dev/null ./cmd/dutyboard

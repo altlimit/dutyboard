@@ -93,7 +93,7 @@ export const isRetargeted = () => Object.keys(DEFAULTS).some((k) => override(k) 
 
 const baseUrl = (override("baseUrl") || env.baseUrl).replace(/\/+$/, "");
 const functions = override("functions") || env.functions;
-// The deployed function's name — the first path segment under its host. See scripts/deploy.mjs.
+// The deployed function's name — the first path segment under its host. See cli/internal/provision.
 const fn = override("fn") || env.fn;
 
 /**
