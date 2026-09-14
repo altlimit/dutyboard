@@ -397,16 +397,36 @@ func putOne(ctx context.Context, hc *http.Client, u upload, file func(string) *S
 
 // FilesUnder reads every file under dir in fsys into StaticFiles published under prefix.
 func FilesUnder(fsys fs.FS, dir, prefix string) ([]StaticFile, error) {
+	return FilesUnderExcept(fsys, dir, prefix, nil)
+}
+
+// FilesUnderExcept is FilesUnder leaving out every file a pattern matches. A pattern is a path.Match
+// glob, tried against the file's path under dir and against its name alone — so "*.gz" leaves out
+// every .gz at any depth and "debug/*" one folder. A skipped file is never read.
+func FilesUnderExcept(fsys fs.FS, dir, prefix string, exclude []string) ([]StaticFile, error) {
+	for _, pat := range exclude {
+		if _, err := path.Match(pat, ""); err != nil {
+			return nil, fmt.Errorf("exclude pattern %q: %w", pat, err)
+		}
+	}
 	var out []StaticFile
 	err := fs.WalkDir(fsys, dir, func(p string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return err
 		}
+		rel := strings.TrimPrefix(strings.TrimPrefix(p, dir), "/")
+		for _, pat := range exclude {
+			if ok, _ := path.Match(pat, rel); ok {
+				return nil
+			}
+			if ok, _ := path.Match(pat, path.Base(rel)); ok {
+				return nil
+			}
+		}
 		data, err := fs.ReadFile(fsys, p)
 		if err != nil {
 			return err
 		}
-		rel := strings.TrimPrefix(strings.TrimPrefix(p, dir), "/")
 		out = append(out, StaticFile{Path: path.Join("/", prefix, rel), Data: data})
 		return nil
 	})

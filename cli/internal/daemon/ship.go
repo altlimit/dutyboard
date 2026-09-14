@@ -114,6 +114,10 @@ var altengineTools = []map[string]any{
 				"dir":      map[string]any{"type": "string", "description": "The build output folder, relative to the worktree, e.g. 'build/web'."},
 				"instance": map[string]any{"type": "string", "description": "The static instance."},
 				"message":  map[string]any{"type": "string", "description": "A label, such as the commit."},
+				"exclude": map[string]any{
+					"type": "array", "items": map[string]any{"type": "string"},
+					"description": "Glob patterns for files in the folder that must not ship, matched against the path inside the folder and the file name, e.g. [\"*.gz\", \"*.import\"].",
+				},
 			},
 			"required": []string{"dir", "instance"},
 		},
@@ -186,7 +190,15 @@ func (d *Daemon) altengineDeploy(ctx context.Context, s *session, name string, a
 		if info, err := os.Stat(root); err != nil || !info.IsDir() {
 			return nil, fmt.Errorf("%s is not a folder — build it first", dir)
 		}
-		files, err := altengine.FilesUnder(os.DirFS(root), ".", "")
+		var exclude []string
+		if list, ok := args["exclude"].([]any); ok {
+			for _, v := range list {
+				if s, ok := v.(string); ok && s != "" {
+					exclude = append(exclude, s)
+				}
+			}
+		}
+		files, err := altengine.FilesUnderExcept(os.DirFS(root), ".", "", exclude)
 		if err != nil {
 			return nil, err
 		}
