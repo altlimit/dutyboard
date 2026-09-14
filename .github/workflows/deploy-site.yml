@@ -70,8 +70,8 @@ jobs:
       - id: gate
         env:
           KEY: ${{ secrets.ALTENGINE_KEY }}
-          API_URL: ${{ vars.VITE_API_URL }}
-          AUTH_INSTANCE: ${{ vars.VITE_AUTH_INSTANCE }}
+          API_URL: ${{ vars.VITE_API_URL || secrets.VITE_API_URL }}
+          AUTH_INSTANCE: ${{ vars.VITE_AUTH_INSTANCE || secrets.VITE_AUTH_INSTANCE }}
         run: |
           if [ -z "$KEY" ]; then
             echo "ready=false" >> "$GITHUB_OUTPUT"
@@ -84,7 +84,7 @@ jobs:
           [ -n "$API_URL" ] || missing="$missing VITE_API_URL"
           [ -n "$AUTH_INSTANCE" ] || missing="$missing VITE_AUTH_INSTANCE"
           if [ -n "$missing" ]; then
-            echo "::error::Refusing to publish a console built without:$missing. Set them under Settings → Secrets and variables → Actions → Variables (variables, not secrets)."
+            echo "::error::Refusing to publish a console built without:$missing. Set them under Settings → Secrets and variables → Actions, as repository variables or secrets — not on an Environment, which this job does not use."
             exit 1
           fi
           echo "ready=true" >> "$GITHUB_OUTPUT"
@@ -97,12 +97,14 @@ jobs:
       # machine the visitor does not have. The default here is the hosted API for that reason.
       - name: Build
         env:
-          VITE_ALTENGINE_URL: ${{ vars.VITE_ALTENGINE_URL || 'https://api.altengine.net' }}
-          VITE_API_URL: ${{ vars.VITE_API_URL }}
-          VITE_AUTH_INSTANCE: ${{ vars.VITE_AUTH_INSTANCE }}   # hosted: the instance ID, not its name
-          VITE_DATASTORE_INSTANCE: ${{ vars.VITE_DATASTORE_INSTANCE }}
-          VITE_CHANNEL_INSTANCE: ${{ vars.VITE_CHANNEL_INSTANCE }}
-          VITE_FUNCTIONS_INSTANCE: ${{ vars.VITE_FUNCTIONS_INSTANCE }}
+          # Read from variables, or from secrets of the same name: none of these is sensitive, and a
+          # value saved on the wrong tab should not produce a console that cannot reach its API.
+          VITE_ALTENGINE_URL: ${{ vars.VITE_ALTENGINE_URL || secrets.VITE_ALTENGINE_URL || 'https://api.altengine.net' }}
+          VITE_API_URL: ${{ vars.VITE_API_URL || secrets.VITE_API_URL }}
+          VITE_AUTH_INSTANCE: ${{ vars.VITE_AUTH_INSTANCE || secrets.VITE_AUTH_INSTANCE }}   # hosted: the instance ID, not its name
+          VITE_DATASTORE_INSTANCE: ${{ vars.VITE_DATASTORE_INSTANCE || secrets.VITE_DATASTORE_INSTANCE }}
+          VITE_CHANNEL_INSTANCE: ${{ vars.VITE_CHANNEL_INSTANCE || secrets.VITE_CHANNEL_INSTANCE }}
+          VITE_FUNCTIONS_INSTANCE: ${{ vars.VITE_FUNCTIONS_INSTANCE || secrets.VITE_FUNCTIONS_INSTANCE }}
         run: |
           npm run build
           echo "console built against ${VITE_ALTENGINE_URL}${VITE_API_URL:+, api ${VITE_API_URL}}"
@@ -114,7 +116,7 @@ jobs:
         env:
           ALTENGINE_KEY: ${{ secrets.ALTENGINE_KEY }}
           ALTENGINE_URL: ${{ vars.ALTENGINE_URL || 'https://api.altengine.net' }}
-          DUTYBOARD_STATIC_INSTANCE: ${{ vars.ALTENGINE_STATIC_INSTANCE || 'dutyboard' }}
+          DUTYBOARD_STATIC_INSTANCE: ${{ vars.ALTENGINE_STATIC_INSTANCE || secrets.ALTENGINE_STATIC_INSTANCE || 'dutyboard' }}
         run: npm run deploy:site
 
       # Not a failure: the build above still proves the site compiles, which is what a push to
