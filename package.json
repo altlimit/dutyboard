@@ -1,10 +1,10 @@
 {
   "name": "dutyboard",
-  "version": "2.2.5",
+  "version": "2.3.0",
   "license": "MIT",
   "private": true,
   "type": "module",
-  "description": "DutyBoard \u2014 a coordination bus, external working memory and human-in-the-loop decision engine for autonomous agents, built on altengine functions + datastore + auth + channel.",
+  "description": "DutyBoard — a coordination bus, external working memory and human-in-the-loop decision engine for autonomous agents, built on altengine functions + datastore + auth + channel.",
   "scripts": {
     "dev": "npm run dev -w app",
     "dev:site": "sitegen -site site -public site/public -serve",
