@@ -207,6 +207,8 @@ async function main() {
   // If this is false the claim race below still passes on a quiet machine and fails in
   // production, which is the worst way to find out.
   check("the single-holder constraint is in place", health.single_holder === true, health);
+  // The provisioner records where the console is; a machine being paired reads it here.
+  check("it says where the console is", /^https?:\/\//.test(health.console_url || ""), health);
 
   // --- a person, a board, and a token for an agent ------------------------
   const email = `smoke_${Date.now()}@example.test`;

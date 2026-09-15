@@ -193,6 +193,7 @@ func runHosted(ctx context.Context, o Options) (*Result, error) {
 	}
 
 	u.Step("Console")
+	manual := false
 	authID := ""
 	if i, ok := inv.Find("auth", names.Auth); ok {
 		authID = i.ID
@@ -226,22 +227,47 @@ func runHosted(ctx context.Context, o Options) (*Result, error) {
 		if existing != nil && existing.ConsoleURL != "" {
 			drop = append(drop, originOf(existing.ConsoleURL))
 		}
+		// The static site named like the deployment, when it is not this console, is dutyboard.com's
+		// own or another site that is no console of this deployment's: its altengine address goes too.
+		if names.Static != names.Functions {
+			if i, ok := inv.Find("static", names.Functions); ok && i.Slug != "" {
+				drop = append(drop, "https://"+i.Slug+"-web.altengine.app")
+			}
+		}
 	}
 	if err := allowOrigins(ctx, c, u, names, origins, drop, existing == nil, o.Assets); err != nil {
 		return nil, err
 	}
-	secrets := names.secrets()
 	if res.ConsoleURL != "" {
-		secrets["DUTYBOARD_CONSOLE_URL"] = res.ConsoleURL
-	}
-	if len(secrets) > 0 {
-		if err := c.SetFunctionSecrets(ctx, names.Functions, secrets); err != nil {
-			return nil, fmt.Errorf("setting the function's secrets: %w", err)
+		// Kept in the deployment's own datastore rather than as a function secret: hosted, secrets
+		// are only written from a signed-in altengine console, never with an API key. /health reads it
+		// back, which is how a machine being paired says where to approve it.
+		if err := c.PutDocument(ctx, names.Datastore, "settings", "deployment", map[string]any{"console_url": res.ConsoleURL}); err != nil {
+			u.Warn("could not record the console's address with the deployment (%v)", err)
+		} else {
+			u.OK("console address recorded with the deployment")
 		}
-		u.OK("function secrets: %s", strings.Join(sortedKeys(secrets), ", "))
+	}
+	if secrets := names.secrets(); len(secrets) > 0 {
+		if err := c.SetFunctionSecrets(ctx, names.Functions, secrets); err != nil {
+			u.Warn("could not set the function's secrets (%v) — this altengine only takes them in its console", err)
+			u.Say("  In the altengine console, on functions instance %q → Secrets, add these with exposure env:", names.Functions)
+			for _, k := range sortedKeys(secrets) {
+				u.Say("    %s = %s", k, secrets[k])
+			}
+			manual = true
+		} else {
+			u.OK("function secrets: %s", strings.Join(sortedKeys(secrets), ", "))
+		}
 	}
 
-	return res, verify(ctx, u, res)
+	if err := verify(ctx, u, res); err != nil {
+		return res, err
+	}
+	if manual {
+		u.Warn("the function cannot find its instances until those secrets are set")
+	}
+	return res, nil
 }
 
 // Detect finds every DutyBoard in the organization: a function named `board` whose /health says so.
@@ -600,7 +626,8 @@ func allowOrigins(ctx context.Context, c *altengine.Client, u *ui.UI, n Names, o
 	if settings == nil {
 		settings = map[string]any{}
 	}
-	settings["allowedOrigins"] = mergeStrings(without(stringList(settings["allowedOrigins"]), drop, origins), origins)
+	authOrigins := mergeStrings(without(stringList(settings["allowedOrigins"]), drop, origins), origins)
+	settings["allowedOrigins"] = authOrigins
 	changes := map[string]any{"settings": settings}
 	if fresh {
 		// A new deployment has no accounts, and the first person to sign up becomes the first owner.
@@ -617,7 +644,7 @@ func allowOrigins(ctx context.Context, c *altengine.Client, u *ui.UI, n Names, o
 	if settings["allowSignup"] == false {
 		u.Warn("sign-up is off on %q — only existing accounts can sign in", n.Auth)
 	}
-	u.OK("auth origins: %s", strings.Join(stringList(settings["allowedOrigins"]), ", "))
+	u.OK("auth origins: %s", strings.Join(authOrigins, ", "))
 	return nil
 }
 

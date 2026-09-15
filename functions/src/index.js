@@ -216,6 +216,26 @@ function defaultAgentId(url, request, caller) {
   );
 }
 
+/**
+ * Where the provisioner published this deployment's console, as it recorded it in the datastore
+ * (`settings/deployment`). Not a function secret: hosted, secrets are only written from a signed-in
+ * altengine console, and the provisioner holds an API key. Browsers cannot read the row — the
+ * access rules name no `settings` collection. Memoised per isolate once found, like the index
+ * checks below; a miss is asked again, since the provisioner writes it after deploying this code.
+ */
+let consoleUrlMemo = null;
+async function recordedConsoleUrl(store) {
+  if (consoleUrlMemo) return consoleUrlMemo;
+  try {
+    const doc = await store.get("settings", "deployment");
+    const url = doc && (doc.data?.console_url || doc.console_url);
+    if (typeof url === "string" && /^https?:\/\//.test(url)) consoleUrlMemo = url;
+  } catch {
+    // No row, or no datastore yet: the answer is "not recorded", not an unhealthy function.
+  }
+  return consoleUrlMemo;
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -247,7 +267,7 @@ export default {
         // Whether a `dutyboard` daemon can pair with this deployment, and where to send the person
         // who approves it.
         machines: true,
-        console_url: cfg.consoleUrl || null,
+        console_url: cfg.consoleUrl || (await recordedConsoleUrl(health)),
         // Whether the constraint that stops two agents holding one duty is actually in
         // place. It is created on demand, so it can fail — and a mutex that is silently
         // absent is worse than one nobody claimed to have.

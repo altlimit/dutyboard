@@ -123,6 +123,12 @@ func (c *Client) GetConfig(ctx context.Context, service, instance string) (map[s
 }
 
 // CreateIndex declares a datastore index. Creating one that exists is not an error.
+// PutDocument writes one document, by key, with the key's organization-level access.
+func (c *Client) PutDocument(ctx context.Context, datastore, collection, key string, data map[string]any) error {
+	p := fmt.Sprintf("/v1/datastore/%s/ns/_default/col/%s/documents", Esc(datastore), Esc(collection))
+	return c.Do(ctx, http.MethodPost, p, map[string]any{"documents": []any{map[string]any{"key": key, "data": data}}}, nil)
+}
+
 func (c *Client) CreateIndex(ctx context.Context, datastore, collection string, fields []string, unique bool) error {
 	p := fmt.Sprintf("/v1/datastore/%s/ns/_default/col/%s/indexes", Esc(datastore), Esc(collection))
 	if c.Local() {

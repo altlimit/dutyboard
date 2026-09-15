@@ -37,8 +37,10 @@ type fakeHosted struct {
 	uploads     map[string][]byte
 	manifest    map[string]string // path → hash
 	version     string
-	liveLabels  map[string]string // static instance → the message of its live deployment
-	staticSites map[string]int    // static instance → deployments made to it
+	liveLabels  map[string]string         // static instance → the message of its live deployment
+	staticSites map[string]int            // static instance → deployments made to it
+	documents   map[string]map[string]any // "datastore/collection/key" → data
+	noSecrets   bool                      // secrets are console-only, as on hosted altengine
 }
 
 func newFake(t *testing.T, version string) *fakeHosted {
@@ -52,6 +54,7 @@ func newFake(t *testing.T, version string) *fakeHosted {
 		uploads:     map[string][]byte{},
 		liveLabels:  map[string]string{},
 		staticSites: map[string]int{},
+		documents:   map[string]map[string]any{},
 		version:     version,
 	}
 	f.srv = httptest.NewServer(http.HandlerFunc(f.serve))
@@ -137,6 +140,22 @@ func (f *fakeHosted) serve(w http.ResponseWriter, r *http.Request) {
 		default:
 			toolErr(w, msg.ID, "unknown tool "+msg.Params.Name)
 		}
+	case strings.HasPrefix(p, "/v1/datastore/") && strings.HasSuffix(p, "/documents"):
+		parts := strings.Split(p, "/") // "" v1 datastore <ds> ns _default col <col> documents
+		var req struct {
+			Documents []struct {
+				Key  string         `json:"key"`
+				Data map[string]any `json:"data"`
+			} `json:"documents"`
+		}
+		_ = json.Unmarshal(body, &req)
+		for _, d := range req.Documents {
+			f.documents[parts[3]+"/"+parts[7]+"/"+d.Key] = d.Data
+		}
+		writeJSON(w, map[string]any{"keys": []string{}})
+	case f.noSecrets && strings.HasPrefix(p, "/v1/functions/") && strings.HasSuffix(p, "/secrets"):
+		w.WriteHeader(http.StatusNotFound)
+		fmt.Fprint(w, `{"error":{"code":"NOT_FOUND","message":"no such data-plane endpoint"}}`)
 	case strings.HasPrefix(p, "/v1/datastore/") && strings.HasSuffix(p, "/indexes"):
 		f.indexes++
 		writeJSON(w, map[string]any{"ok": true})
@@ -316,8 +335,8 @@ func TestHostedFromNothing(t *testing.T) {
 	if secrets["OTHER"].(map[string]any)["value"] != "keep me" {
 		t.Errorf("an existing secret was lost: %v", secrets)
 	}
-	if secrets["DUTYBOARD_CONSOLE_URL"].(map[string]any)["value"] != res.ConsoleURL {
-		t.Errorf("DUTYBOARD_CONSOLE_URL not set: %v", secrets)
+	if got := f.documents["dutyboard/settings/deployment"]["console_url"]; got != res.ConsoleURL {
+		t.Errorf("the console's address was not recorded with the deployment: %v", f.documents)
 	}
 	if _, ok := secrets["DUTYBOARD_DATASTORE"]; ok {
 		t.Error("default instance names should not need override secrets")
@@ -368,6 +387,21 @@ func TestHostedUpgradesWhatIsThere(t *testing.T) {
 	}
 	if f.secrets["board-prod"]["DUTYBOARD_DATASTORE"].(map[string]any)["value"] != "custom-ds" {
 		t.Errorf("the function needs to be told its non-default datastore: %v", f.secrets["board-prod"])
+	}
+}
+
+func TestHostedCarriesOnWhenSecretsAreConsoleOnly(t *testing.T) {
+	f := newFake(t, "9.9.9")
+	f.noSecrets = true
+	f.add("functions", "board-prod")
+	f.functions["board-prod"] = map[string]string{"datastore:custom-ds": "full", "auth:dutyboard-auth": "write"}
+	out := &bytes.Buffer{}
+	res, err := Run(context.Background(), Options{Client: hosted(f.srv.URL), Assets: testAssets(t, "9.9.9"), UI: &ui.UI{Out: out}, Instance: "board-prod"})
+	if err != nil {
+		t.Fatalf("secrets the platform only takes in its console should be listed, not fail the run: %v", err)
+	}
+	if res.ConsoleURL == "" || !strings.Contains(out.String(), "DUTYBOARD_DATASTORE = custom-ds") {
+		t.Errorf("expected the console published and the secret to set by hand spelled out:\n%s", out)
 	}
 }
 

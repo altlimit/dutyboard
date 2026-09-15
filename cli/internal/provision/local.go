@@ -101,6 +101,9 @@ func runLocal(ctx context.Context, o Options) (*Result, error) {
 	}
 	u.OK("CORS: %v", origins)
 	res.ConsoleURL = origins[0] + "/"
+	if err := c.PutDocument(ctx, n.Datastore, "settings", "deployment", map[string]any{"console_url": res.ConsoleURL}); err != nil {
+		u.Warn("could not record the console's address with the deployment (%v)", err)
+	}
 	return res, verify(ctx, u, res)
 }
 
