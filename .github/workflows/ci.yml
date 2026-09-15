@@ -31,8 +31,9 @@ jobs:
       # unresolved imports, a default export. See functions/build.mjs.
       - run: npm run build:fn
 
-      # The console. Fails on a template error, a bad import, or a component that no longer
-      # compiles — none of which the function build would notice.
+      # The console (app/, its own package in the workspace). Fails on a template error, a bad
+      # import, or a component that no longer compiles — none of which the function build would
+      # notice. The marketing site is built by deploy-site.yml, when site/ changes.
       - run: npm run build:app
 
       # Every script parses. They are not imported by either build, so a syntax error in one

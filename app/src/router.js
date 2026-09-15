@@ -15,13 +15,8 @@ const routes = [
 ];
 
 export const router = createRouter({
-  // Hash history, so the console works on any static host with no rewrite rules — it is
-  // served from /app, and history URLs would need every path under it to fall back to
-  // /app/index.html.
-  //
-  // When the host can do that, this becomes `createWebHistory("/app/")` and the URLs lose
-  // their `#`. Nothing else changes; the routes above are already written relative to the
-  // app's own root.
+  // Hash history, so the console works on any static host, at any path, with no rewrite rules —
+  // history URLs would need every path to fall back to index.html.
   history: createWebHashHistory(),
   routes,
 });

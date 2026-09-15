@@ -4,7 +4,7 @@
 // signed in somewhere else:
 //
 //   daemon  POST /connect/start  → a device_code it keeps, and a user_code it prints
-//   person  opens /app/#/pair, types the user_code, approves        (/connect/lookup, /approve)
+//   person  opens <console>/#/pair, types the user_code, approves        (/connect/lookup, /approve)
 //   daemon  POST /connect/poll every few seconds → once approved, the machine key, exactly once
 //
 // The key is MINTED at that last poll, not at approval, so its plaintext is never stored even for
@@ -135,7 +135,7 @@ export async function startPairing(ctx, body) {
         user_code: code,
         expires_in: PAIRING_TTL_MS / 1000,
         interval: PAIRING_POLL_SECONDS,
-        verify_path: "/app/#/pair",
+        verify_path: "/#/pair",
         console_url: ctx.cfg.consoleUrl || null,
       };
     } catch (err) {

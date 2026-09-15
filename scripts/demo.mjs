@@ -192,7 +192,7 @@ async function main() {
   console.log(`✔ demo board ready\n`);
   console.log(`    board       Payments rewrite  (${slug})`);
   console.log(`    columns     1 needs a decision · 1 active · 1 blocked · 2 queued · 1 done`);
-  console.log(`\n  Sign in at http://localhost:5173/app/`);
+  console.log(`\n  Sign in at http://localhost:5173/`);
   console.log(`    email       ${EMAIL}`);
   console.log(`    password    ${PASSWORD}${fresh ? "" : "   (existing demo account)"}`);
   console.log(`\n  Answer the parked question on "Verify Stripe webhook signatures" —`);

@@ -1,7 +1,10 @@
 #!/usr/bin/env node
-// Publish public/ — marketing site and console together — to an altengine static instance.
+// Publish site/public/ — the marketing site at www.dutyboard.com — to an altengine static instance.
 //
-//   npm run build && ALTENGINE_KEY=ak_… npm run deploy:site
+//   npm run build:site && ALTENGINE_KEY=ak_… npm run deploy:site
+//
+// Only the marketing site. No console is served from dutyboard.com: each deployment's console is
+// published to that deployment's own static site by the `dutyboard` provisioner.
 //
 // The same three calls `altengine static deploy` makes, kept in the repo for the same reason
 // the provisioner in cli/ is: a release should be one npm script with this app's instance names
@@ -38,7 +41,7 @@ const has = (name) => args.includes(name);
 const URL_BASE = (process.env.ALTENGINE_URL || "https://api.altengine.net").replace(/\/+$/, "");
 const KEY = process.env.ALTENGINE_KEY || "";
 const INSTANCE = flag("--instance") || process.env.DUTYBOARD_STATIC_INSTANCE || "dutyboard";
-const DIR = resolve(root, flag("--dir") || process.env.DUTYBOARD_SITE_DIR || "public");
+const DIR = resolve(root, flag("--dir") || process.env.DUTYBOARD_SITE_DIR || "site/public");
 const DRY = has("--dry-run");
 const NO_ACTIVATE = has("--no-activate");
 
@@ -140,7 +143,7 @@ async function api(method, path, body) {
     if (res.status === 404 && /data-plane endpoint/.test(text)) {
       throw new Error(
         `${URL_BASE} has no static service — it predates website hosting, so there is nothing ` +
-          "to deploy to yet. `npm run preview` serves public/ locally in the meantime.",
+          "to deploy to yet. `npm run dev:site` serves it locally in the meantime.",
       );
     }
     if (res.status === 501) {
@@ -201,11 +204,11 @@ const kib = (n) => (n < 1024 * 1024 ? `${(n / 1024).toFixed(1)} KiB` : `${(n / 1
 
 const files = await walk(DIR).catch((err) => {
   console.error(`✖ ${err.message}`);
-  console.error("  run `npm run build` first — public/ is the build output, and it is gitignored");
+  console.error("  run `npm run build:site` first — site/public/ is the build output, and it is gitignored");
   process.exit(1);
 });
 if (!files.length) {
-  console.error(`✖ ${DIR} is empty — run \`npm run build\``);
+  console.error(`✖ ${DIR} is empty — run \`npm run build:site\``);
   process.exit(1);
 }
 
@@ -214,13 +217,10 @@ const total = files.reduce((n, f) => n + f.size, 0);
 const byHash = new Map(files.map((f) => [f.hash, f]));
 console.log(`${files.length} files, ${kib(total)} in ${relative(root, DIR) || "."}`);
 
-// The console is a single-page app under /app, and its router uses hash URLs precisely so
-// that no host-side rewrite is needed. `spa: true` on a static instance serves the ROOT
-// index.html for any miss, which here would answer /app/anything with the marketing page —
-// so this deployment wants it off, which is the default. See README, "The one rewrite it
-// needs".
-if (!files.some((f) => f.path === "/app/index.html")) {
-  console.log("  note: no /app/index.html — this build has the site but not the console");
+// A marketing site and nothing else: a console in the build means it was built wrong.
+if (files.some((f) => f.path === "/config.js" || f.path.startsWith("/app/"))) {
+  console.error("✖ this build carries a console (config.js or /app/) — dutyboard.com serves only the marketing site");
+  process.exit(1);
 }
 
 if (DRY) {

@@ -40,7 +40,7 @@ altengine API key: ••••••••
 ✓ Organization "altlimit"
 Found DutyBoard v2.0.0 → https://k3x9-fn.altengine.app/board
   1) Use it (upgrade to v2.1.0)   2) Provision a new one   > 1
-✓ indexes (14)  ✓ access rules  ✓ function board v2.1.0  ✓ console https://…/app/
+✓ indexes (14)  ✓ access rules  ✓ function board v2.1.0  ✓ console https://…altengine.app/
 Opening the console to finish pairing…   code KQTR-8841
 ✓ Paired — this machine is "faisal-wsl"
 Start automatically when you log in? [Y/n] y

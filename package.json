@@ -4,31 +4,26 @@
   "license": "MIT",
   "private": true,
   "type": "module",
-  "description": "DutyBoard — a coordination bus, external working memory and human-in-the-loop decision engine for autonomous agents, built on altengine functions + datastore + auth + channel.",
+  "description": "DutyBoard \u2014 a coordination bus, external working memory and human-in-the-loop decision engine for autonomous agents, built on altengine functions + datastore + auth + channel.",
   "scripts": {
-    "dev": "vite",
-    "dev:site": "sitegen -serve",
-    "build": "npm run build:site && npm run build:app && npm run build:bundle",
-    "build:site": "sitegen -minify -clean",
-    "build:app": "vite build",
+    "dev": "npm run dev -w app",
+    "dev:site": "sitegen -site site -public site/public -serve",
+    "build": "npm run build:fn && npm run build:app && npm run build:site",
     "build:fn": "node functions/build.mjs",
+    "build:app": "npm run build -w app",
+    "build:site": "sitegen -site site -public site/public -minify -clean && node -e \"require('fs').copyFileSync('agent/OPERATING.md','site/public/agent.md')\"",
     "provision": "sh scripts/provision.sh",
     "setup": "npm run build:fn && cd cli && go run ./cmd/dutyboard --provision-only --local --source ..",
-    "deploy": "npm run build:fn && cd cli && go run ./cmd/dutyboard --provision-only --source ..",
+    "deploy": "npm run build:fn && npm run build:app && cd cli && go run ./cmd/dutyboard --provision-only --source ..",
     "deploy:site": "node scripts/deploy-site.mjs",
     "demo": "node scripts/demo.mjs",
-    "preview": "node scripts/serve.mjs",
     "smoke": "node scripts/smoke.mjs",
-    "smoke:runner": "node scripts/smoke-runner.mjs",
-    "build:bundle": "npm run build:fn && node scripts/publish-bundle.mjs"
-  },
-  "dependencies": {
-    "vue": "^3.5.13",
-    "vue-router": "^4.5.0"
+    "smoke:runner": "node scripts/smoke-runner.mjs"
   },
   "devDependencies": {
-    "@vitejs/plugin-vue": "^5.2.1",
-    "esbuild": "^0.25.0",
-    "vite": "^6.0.7"
-  }
+    "esbuild": "^0.25.0"
+  },
+  "workspaces": [
+    "app"
+  ]
 }

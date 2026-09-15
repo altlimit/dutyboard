@@ -6,12 +6,11 @@
 //		function/bundle.js
 //		console/...            the built console (index.html, assets/, config.js)
 //		agent.md
-//		llms.txt               optional
 //		backend/{indexes,access,signup}.json
 //		VERSION
 //
 //	  - Embedded: a release binary carries them (scripts/stage-cli-assets.mjs copies them into web/
-//	    before GoReleaser builds). No Node, npm or sitegen on the machine that provisions.
+//	    before GoReleaser builds). No Node or npm on the machine that provisions.
 //	  - A source checkout: `--source <repo>`, or found by walking up from the working directory.
 //	    This is how `npm run setup` deploys what is in the working tree.
 //	  - Downloaded: a `go install` build has nothing embedded, so it fetches `dutyboard-web_<v>.tar.gz`
@@ -85,9 +84,8 @@ func FromSource(repo string) (*Bundle, error) {
 		Source:  repo,
 		fsys: routed{
 			"function/bundle.js": filepath.Join(repo, "functions", "dist", "bundle.js"),
-			"console":            filepath.Join(repo, "public", "app"),
+			"console":            filepath.Join(repo, "app", "dist"),
 			"agent.md":           filepath.Join(repo, "agent", "OPERATING.md"),
-			"llms.txt":           filepath.Join(repo, "public", "llms.txt"),
 			"backend":            filepath.Join(repo, "backend"),
 		},
 	}, nil

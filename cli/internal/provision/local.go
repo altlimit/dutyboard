@@ -100,7 +100,7 @@ func runLocal(ctx context.Context, o Options) (*Result, error) {
 		}
 	}
 	u.OK("CORS: %v", origins)
-	res.ConsoleURL = origins[0] + "/app/"
+	res.ConsoleURL = origins[0] + "/"
 	return res, verify(ctx, u, res)
 }
 

@@ -46,11 +46,10 @@
     {
       "label": "Console",
       "type": "shell",
-      // The Vue app, served at http://localhost:5173/app/ — the same path it lives at in
-      // production, so a path assumption cannot work here and break there. The port is
-      // pinned in vite.config.js: left to itself vite takes the next free one when 5173 is
-      // busy, and the console then loads fine and fails every call on CORS, whose origin
-      // allowlist was provisioned for 5173.
+      // The Vue app (app/), served at http://localhost:5173/. The port is pinned in
+      // app/vite.config.js: left to itself vite takes the next free one when 5173 is busy, and
+      // the console then loads fine and fails every call on CORS, whose origin allowlist was
+      // provisioned for 5173.
       "command": "npm run dev",
       "options": { "cwd": "${workspaceFolder}" },
       "isBackground": true,
@@ -59,8 +58,8 @@
     {
       "label": "Marketing site",
       "type": "shell",
-      // sitegen's own watcher and dev server, on :8888. Separate from the console's: these
-      // are two different builds that only meet in public/ at release time.
+      // The marketing site (site/), with sitegen's own watcher and dev server on :8888. It has
+      // nothing to do with the console: the two never share a build or a host.
       "command": "npm run dev:site",
       "options": { "cwd": "${workspaceFolder}" },
       "isBackground": true,
@@ -76,16 +75,6 @@
         "cwd": "${workspaceFolder}",
         "env": { "ALTENGINE_URL": "http://127.0.0.1:9191", "ALTENGINE_KEY": "dev" }
       },
-      "problemMatcher": []
-    },
-    {
-      "label": "Preview the build",
-      "type": "shell",
-      // The built bytes in public/, served the way a static host has to serve them —
-      // including the /app/* → /app/index.html rewrite, which no dev server exercises.
-      "command": "npm run build && npm run preview",
-      "options": { "cwd": "${workspaceFolder}" },
-      "isBackground": true,
       "problemMatcher": []
     },
     {

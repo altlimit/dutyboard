@@ -81,6 +81,9 @@ func Start(ctx context.Context, u *ui.UI, f Flags) error {
 	if err != nil {
 		return err
 	}
+	if cfg.Console != "" {
+		u.Say("Your board: %s", cfg.Console)
+	}
 	u.Say("Working. Ctrl+C stops it; the duties it holds are resumed next time.")
 	return d.Run(ctx)
 }
@@ -146,14 +149,12 @@ func pairMachine(ctx context.Context, u *ui.UI, cfg *state.Config, f Flags) (str
 	}
 	u.Step("Approve this machine")
 	if console != "" {
+		// The console's routes are after the #, wherever the console itself is served.
 		link := strings.TrimRight(console, "/") + "/#/pair?code=" + p.UserCode
-		if !strings.Contains(console, "/app") {
-			link = strings.TrimRight(console, "/") + p.VerifyPath + "?code=" + p.UserCode
-		}
 		u.Say("Open %s", link)
 		openBrowser(link)
 	} else {
-		u.Say("Open your DutyBoard console, go to Pair a machine, and enter the code.")
+		u.Say("Open your DutyBoard console — its site is on your static instance in the altengine console — go to Pair a machine, and enter the code.")
 	}
 	u.Say("Code: %s   (expires in %d minutes)", p.UserCode, p.ExpiresIn/60)
 	paired, err := api.WaitForApproval(ctx, p)

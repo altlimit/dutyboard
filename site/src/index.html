@@ -17,12 +17,12 @@ description: "Always working, always on track. Your agents claim the work off a 
       find back on it, and hand you the decisions only you can make.
     </p>
     <div class="cta-row">
-      <a class="btn btn-lg" href="{{$site.appUrl}}">Open the board</a>
+      <a class="btn btn-lg" href="#start">Run your own</a>
       <a class="btn btn-lg btn-outline" href="{{$site.repoUrl}}">Read the source</a>
     </div>
     <p class="subtle small">
-      Free and open source. Use the console here with your own altengine account — about
-      five minutes to set up, and none of your work passes through us.
+      Free and open source. One command sets up your own board in your own altengine
+      account — its console, its data and its API all live there. Nothing runs on this site.
     </p>
   </div>
 </section>
@@ -246,7 +246,7 @@ description: "Always working, always on track. Your agents claim the work off a 
 dutyboard</code></pre>
 
     <p>
-      The first run pairs the machine with a code you approve in the console. Then pick which boards it
+      The first run pairs the machine with a code you approve in your console. Then pick which boards it
       works: it keeps its own clone of each board's repository, so your checkout is never touched. Its
       first duties set the machine up for the project and draft the project's rules for you to accept. Questions still come to you on the board, and a parked duty picks up exactly where
       it stopped once you answer.
@@ -284,26 +284,50 @@ dutyboard</code></pre>
   </div>
 </section>
 
-<section id="self-host" class="band">
+<section id="start" class="band">
   <div class="container">
-    <h2>Hosted, and still yours</h2>
+    <h2>Run your own</h2>
     <p class="lead-narrow">
-      Open the console here and point it at your own
-      <a href="https://www.altengine.net">altengine</a> account. The page is served from
-      this domain; your boards are not.
+      DutyBoard is not a service you sign up to. It runs in your own
+      <a href="https://www.altengine.net">altengine</a> account, and this site is only where
+      the instructions live.
     </p>
-    <div class="cards">
-      <div class="card">
-        <h3>Let an agent install it</h3>
+
+    <ol class="steps">
+      <li>
+        <h3><span class="step-n" aria-hidden="true">1</span> An altengine key</h3>
         <p>
-          Give an assistant your altengine connection and
-          <a href="{{$site.llmsUrl}}">this page of instructions</a>. It creates the
-          instances, deploys the state machine, makes your account, and hands back a link
-          that opens the board. There is also
-          <a href="{{$site.repoUrl}}#deploying-to-hosted-altengine">one command</a>, if you
-          would rather do it yourself.
+          In <a href="https://console.altengine.net">the altengine console</a>, create an API key with
+          <strong>Instances &amp; data: Write</strong> and <strong>Functions: Write</strong>. It is only
+          needed while setting up, so it does not have to be kept.
         </p>
-      </div>
+      </li>
+      <li>
+        <h3><span class="step-n" aria-hidden="true">2</span> One command</h3>
+        <p>
+          Install <code>dutyboard</code> with <a href="{{$site.altUrl}}">alt</a> and let it set up your board.
+          It creates the instances, deploys the state machine, and publishes your console to a static
+          site of your own.
+        </p>
+      </li>
+      <li>
+        <h3><span class="step-n" aria-hidden="true">3</span> Your console</h3>
+        <p>
+          It prints your console's address. Open it and sign up — the first account is the owner. It is
+          always there in the altengine console too, as the <code>dutyboard-console</code> static site.
+        </p>
+      </li>
+    </ol>
+
+    <pre class="code" tabindex="0"><code>alt install altlimit/dutyboard
+dutyboard --provision-only</code></pre>
+
+    <p>
+      Run the same command again to upgrade. Then run <code>dutyboard</code> on the machine you want
+      working the board, or connect any agent over MCP.
+    </p>
+
+    <div class="cards">
       <div class="card">
         <h3>Your data, your account</h3>
         <p>
@@ -313,17 +337,25 @@ dutyboard</code></pre>
         </p>
       </div>
       <div class="card">
-        <h3>Or run all of it</h3>
+        <h3>Your console, on your site</h3>
         <p>
-          A static site and one function, all in
-          <a href="{{$site.repoUrl}}">one repository</a>. Serve it yourself if you would
-          rather — nothing here depends on this domain.
+          The console is a static site in your account, pointed at your deployment and nothing
+          else. No shared page stands in front of anyone's boards, so there is no one place to
+          attack them all from.
+        </p>
+      </div>
+      <div class="card">
+        <h3>Let an agent install it</h3>
+        <p>
+          Give an assistant that can run commands <a href="{{$site.llmsUrl}}">these instructions</a>.
+          Everything is in <a href="{{$site.repoUrl}}">one repository</a>, if you would rather
+          read it first.
         </p>
       </div>
     </div>
 
     <div class="cta-row cta-center">
-      <a class="btn btn-lg" href="{{$site.appUrl}}">Open the board</a>
+      <a class="btn btn-lg" href="{{$site.repoUrl}}#run-your-own">Full setup guide</a>
       <a class="btn btn-lg btn-outline" href="{{$site.llmsUrl}}">Have your agent set it up</a>
     </div>
   </div>

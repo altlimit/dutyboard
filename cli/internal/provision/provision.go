@@ -40,6 +40,10 @@ type Names struct {
 }
 
 // NamesFor is the naming convention a new deployment uses: `dutyboard`, `dutyboard-auth`, …
+//
+// The console gets a static site of its own, `<prefix>-console`, and is the whole of it. Not
+// `<prefix>`: a static instance named like the product is the likeliest to be serving something
+// else — dutyboard.com's own marketing site is one — and a console never shares a site.
 func NamesFor(prefix string) Names {
 	return Names{
 		Functions: prefix,
@@ -48,9 +52,14 @@ func NamesFor(prefix string) Names {
 		Channel:   prefix + "-live",
 		Blob:      prefix + "-files",
 		Search:    prefix + "-search",
-		Static:    prefix,
+		Static:    prefix + "-console",
 	}
 }
+
+// retiredOrigins are origins no console is served from any more, taken off a deployment's CORS and
+// auth lists when it gets a console of its own. dutyboard.com is only a marketing site: allowing it
+// would let a page there call a deployment it has no business reaching.
+var retiredOrigins = []string{"https://www.dutyboard.com", "https://dutyboard.com"}
 
 // Map is the names by service, as config.json keeps them.
 func (n Names) Map() map[string]string {
@@ -107,7 +116,7 @@ type Result struct {
 	Org        string
 	Names      Names
 	APIURL     string // the function, e.g. https://k3x9-fn.altengine.app/board
-	ConsoleURL string // e.g. https://…/app/
+	ConsoleURL string // e.g. https://k3x9.altengine.app/
 	Version    string
 	Created    bool // a new deployment rather than an existing one
 }
@@ -117,6 +126,8 @@ type Deployment struct {
 	Names   Names
 	URL     string
 	Version string
+	// ConsoleURL is where its function says the console was last published, if it says.
+	ConsoleURL string
 }
 
 // Run provisions or upgrades.
@@ -146,6 +157,16 @@ func runHosted(ctx context.Context, o Options) (*Result, error) {
 		return nil, err
 	}
 	res := &Result{Org: who.Org.Name, Names: names, Version: o.Assets.Version, Created: existing == nil}
+	if existing != nil {
+		// A deployment made before consoles had a site of their own published it under /app on the
+		// static instance named like its functions instance. That site is kept, so its URL does not
+		// change; the console just moves to its root.
+		if _, ok := inv.Find("static", names.Functions); ok {
+			if deployed, label, err := c.StaticLive(ctx, names.Functions); err == nil && deployed && strings.HasPrefix(label, consoleLabel) {
+				names.Static, res.Names.Static = names.Functions, names.Functions
+			}
+		}
+	}
 
 	u.Step("Instances")
 	_, staticExisted := inv.Find("static", names.Static)
@@ -180,7 +201,7 @@ func runHosted(ctx context.Context, o Options) (*Result, error) {
 	if reason := consoleBlocked(ctx, c, names.Static, staticExisted); reason != "" {
 		err = errConsoleSkipped
 		u.Warn("not publishing the console to static %q: %s", names.Static, reason)
-		u.Say("  Serve the console yourself, or publish it with `npm run deploy:site` from a build.")
+		u.Say("  Serve the console yourself: build app/ and publish app/dist with a config.js (see README).")
 	} else {
 		live, err = deployConsole(ctx, c, o.Assets, names, authID, res.APIURL)
 	}
@@ -191,15 +212,22 @@ func runHosted(ctx context.Context, o Options) (*Result, error) {
 	case err != nil:
 		return nil, err
 	default:
-		res.ConsoleURL = live + "/app/"
+		res.ConsoleURL = live + "/"
 		u.OK("console live at %s", res.ConsoleURL)
 	}
 
 	origins := append([]string{}, o.Origins...)
+	var drop []string
 	if res.ConsoleURL != "" {
 		origins = append(origins, originOf(res.ConsoleURL))
+		// Only once the new console is up: dropping the old origins first could leave nothing that
+		// signs in.
+		drop = append(drop, retiredOrigins...)
+		if existing != nil && existing.ConsoleURL != "" {
+			drop = append(drop, originOf(existing.ConsoleURL))
+		}
 	}
-	if err := allowOrigins(ctx, c, u, names, origins, existing == nil, o.Assets); err != nil {
+	if err := allowOrigins(ctx, c, u, names, origins, drop, existing == nil, o.Assets); err != nil {
 		return nil, err
 	}
 	secrets := names.secrets()
@@ -249,7 +277,7 @@ func Detect(ctx context.Context, c *altengine.Client, inv altengine.Inventory) [
 					n.Search = name
 				}
 			}
-			out = append(out, Deployment{Names: n, URL: f.URL, Version: h.Version})
+			out = append(out, Deployment{Names: n, URL: f.URL, Version: h.Version, ConsoleURL: h.ConsoleURL})
 		}
 	}
 	return out
@@ -492,7 +520,7 @@ func consoleBlocked(ctx context.Context, c *altengine.Client, instance string, e
 	}
 }
 
-// ConsoleConfig is /app/config.js: where this console points. See app/src/config.js.
+// ConsoleConfig is the site's /config.js: where this console points. See app/src/config.js.
 func ConsoleConfig(altengineURL string, n Names, authID, apiURL string) []byte {
 	cfg := map[string]string{
 		"baseUrl":   altengineURL,
@@ -512,28 +540,25 @@ func deployConsole(ctx context.Context, c *altengine.Client, a *assets.Bundle, n
 		// Hosted sign-in carries no key, so the console addresses auth by id; a name would 404.
 		return "", fmt.Errorf("could not find the id of auth instance %q", n.Auth)
 	}
-	files, err := altengine.FilesUnder(a.FS(), "console", "app")
+	files, err := altengine.FilesUnder(a.FS(), "console", "")
 	if err != nil {
 		return "", fmt.Errorf("reading the console: %w", err)
 	}
 	out := files[:0]
 	for _, f := range files {
-		if f.Path != "/app/config.js" {
+		if f.Path != "/config.js" {
 			out = append(out, f)
 		}
 	}
-	out = append(out, altengine.StaticFile{Path: "/app/config.js", Data: ConsoleConfig(c.BaseURL, n, authID, apiURL)})
+	out = append(out, altengine.StaticFile{Path: "/config.js", Data: ConsoleConfig(c.BaseURL, n, authID, apiURL)})
 	if b, err := a.ReadFile("agent.md"); err == nil {
 		out = append(out, altengine.StaticFile{Path: "/agent.md", Data: b})
 	}
-	if a.Has("llms.txt") {
-		b, _ := a.ReadFile("llms.txt")
-		out = append(out, altengine.StaticFile{Path: "/llms.txt", Data: b})
-	}
-	// The site root has nothing of its own on a self-hosted deployment; send people to the console.
+	// Consoles used to live under /app, and links to them — a bookmark, a pairing link — carry the
+	// route after the #. Send those to the same route at the root.
 	out = append(out, altengine.StaticFile{
-		Path: "/index.html",
-		Data: []byte(`<!doctype html><meta charset="utf-8"><title>DutyBoard</title><meta http-equiv="refresh" content="0; url=/app/"><a href="/app/">DutyBoard</a>`),
+		Path: "/app/index.html",
+		Data: []byte(`<!doctype html><meta charset="utf-8"><title>DutyBoard</title><script>location.replace("../" + location.hash)</script><a href="../">DutyBoard</a>`),
 	})
 	url, _, err := c.DeployStatic(ctx, n.Static, consoleLabel+a.Version, out)
 	return url, err
@@ -542,7 +567,10 @@ func deployConsole(ctx context.Context, c *altengine.Client, a *assets.Bundle, n
 // allowOrigins adds the console's origins to the function's CORS list and the auth instance's
 // allowed origins, keeping whatever was already there, and makes sure the sign-up form collects the
 // name every duty is stamped with.
-func allowOrigins(ctx context.Context, c *altengine.Client, u *ui.UI, n Names, origins []string, fresh bool, a *assets.Bundle) error {
+//
+// drop are origins to take off both lists — ones no console is served from any more — unless they
+// are also being added.
+func allowOrigins(ctx context.Context, c *altengine.Client, u *ui.UI, n Names, origins, drop []string, fresh bool, a *assets.Bundle) error {
 	if len(origins) == 0 {
 		return nil
 	}
@@ -550,7 +578,11 @@ func allowOrigins(ctx context.Context, c *altengine.Client, u *ui.UI, n Names, o
 	if err != nil {
 		return err
 	}
-	cors := mergeStrings(stringList(fnCfg["corsOrigins"]), origins)
+	have := stringList(fnCfg["corsOrigins"])
+	cors := mergeStrings(without(have, drop, origins), origins)
+	for _, gone := range removed(have, cors) {
+		u.OK("function CORS: removed %s, which serves no console", gone)
+	}
 	if err := c.SetFunctionSettings(ctx, n.Functions, cors); err != nil {
 		return fmt.Errorf("function CORS: %w", err)
 	}
@@ -568,7 +600,7 @@ func allowOrigins(ctx context.Context, c *altengine.Client, u *ui.UI, n Names, o
 	if settings == nil {
 		settings = map[string]any{}
 	}
-	settings["allowedOrigins"] = mergeStrings(stringList(settings["allowedOrigins"]), origins)
+	settings["allowedOrigins"] = mergeStrings(without(stringList(settings["allowedOrigins"]), drop, origins), origins)
 	changes := map[string]any{"settings": settings}
 	if fresh {
 		// A new deployment has no accounts, and the first person to sign up becomes the first owner.
@@ -644,6 +676,39 @@ func stringList(v any) []string {
 	for _, x := range arr {
 		if s, ok := x.(string); ok {
 			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// without is have less anything in drop, except what keep names.
+func without(have, drop, keep []string) []string {
+	out := []string{}
+	for _, s := range have {
+		gone := false
+		for _, d := range drop {
+			gone = gone || s == d
+		}
+		for _, k := range keep {
+			gone = gone && s != k
+		}
+		if !gone {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// removed is what was in before and is not in after.
+func removed(before, after []string) []string {
+	var out []string
+	for _, b := range before {
+		found := false
+		for _, a := range after {
+			found = found || a == b
+		}
+		if !found {
+			out = append(out, b)
 		}
 	}
 	return out

@@ -9,7 +9,7 @@
 // without rebuilding.
 
 /**
- * Written at DEPLOY time, not build time: `/app/config.js` sets `window.DUTYBOARD_CONFIG` before
+ * Written at DEPLOY time, not build time: the `config.js` next to index.html sets `window.DUTYBOARD_CONFIG` before
  * this bundle loads. It is how one prebuilt console — the one the `dutyboard` binary carries —
  * is pointed at whichever deployment it was uploaded next to, with no rebuild. The build's own
  * `VITE_*` values are what is used when that file sets nothing, which is the dev server's case.

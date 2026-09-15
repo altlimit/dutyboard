@@ -34,38 +34,21 @@ blockers and outcomes only. A poll answers in a couple of hundred tokens.
 ## Layout
 
 ```
-site/        the marketing site at www.dutyboard.com  (sitegen)
-app/         the console at /app                      (Vue 3 + Vite)
-functions/   the state machine, one deployed module   (altengine functions)
-backend/     instance configuration to apply once
-scripts/     provision, deploy, serve, and the end-to-end smoke test
-public/      build output — both halves, gitignored
+app/         the console                                 (Vue 3 + Vite, its own package)
+site/        the marketing site at www.dutyboard.com     (sitegen)
+functions/   the state machine, one deployed module      (altengine functions)
+backend/     instance configuration the provisioner applies
+cli/         `dutyboard`: the provisioner, and the runner that works boards on a machine (Go)
+scripts/     local provisioning, site deploy, the demo seeder and the end-to-end smoke tests
 ```
 
-`npm run build` runs the two builds in that order on purpose: the site build cleans
-`public/` first, so doing it the other way round deletes the app.
+The three builds share nothing. `app/` builds to `app/dist`, which the provisioner publishes to
+**each deployment's own static site**. `site/` builds to `site/public`, which is all that
+www.dutyboard.com serves: a marketing page and the setup instructions, with no console and no
+knowledge of any deployment. So no single page stands in front of everyone's boards.
 
-The console is served from `/app` in development too, not from `/`. A path assumption that
-only holds on one of them is exactly the kind of thing that survives every local test.
-
-### The one rewrite it needs
-
-The console is a single-page app. Every path under `/app` has to serve
-`public/app/index.html` rather than 404 — one rule:
-
-```
-/app/*  →  /app/index.html   (200, not a redirect)
-```
-
-So the router uses hash URLs (`/app/#/b/my-board`), which need no rewrite and work on any
-static host. Switching is one line in [`app/src/router.js`](app/src/router.js):
-`createWebHashHistory()` → `createWebHistory("/app/")`.
-
-That line stays as it is even on a host that *can* rewrite. altengine's static service has
-an `spa` flag, and what it does is serve the **root** `index.html` for any unmatched path —
-which here would answer `/app/b/my-board` with the marketing page, at 200. One flag cannot
-say "the marketing site owns `/` and the console owns `/app/*`", and a wrong page with the
-right status is worse than a 404. Hash URLs are what a mixed site gets.
+The console uses hash URLs (`#/b/my-board`), so it works on any static host, at any path, with no
+rewrite rules.
 
 ## How it is built
 
@@ -101,42 +84,111 @@ for anyone else's board, and does not have to remember to try.
 
 The `db_` prefix is what tells them apart. A token is shown once, at mint, and never again.
 
-## Run it
+## Run your own
 
-Install `dutyboard` with [alt](https://github.com/altlimit/alt) — no sudo, no package manager:
+Install `dutyboard` with [alt](https://github.com/altlimit/alt) — no sudo, no package manager —
+and put DutyBoard on your altengine organization:
 
 ```bash
 alt install altlimit/dutyboard
-```
-
-Then put DutyBoard on your altengine organization:
-
-```bash
 dutyboard --provision-only        # asks for an altengine API key, or reads $ALTENGINE_KEY
 ```
 
-It finds a DutyBoard already in the organization and upgrades it, or provisions a new one: the
-instances and their config, the indexes and access rules, the function with its grants and CORS
-list, and the console — published to a static instance and pointed at that function. Every step
-is idempotent, so running it again is how you upgrade. The binary carries the function and the
-console it deploys, so the machine running it needs nothing else: no Node, no checkout.
+(`alt run altlimit/dutyboard --provision-only` does the same without installing anything.)
 
-`alt run altlimit/dutyboard --provision-only` does the same without installing anything.
+It finds a DutyBoard already in the organization and upgrades it, or provisions a new one:
 
-To work on DutyBoard itself, from nothing, against the local emulator:
+- the instances — `dutyboard` (datastore, functions), `dutyboard-auth`, `dutyboard-live`,
+  `dutyboard-files`, `dutyboard-search`, and the static site `dutyboard-console` — and their config;
+- the indexes and the access rules;
+- the function, with its grants;
+- **the console**, published to the root of `dutyboard-console` with a `config.js` pointing it at
+  that function, and that site's origin added to the function's CORS list and the auth instance's
+  allowed origins;
+- a check that `/health` reports the version it just deployed.
+
+It prints the console's address and stores it with the function, so a `dutyboard` that is pairing
+a machine can tell you where to approve it. It is also always in the altengine console, as the
+`dutyboard-console` static site. Every step is idempotent, so running it again is how you
+upgrade. The binary carries the function and the console it deploys: the machine running it
+needs no Node and no checkout.
+
+**The key** needs the **MCP / AI agent access** toggles on the key form, which are off by default:
+`Instances & data: Write` and `Functions: Write`. Not Full — nothing here deletes an instance.
+It is only needed to set up and upgrade, so the provisioner does not keep it unless you say so;
+projects the runner deploys use a narrower key of their own (see
+[Running agents on your machine](#running-agents-on-your-machine)).
+
+**It never publishes over a site it did not make.** A static deploy replaces a whole site, so an
+existing static instance is only written to when what it serves was published by the provisioner
+(its deployments are labelled `dutyboard v<version>`) or it serves nothing. A deployment from
+before consoles had a site of their own kept its console under `/app` on the static instance named
+like its functions instance; that site is upgraded in place, and `/app` links are sent on to the
+root.
+
+**It takes dutyboard.com off your origins.** Once your console is up, `https://www.dutyboard.com`
+— and the console's previous origin, if it moved — are removed from the function's CORS list and
+the auth instance's allowed origins. A page there has no business calling your deployment.
+
+If the platform refuses to change the auth instance's sign-up form and allowed origins from an
+API key, it prints what to set in the altengine console instead:
+[`backend/signup.json`](backend/signup.json)'s fields, and the console's origin. On older
+altengine it also could not create the auth and channel instances; it lists those as console work
+and waits, re-checking every few seconds.
+
+**On sign-up, decide before you finish.** A new deployment opens sign-up, which is what you want
+for exactly as long as it takes to create your own account — after that it is an open door onto
+your quota. Turn it off in the auth instance's settings once you have signed up. Allowed origins
+are not a substitute: CORS binds browsers, and nothing else.
+
+Two hosted details, both found the hard way:
+
+- **Subdomains are minted, not the instance name.** A functions instance called `dutyboard`
+  answers on `https://<random>-fn.altengine.app`, and a static site on another random subdomain.
+  The provisioner asks the platform where things landed rather than guessing.
+- **The console addresses its auth instance by ID.** Sign-in carries no API key, so the platform
+  has no organization in which to resolve a name. The `config.js` the provisioner writes uses the
+  ID; the datastore and channel stay names, because those calls carry an identity token.
+
+### Letting an agent install it
+
+[dutyboard.com/llms.txt](https://www.dutyboard.com/llms.txt) is the same setup written for an
+agent: which key to ask for, the one command to run, and what to hand back. An agent that cannot
+run commands is told to give its user the command rather than rebuild the setup by hand with
+altengine's MCP tools — the console is a built app, and there is no by-hand route that ends with
+one.
+
+### Serving the console yourself
+
+`app/dist` is the whole console. Serve it from anywhere and put a `config.js` next to its
+`index.html` setting `window.DUTYBOARD_CONFIG` — the fields are in
+[`app/src/config.js`](app/src/config.js), and `ConsoleConfig` in
+[`cli/internal/provision`](cli/internal/provision/provision.go) writes one. Add the origin you
+serve it from to the auth instance's allowed origins and the function's CORS list. Set the
+function's `DUTYBOARD_CONSOLE_URL` secret (`env` exposure) to its address, so machines pairing
+can say where to go.
+
+A console with no `config.js` values can be pointed at a deployment from its sign-in screen
+(**Connect your altengine**), which keeps the values in that browser.
+
+If your instances are named differently, the function needs `DUTYBOARD_DATASTORE`,
+`DUTYBOARD_AUTH`, `DUTYBOARD_CHANNEL`, `DUTYBOARD_BLOB` and `DUTYBOARD_SEARCH` as `env`-exposure
+secrets; the provisioner sets them for the names it found.
+
+## Working on DutyBoard
+
+From nothing, against the local emulator:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/altlimit/dutyboard/main/scripts/provision.sh | sh
 ```
 
-It installs `alt` and, through it, [sitegen](https://github.com/altlimit/sitegen), the
-altengine emulator and `dutyboard`; clones the repo; installs the npm dependencies; starts the
-emulator if nothing is answering; builds the function, the console and the site; and has
-`dutyboard --provision-only` provision the emulator and deploy what was just built. It is safe
-to re-run — an instance that exists is left alone, and an emulator that is already up is used
-rather than restarted, so a re-run does not throw away the board you were testing on.
-
-In a checkout it is `npm run provision`, and `--smoke` adds the end-to-end test at the end.
+It installs `alt` and, through it, the altengine emulator and `dutyboard`; clones the repo;
+installs the npm dependencies; starts the emulator if nothing is answering; builds the function
+and the console; and has `dutyboard --provision-only` provision the emulator. It is safe to re-run
+— an emulator that is already up is used rather than restarted, so a re-run does not throw away
+the board you were testing on. In a checkout it is `npm run provision`, and `--smoke` adds the
+end-to-end test at the end.
 
 An empty board shows you nothing, so there is a seeder:
 
@@ -145,23 +197,18 @@ npm run demo        # a board mid-flight, and the account to sign in with
 ```
 
 It drives the real API — poll, claim, complete, ask, interrupt — so every column has
-something in it and one duty is parked on a question waiting for an answer. That question
-is the product; answer it and watch the duty go back to the front of the queue.
+something in it and one duty is parked on a question waiting for an answer.
 
-The console is pinned to port 5173 (`strictPort`), because the origin is baked into two
-allowlists at provision time and a silent move to 5174 gives you a console that loads and
+The console's dev server is pinned to port 5173 (`strictPort`), because the origin is baked into
+two allowlists at provision time and a silent move to 5174 gives you a console that loads and
 then fails every call. If something else owns 5173, move both halves together:
 
 ```bash
 DUTYBOARD_PORT=5180 npm run setup && DUTYBOARD_PORT=5180 npm run dev
 ```
 
-Then, with [taskr](https://github.com/altlimit/taskr), one command starts everything —
-the emulator, provisioning, the console and the marketing site:
-
-```bash
-taskr "Start All"
-```
+With [taskr](https://github.com/altlimit/taskr), `taskr "Start All"` starts the emulator,
+provisioning, the console and the marketing site.
 
 ### The commands
 
@@ -169,204 +216,39 @@ taskr "Start All"
 | --- | --- |
 | `npm run provision` | Everything below, in order, from nothing. `--hosted` for hosted altengine. |
 | `altengine dev` | The emulator: every data plane plus an admin console, on :9191. |
-| `npm run setup` | Bundles the function and provisions the emulator from this checkout: instances, `backend/`, the function and its CORS list. `ALTENGINE_URL` retargets it. |
-| `npm run deploy` | The same, against hosted altengine unless `ALTENGINE_URL` says otherwise — and the console is published too. |
-| `npm run dev` | The console, on :5173/app/. |
+| `npm run setup` | Bundles the function and provisions the emulator from this checkout. |
+| `npm run deploy` | Builds the function and console and provisions hosted altengine from this checkout, console included. |
+| `npm run dev` | The console, on :5173. |
 | `npm run dev:site` | The marketing site, watched, on :8888. |
-| `npm run build` | Both, into `public/`. |
-| `npm run preview` | Serves `public/` as a static host would, rewrite included, on :4173. |
-| `npm run deploy:site` | Uploads `public/` to an altengine **static** instance and makes it live. |
+| `npm run build` | The function, the console and the site. `build:fn`, `build:app` and `build:site` do one each. |
+| `npm run deploy:site` | Uploads `site/public` to the static instance behind www.dutyboard.com and makes it live. |
 | `npm run demo` | Fills a board with a plausible afternoon's work, and prints the sign-in. |
 | `npm run smoke` | The whole state machine end to end, plus a cross-tenant matrix over every endpoint. |
 
-`altengine dev` is the *only* altengine CLI command involved: there is no `altengine apply`
-or `altengine deploy`. Provisioning is HTTP — the emulator's admin API locally, the MCP
-endpoint hosted — which is why it lives in [`cli/internal/provision`](cli/internal/provision)
-rather than in a list of CLI invocations. `npm run setup` and `npm run deploy` run it with
-`go run`, so a checkout needs Go 1.25 as well as Node.
+Provisioning is HTTP — the emulator's admin API locally, the MCP endpoint hosted — which is why
+it lives in [`cli/internal/provision`](cli/internal/provision). `npm run setup` and
+`npm run deploy` run it with `go run`, so a checkout needs Go 1.25 as well as Node. `npm run setup`
+is not optional: instances auto-create on first use but their *config* does not, so the console
+would sign you up and then get 403 on every read.
 
-`npm run setup` is not optional. Instances auto-create on first use but their *config*
-does not: a fresh auth instance collects only an email and grants no access at all, so the
-console would sign you up and then get 403 on every read.
-
-### Deploying to hosted altengine
+### Publishing the marketing site
 
 ```bash
-dutyboard --provision-only          # or, from a checkout: npm run provision -- --hosted
-```
-
-That key needs the **MCP / AI agent access** toggles on the key form, which are off by
-default: `Instances & data: Write` and `Functions: Write`. Not Full — nothing here deletes
-an instance, and Full is what lets a key do that. `Usage` and `Live desktop inspection`
-stay None. A key without them fails with "lacks 'write'", which reads like a bug in the
-script and is not one.
-
-That creates the instances, sets the datastore's config and turns channel presence on,
-declares the indexes, applies the access rules, deploys the function, publishes the console
-with a `config.js` pointing it at that function, adds the console's origin to the function's
-CORS list and the auth instance's allowed origins, and checks that `/health` reports the
-version it just deployed. The key can be kept in the OS keyring for the next upgrade.
-
-**It will not overwrite a site it did not publish.** A static deploy replaces the whole site,
-and a static instance named `dutyboard` may be serving far more than the console —
-dutyboard.com's serves the marketing site too. So an instance that already exists is only
-written to when what it serves was published by the provisioner (its deployments are labelled
-`dutyboard v<version>`) or it serves nothing. Otherwise it says so and leaves the console to you.
-
-If the platform refuses to change the auth instance's sign-up form and allowed origins from an
-API key, it prints what to set in the console instead: [`backend/signup.json`](backend/signup.json)'s
-fields, and the console's origin.
-
-On older altengine it also could not CREATE the auth and channel instances — both mint a
-signing secret at creation, and `create_instance` would not do that. It tries, lists anything
-refused as console work, and waits, re-checking every few seconds, until it is done.
-
-**On sign-up, decide before you finish.** `allowSignup` is on by default, which is what you
-want for exactly as long as it takes to create your own account — after that it is an open
-door onto your quota. Either turn it off in the console once you have signed up, or leave
-it off from the start and create your account with the MCP's `auth_create_user`, which
-sends no email and does not need the public route. Allowed origins are not a substitute:
-CORS binds browsers, and nothing else.
-
-### Publishing the site itself
-
-The whole product is a static build talking to altengine from the browser, so it can be
-hosted on altengine too — no server, no image, no sixth thing to run:
-
-```bash
-npm run build
+npm run build:site
 ALTENGINE_KEY=ak_… npm run deploy:site      # DUTYBOARD_STATIC_INSTANCE=dutyboard
 ```
 
-[`scripts/deploy-site.mjs`](scripts/deploy-site.mjs) makes three calls: it sends a manifest
-of every file's path, size and sha256; uploads only the ones the platform says it does not
-already have; then activates. Files are content-addressed, so a redeploy that changed one
-page uploads one page — and activation is a pointer move, which is why a rollback is the
-same call with an older deployment id and costs nothing.
+[`scripts/deploy-site.mjs`](scripts/deploy-site.mjs) sends a manifest of every file's path, size
+and sha256, uploads only what the platform does not already have, then activates — a pointer
+move, so a rollback is the same call with an older deployment id. It refuses a build that carries
+a console. The key needs **write** on that static instance and nothing more.
 
-`--dry-run` hashes the build and reports what would upload without a key. `--no-activate`
-uploads without publishing. The key needs **write** on the static instance and nothing more:
-deploying a website is not a reason to hold a key that can read the datastore your boards
-are in.
+[`.github/workflows/deploy-site.yml`](.github/workflows/deploy-site.yml) does the same on a push
+to `main` that changes `site/`. With no `ALTENGINE_KEY` secret it builds, says what is missing,
+and passes.
 
-[`.github/workflows/deploy-site.yml`](.github/workflows/deploy-site.yml) does the same on a
-push to `main`. **It skips until it is configured** — with no `ALTENGINE_KEY` secret it
-builds, says what is missing, and passes, rather than painting `main` red for a deploy
-nobody set up. It also passes `VITE_ALTENGINE_URL` at build time, because a console built
-with nothing set points at `http://127.0.0.1:9191` — a published page talking to a machine
-the visitor does not have.
-
-**The site's canonical host is one value**: `url` in
-[`site/data/site.json`](site/data/site.json). The page's canonical link, its Open Graph
-URL, `robots.txt` and `sitemap.xml` are all built from it — the last two used to hard-code
-`www.dutyboard.com`, which published a sitemap for a domain that does not resolve onto a
-host that does. Point it at wherever the site actually lives before building.
-
-**Two hosted names are not what you would guess**, and both were found the hard way:
-
-- **The subdomain is minted, not the instance name.** A functions instance called
-  `dutyboard` answers on `https://<random>-fn.altengine.app`, and a static instance called
-  `dutyboard` is served from `https://<random>-web.altengine.app`. The provisioner asks the
-  platform where the function landed rather than guessing — it used to print
-  `<instance>-fn.altengine.app`, which 404s, and that is the exact string a person copies
-  into `VITE_API_URL`. The subdomain can be renamed in the console; it cannot be chosen over
-  the API.
-- **The console's auth instance must be the instance ID hosted.** Sign-in carries no API
-  key, so the platform has no org in which to resolve a name and answers `404 auth instance
-  not found`. `VITE_DATASTORE_INSTANCE` and `VITE_CHANNEL_INSTANCE` stay names, because
-  those calls carry an identity token that names the org.
-
-The live deployment, built and published with exactly the commands above:
-
-```bash
-VITE_ALTENGINE_URL=https://api.altengine.net \
-VITE_API_URL=https://45kxiyroiq4dr91k-fn.altengine.app/board \
-VITE_AUTH_INSTANCE=c48ec5c3-4045-4a1d-8012-84dd2568c111 \
-VITE_DATASTORE_INSTANCE=dutyboard VITE_CHANNEL_INSTANCE=dutyboard-live \
-VITE_FUNCTIONS_INSTANCE=dutyboard npm run build
-ALTENGINE_KEY=… DUTYBOARD_STATIC_INSTANCE=dutyboard npm run deploy:site
-```
-
-| | |
-| --- | --- |
-| site + console | <https://www.dutyboard.com/> |
-| the `board` function | `https://45kxiyroiq4dr91k-fn.altengine.app/board` |
-| instances | `dutyboard` (datastore, functions, static), `dutyboard-auth`, `dutyboard-live`, `dutyboard-files`, `dutyboard-search` |
-
-Sign-up is **off** on that auth instance: accounts are made with the MCP's
-`auth_create_user` and handed a one-time code by `auth_issue_signin_code`, so the public
-sign-up route is not a door onto someone else's quota. Both origins lists — the auth
-instance's and the function's CORS — name that site and nothing else, so pointing a local
-console at this backend means adding its origin first.
-
-### Letting an agent install it
-
-Everything above is also written for an agent to do, at
-[dutyboard.com/llms.txt](https://www.dutyboard.com/llms.txt). Give an assistant the
-altengine MCP (`https://api.altengine.net/mcp`) and that URL — with a key scoped the same
-way as above — and it provisions the rest:
-the instances, the datastore settings, the access rules, the function with its grants and
-CORS, and your account.
-
-The only step that may fall to you is the auth instance's sign-up form and allowed origins.
-The agent tries it over MCP and asks you to do it in the console if that altengine does not
-expose auth config yet. Then it hands back a link that fills the console's connection form
-with what it provisioned, so the last step is one click.
-
-It does not declare indexes, and neither should you when starting from nothing. Auto-index
-is on: the first query needing one creates it and retries, and on an empty collection that
-build writes nothing. [`backend/indexes.json`](backend/indexes.json) stays the record of
-what the app asks the datastore for — worth reading, not worth running.
-
-That link can also carry a **one-time sign-in code**, so the person never types a password —
-there isn't one they know. The agent mints it with `auth_issue_signin_code`, which hands back
-the same code the instance would have emailed. That matters because a freshly provisioned
-auth instance usually cannot send mail yet, and without it the account the agent just created
-would be real, correct and unreachable. The code is single use, expires in minutes, and lives
-in the URL **fragment** — never sent to any server, not in the request line and not in a
-Referer header — which is the only reason a live credential in a link is reasonable at all.
-
-The link fills the form; it does not save. A link that silently repointed a console would
-be a tidy way to put someone's sign-in form in front of an auth instance they do not own,
-and "click here to see the board" is how that would arrive. One click applies the settings
-and, if a code came with it, signs them in.
-
-The function bundle it deploys is served from
-[dutyboard.com/board.js](https://www.dutyboard.com/board.js) — one self-contained ES module,
-byte-identical to `npm run build:fn` from this repo. That is a supply-chain position, so it
-is worth knowing you can rebuild it and compare rather than take it on trust.
-
-### You do not have to serve the console
-
-The hosted one at [dutyboard.com/app](https://www.dutyboard.com/app/) is a static page that
-talks to whatever altengine you point it at. **Connect your altengine**, on its sign-in
-screen, takes the same instance names used above, tests the connection before saving, and
-keeps them in that browser. Nothing about your boards passes through dutyboard.com — the
-page is served from there, the data never is.
-
-It needs the console's origin on two allowlists, the same two `DUTYBOARD_ORIGINS` sets
-locally: the auth instance's allowed origins, and the functions instance's CORS list.
-
-`public/` is the whole static site if you would rather serve it yourself: marketing at the
-root, the console under `/app`. Host it anywhere that can serve a directory — and, once you switch the router to history
-URLs, that can also apply the rewrite above. `npm run preview` serves it exactly that way
-locally, which is the only way to find out whether the rewrite is right before a deploy
-depends on it.
-
-If your instances are named differently, set `DUTYBOARD_DATASTORE`, `DUTYBOARD_AUTH`,
-`DUTYBOARD_CHANNEL`, `DUTYBOARD_BLOB` and `DUTYBOARD_FN_INSTANCE` for the deploy, the
-matching `VITE_*` vars for the console, and add the names as `env`-exposure secrets on the
-functions instance so the deployed code resolves them too.
-
-`DUTYBOARD_CONSOLE_URL`, also an `env`-exposure secret, is where the console is served. The
-function cannot work it out, and a `dutyboard` daemon that has just started pairing reads it from
-`/health` to tell you where to approve it.
-
-`DUTYBOARD_BLOB` has no `VITE_*` twin, and that is not an omission: the console never names
-the blob instance. It asks the function for an upload URL and sends the file to whatever
-comes back, so where attachments are stored is the function's business alone. `/health`
-reports whether they are configured, which is what the console's **Connect your altengine**
-screen shows.
+The site's canonical host is `url` in [`site/data/site.json`](site/data/site.json); the canonical
+link, Open Graph URL, `robots.txt` and `sitemap.xml` are built from it.
 
 ## Sharing a board
 

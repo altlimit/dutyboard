@@ -46,14 +46,9 @@ jobs:
           cache-dependency-path: cli/go.sum
       - run: npm ci
 
-      # sitegen builds the site, which is where llms.txt comes from. Pinned, like deploy-site.yml.
-      - run: |
-          go install github.com/altlimit/sitegen@v1.0.38
-          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
-
-      # Built with no VITE_* values: the console a binary deploys is pointed at its deployment by
-      # the /app/config.js the provisioner writes, not by anything baked in here.
-      - run: npm run build
+      # The function and the console — what a binary provisions. Built with no VITE_* values: the
+      # console is pointed at its deployment by the config.js the provisioner writes next to it.
+      - run: npm run build:fn && npm run build:app
       - run: node scripts/stage-cli-assets.mjs
       - run: |
           mkdir -p release

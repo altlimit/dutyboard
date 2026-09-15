@@ -1,10 +1,10 @@
 <script setup>
 // Point this console at someone else's altengine.
 //
-// The app has always read its target from localStorage before falling back to what it was
-// built with (see config.js) — this is the screen that writes those values. It is what
-// makes ONE hosted console usable against YOUR account: the page is served from
-// dutyboard.com, the data never is.
+// The app reads its target from localStorage before falling back to the config.js deployed next
+// to it (see config.js) — this is the screen that writes those values. A console published by the
+// provisioner already points at its own deployment, so this is for a console served some other
+// way: the dev server, or one somebody hosts themselves.
 //
 // It has to be reachable before sign-in, because signing in is already a call to the auth
 // instance being configured here.
@@ -26,8 +26,8 @@ const form = ref({
 });
 
 /**
- * A link can fill this in — that is how an agent hands the board over after provisioning
- * (see /llms.txt). Every field is a name or a URL, and none of them is a secret.
+ * A link can fill this in, for pointing a console somebody hosts at a deployment. Every field is
+ * a name or a URL, and none of them is a secret.
  *
  * It FILLS the form. It does not save. A link that silently repointed someone's console
  * would be a neat way to put their sign-in form in front of an auth instance they do not
@@ -257,11 +257,9 @@ onMounted(() => {
     </form>
 
     <p class="small muted">
-      Not set up yet? Give an agent your altengine connection and
-      <a href="/llms.txt">dutyboard.com/llms.txt</a> — it provisions everything and hands back a
-      link that fills this form in. Or do it
-      <a :href="'https://github.com/altlimit/dutyboard#deploying-to-hosted-altengine'">in one command</a>
-      yourself, then come back here. Or
+      Not set up yet? <code>dutyboard --provision-only</code> sets up a DutyBoard in your altengine
+      account and publishes a console for it —
+      <a href="https://github.com/altlimit/dutyboard#run-your-own">see how</a>. Or
       <router-link :to="{ name: 'signin' }">go back to signing in</router-link>.
     </p>
   </div>

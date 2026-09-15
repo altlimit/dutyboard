@@ -19,7 +19,7 @@ const version = JSON.parse(readFileSync(join(root, "package.json"), "utf8")).ver
 
 const need = [
   ["functions/dist/bundle.js", "npm run build:fn"],
-  ["public/app/index.html", "npm run build:app"],
+  ["app/dist/index.html", "npm run build:app"],
 ];
 for (const [file, fix] of need) {
   if (!existsSync(join(root, file))) {
@@ -38,9 +38,8 @@ const copy = (from, to) => {
   cpSync(join(root, from), join(out, to), { recursive: true });
 };
 copy("functions/dist/bundle.js", "function/bundle.js");
-copy("public/app", "console");
+copy("app/dist", "console");
 copy("agent/OPERATING.md", "agent.md");
-if (existsSync(join(root, "public/llms.txt"))) copy("public/llms.txt", "llms.txt");
 for (const f of ["indexes.json", "access.json", "signup.json"]) copy(`backend/${f}`, `backend/${f}`);
 writeFileSync(join(out, "VERSION"), version + "\n");
 

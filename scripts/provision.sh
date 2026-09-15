@@ -143,14 +143,6 @@ else
     "  https://go.dev/dl                  to run it from this checkout"
 fi
 
-# sitegen builds the marketing site; without it `npm run build` produces only the console.
-if ! have sitegen; then
-  say "installing sitegen…"
-  alt install altlimit/sitegen >/dev/null || die "could not install sitegen" \
-    "  alt install altlimit/sitegen"
-fi
-say "sitegen    present"
-
 # The emulator. Only the local target needs it, and there is no published release yet, so
 # a source checkout next door is a real fallback rather than a courtesy.
 if [ "$TARGET" = local ] && [ "$START_EMULATOR" = 1 ] && ! have altengine; then
@@ -234,8 +226,8 @@ if [ "$TARGET" = local ]; then
 fi
 
 # --- 4. build, then provision and deploy it ------------------------------------------
-step "Building the function, the console and the site"
-npm run --silent build
+step "Building the function and the console"
+npm run --silent build:fn && npm run --silent build:app
 
 step "Provisioning and deploying"
 LOCAL_FLAG=""
@@ -255,9 +247,9 @@ fi
 printf '\n%s✔ DutyBoard is provisioned%s\n\n' "$B" "$R"
 if [ "$TARGET" = local ]; then
   say "Start everything:   taskr \"Start All\"      (or: npm run dev)"
-  say "Console:            http://localhost:5173/app/"
+  say "Console:            http://localhost:5173/"
   say "Marketing site:     http://localhost:8888/"
-  say "Built output:       public/            (npm run preview serves it as production would)"
+  say "Built console:      app/dist/          (what the provisioner publishes to a deployment's static site)"
 else
   say "The console is published to your static instance unless that instance serves a site"
   say "the provisioner did not publish — the output above says which."

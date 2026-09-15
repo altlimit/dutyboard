@@ -6,7 +6,8 @@
   "url": "https://www.dutyboard.com",
   "image": "/img/og.png",
   "locale": "en_US",
-  "appUrl": "/app/",
   "repoUrl": "https://github.com/altlimit/dutyboard",
-  "llmsUrl": "/llms.txt"
+  "llmsUrl": "/llms.txt",
+  "startUrl": "/#start",
+  "altUrl": "https://github.com/altlimit/alt"
 }

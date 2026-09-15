@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -36,8 +37,8 @@ type fakeHosted struct {
 	uploads     map[string][]byte
 	manifest    map[string]string // path → hash
 	version     string
-	liveLabel   string // the message of the live static deployment, "" for none
-	staticHits  int
+	liveLabels  map[string]string // static instance → the message of its live deployment
+	staticSites map[string]int    // static instance → deployments made to it
 }
 
 func newFake(t *testing.T, version string) *fakeHosted {
@@ -49,6 +50,8 @@ func newFake(t *testing.T, version string) *fakeHosted {
 		deployed:    map[string]int{},
 		secrets:     map[string]map[string]any{},
 		uploads:     map[string][]byte{},
+		liveLabels:  map[string]string{},
+		staticSites: map[string]int{},
 		version:     version,
 	}
 	f.srv = httptest.NewServer(http.HandlerFunc(f.serve))
@@ -124,8 +127,8 @@ func (f *fakeHosted) serve(w http.ResponseWriter, r *http.Request) {
 			toolOK(w, msg.ID, map[string]any{"config": cfg})
 		case "static_list_deployments":
 			list := []any{}
-			if f.liveLabel != "" {
-				list = append(list, map[string]any{"id": "dep0", "message": f.liveLabel, "live": true})
+			if label := f.liveLabels[fmt.Sprint(a["instance"])]; label != "" {
+				list = append(list, map[string]any{"id": "dep0", "message": label, "live": true})
 			}
 			toolOK(w, msg.ID, map[string]any{"deployments": list})
 		case "auth_set_rules":
@@ -183,7 +186,7 @@ func (f *fakeHosted) serve(w http.ResponseWriter, r *http.Request) {
 			} `json:"files"`
 		}
 		_ = json.Unmarshal(body, &req)
-		f.staticHits++
+		f.staticSites[strings.Split(p, "/")[3]]++
 		f.manifest = map[string]string{}
 		uploads := []any{}
 		for path, file := range req.Files {
@@ -217,7 +220,7 @@ func testAssets(t *testing.T, version string) *assets.Bundle {
 	files := map[string]string{
 		"VERSION":            version,
 		"function/bundle.js": "export default { fetch() {} }",
-		"console/index.html": "<!doctype html><script src=\"/app/config.js\"></script>",
+		"console/index.html": "<!doctype html><script src=\"config.js\"></script>",
 		"console/config.js":  "window.DUTYBOARD_CONFIG = null;",
 		"agent.md":           "# Working from DutyBoard",
 	}
@@ -265,7 +268,7 @@ func TestHostedFromNothing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !res.Created || res.Names != NamesFor("dutyboard") {
+	if !res.Created || res.Names != NamesFor("dutyboard") || res.Names.Static != "dutyboard-console" {
 		t.Fatalf("expected a new deployment named dutyboard, got %+v", res)
 	}
 	for service, name := range NamesFor("dutyboard").Map() {
@@ -286,7 +289,7 @@ func TestHostedFromNothing(t *testing.T) {
 		t.Error("channel presence was not turned on")
 	}
 
-	cfg := f.file(t, "/app/config.js")
+	cfg := f.file(t, "/config.js")
 	if !strings.Contains(cfg, `"auth": "id-auth-dutyboard-auth"`) || !strings.Contains(cfg, `"api": "`+res.APIURL+`"`) {
 		t.Errorf("console config does not point at this deployment:\n%s", cfg)
 	}
@@ -297,7 +300,7 @@ func TestHostedFromNothing(t *testing.T) {
 		t.Error("agent.md was not published")
 	}
 
-	if res.ConsoleURL != f.srv.URL+"/site/app/" {
+	if res.ConsoleURL != f.srv.URL+"/site/" {
 		t.Errorf("console URL = %q", res.ConsoleURL)
 	}
 	cors := f.configs["functions/dutyboard"]["corsOrigins"]
@@ -413,20 +416,61 @@ func TestHostedNeverOverwritesASiteItDidNotPublish(t *testing.T) {
 	for service, name := range NamesFor("dutyboard").Map() {
 		f.add(service, name)
 	}
-	f.liveLabel = "a1b2c3d" // what deploy-site.mjs labels a marketing-site deploy with
+	f.add("static", "dutyboard")
+	f.liveLabels["dutyboard"] = "a1b2c3d" // what deploy-site.mjs labels a marketing-site deploy with
 	res, err := Run(context.Background(), Options{Client: hosted(f.srv.URL), Assets: testAssets(t, "9.9.9"), UI: quietUI(), Instance: "dutyboard"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if f.staticHits != 0 || res.ConsoleURL != "" {
-		t.Fatalf("the console was published over a site this program did not make (%d deploys)", f.staticHits)
+	if f.staticSites["dutyboard"] != 0 || res.ConsoleURL == "" {
+		t.Fatalf("the console should go to a site of its own, not over one this program did not make: %v", f.staticSites)
 	}
+	if f.staticSites["dutyboard-console"] != 1 {
+		t.Fatalf("the console was not published to dutyboard-console: %v", f.staticSites)
+	}
+}
 
-	f.liveLabel = "dutyboard v9.9.8"
+func TestHostedKeepsAConsoleSiteItMadeBefore(t *testing.T) {
+	f := newFake(t, "9.9.9")
+	for service, name := range NamesFor("dutyboard").Map() {
+		if service != "static" {
+			f.add(service, name)
+		}
+	}
+	f.add("static", "dutyboard") // where consoles were published, under /app, before they had a site of their own
+	f.functions["dutyboard"] = map[string]string{"datastore:dutyboard": "full", "auth:dutyboard-auth": "write"}
+	f.liveLabels["dutyboard"] = "dutyboard v9.9.8"
+	res, err := Run(context.Background(), Options{Client: hosted(f.srv.URL), Assets: testAssets(t, "9.9.9"), UI: quietUI(), Instance: "dutyboard"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.staticSites["dutyboard"] != 1 || res.Names.Static != "dutyboard" {
+		t.Fatalf("a console this program published before should be upgraded in place: %v", f.staticSites)
+	}
+	if _, ok := f.inv.Find("static", "dutyboard-console"); ok {
+		t.Error("a second console site was created")
+	}
+	if !strings.Contains(f.file(t, "/app/index.html"), "location.hash") {
+		t.Error("old /app links are not sent on to the console at the root")
+	}
+}
+
+func TestHostedTakesDutyboardComOffTheOrigins(t *testing.T) {
+	f := newFake(t, "9.9.9")
+	for service, name := range NamesFor("dutyboard").Map() {
+		f.add(service, name)
+	}
+	f.inv["static"] = nil
+	f.add("static", "dutyboard-console")
+	f.configs["auth/dutyboard-auth"] = map[string]any{"settings": map[string]any{"allowedOrigins": []any{"https://www.dutyboard.com", "https://mine.example"}}}
+	f.configs["functions/dutyboard"] = map[string]any{"corsOrigins": []any{"https://www.dutyboard.com", "https://mine.example"}}
 	if _, err := Run(context.Background(), Options{Client: hosted(f.srv.URL), Assets: testAssets(t, "9.9.9"), UI: quietUI(), Instance: "dutyboard"}); err != nil {
 		t.Fatal(err)
 	}
-	if f.staticHits != 1 {
-		t.Fatal("a console this program published before should be upgraded")
+	for _, list := range []any{f.configs["functions/dutyboard"]["corsOrigins"], f.configs["auth/dutyboard-auth"]["settings"].(map[string]any)["allowedOrigins"]} {
+		b, _ := json.Marshal(list)
+		if strings.Contains(string(b), "dutyboard.com") || !strings.Contains(string(b), "https://mine.example") || !strings.Contains(string(b), f.srv.URL) {
+			t.Errorf("origins should lose dutyboard.com, keep the rest, and gain the console: %s", b)
+		}
 	}
 }
