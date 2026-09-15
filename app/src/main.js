@@ -3,4 +3,7 @@ import App from "./App.vue";
 import { router } from "./router.js";
 import "./styles.css";
 
+import { watchNotifications } from "./lib/notify.js";
+
 createApp(App).use(router).mount("#app");
+watchNotifications();

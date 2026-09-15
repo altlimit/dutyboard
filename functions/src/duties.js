@@ -36,6 +36,7 @@
 //      cannot both win. A `setup` or `rules` duty needs the board to itself: it is claimed only
 //      when nothing else is active, and nothing else is claimed while it is.
 
+import { notifyNeedsYou } from "./notify.js";
 import { badRequest, conflict, forbidden, notFound, str, oneOf, intIn, clip } from "./http.js";
 import { dutyId, threadId } from "./ids.js";
 import { putOp } from "./store.js";
@@ -706,6 +707,9 @@ export async function checkpointDuty(ctx, body) {
     status: state,
     ...(freed ? { ag: agentEvent(freed, null, now) } : {}),
   });
+  if (setStatus === "needs_decision" && duty.status !== "needs_decision") {
+    await notifyNeedsYou(ctx, project, duty, options.length ? `${message} (${options.join(" / ")})` : message);
+  }
   return { ok: true, state, duty_id: duty.key, entry: { id: entryKey, ...entry } };
 }
 

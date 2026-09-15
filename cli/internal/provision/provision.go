@@ -61,6 +61,11 @@ func NamesFor(prefix string) Names {
 // would let a page there call a deployment it has no business reaching.
 var retiredOrigins = []string{"https://www.dutyboard.com", "https://dutyboard.com"}
 
+// PushHosts are the browsers' push services, which the function must reach to send a notification to
+// a device with no console open — and nothing else. Kept in step with PUSH_HOSTS in
+// functions/src/webpush.js.
+var PushHosts = []string{"fcm.googleapis.com", "updates.push.services.mozilla.com", "web.push.apple.com", "*.notify.windows.com"}
+
 // Map is the names by service, as config.json keeps them.
 func (n Names) Map() map[string]string {
 	return map[string]string{
@@ -609,10 +614,12 @@ func allowOrigins(ctx context.Context, c *altengine.Client, u *ui.UI, n Names, o
 	for _, gone := range removed(have, cors) {
 		u.OK("function CORS: removed %s, which serves no console", gone)
 	}
-	if err := c.SetFunctionSettings(ctx, n.Functions, cors); err != nil {
+	hosts := mergeStrings(stringList(fnCfg["allowedHosts"]), PushHosts)
+	if err := c.SetFunctionSettings(ctx, n.Functions, cors, hosts); err != nil {
 		return fmt.Errorf("function CORS: %w", err)
 	}
 	u.OK("function CORS: %s", strings.Join(cors, ", "))
+	u.OK("function may reach: %s (push notifications)", strings.Join(hosts, ", "))
 
 	var signup map[string]any
 	if err := a.JSON("signup.json", &signup); err != nil {

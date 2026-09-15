@@ -91,7 +91,7 @@ func runLocal(ctx context.Context, o Options) (*Result, error) {
 		return nil, err
 	}
 	// A functions instance comes into being on its first deploy, so its CORS list is set after.
-	if err := c.SetFunctionSettings(ctx, n.Functions, origins); err != nil {
+	if err := c.SetFunctionSettings(ctx, n.Functions, origins, PushHosts); err != nil {
 		return nil, fmt.Errorf("function CORS: %w", err)
 	}
 	if secrets := n.secrets(); len(secrets) > 0 {

@@ -1,7 +1,7 @@
 {
   "_comment": [
     "Composite indexes, in the order the planner needs them: equality-filtered fields first,",
-    "then the field the query sorts on. Field order is not interchangeable — an index built",
+    "then the field the query sorts on. Field order is not interchangeable \u2014 an index built",
     "the other way round will not serve the query it was built for.",
     "",
     "Auto-indexing is left ON, so a query we did not anticipate still runs (and says so in",
@@ -10,78 +10,269 @@
     "record of what this app actually asks the datastore for.",
     "",
     "Every console query carries an extra `owner_uid = $auth.uid` filter that the row rules",
-    "AND in server-side — which is why the console indexes lead with owner_uid and the",
+    "AND in server-side \u2014 which is why the console indexes lead with owner_uid and the",
     "function's own (organization-level, no rules) do not.",
     "",
-    "The `member:` entries serve the second branch of a shared board's read rule — `project_id in",
-    "$auth.claims.boards` — which the platform plans as a separate query with its own index. Declare",
+    "The `member:` entries serve the second branch of a shared board's read rule \u2014 `project_id in",
+    "$auth.claims.boards` \u2014 which the platform plans as a separate query with its own index. Declare",
     "them: auto-indexing on hosted altengine builds only ONE missing index per call, so a read whose",
     "two branches both lack one fails the first time it is asked (fixed in the platform at",
     "altengineapp 9ac661a, not yet deployed at the time of writing)."
   ],
   "duties": [
-    { "fields": ["project_id", "status", "prio_rank", "created_at"], "for": "the scheduler: the runnable queue, highest priority then oldest first" },
     {
-      "fields": ["holder"],
+      "fields": [
+        "project_id",
+        "status",
+        "prio_rank",
+        "created_at"
+      ],
+      "for": "the scheduler: the runnable queue, highest priority then oldest first"
+    },
+    {
+      "fields": [
+        "holder"
+      ],
       "unique": true,
       "for": "THE OTHER HALF OF THE MUTEX. `holder` is '<project>:<agent>' while a duty is active and null otherwise, so one agent cannot hold two duties: the second claim's transaction is refused outright. The board is in the value because agent ids are only unique within a board. Nulls do not collide, so any number of duties may be unheld."
     },
-    { "fields": ["owner_uid", "project_id", "status", "updated_at:desc"], "for": "console: one board column, most recently touched first" },
-    { "fields": ["owner_uid", "project_id", "status", "prio_rank", "created_at"], "for": "console: the Queued column, in the order the scheduler will take them — the same order as the index above it, so the top of that column is the duty an agent claims next" },
-    { "fields": ["owner_uid", "project_id", "updated_at:desc"], "for": "console: whole-board activity" },
-    { "fields": ["project_id", "status", "updated_at"], "for": "member: a board column or the working set, read by someone the board is shared with" },
     {
-      "fields": ["lane"],
+      "fields": [
+        "owner_uid",
+        "project_id",
+        "status",
+        "updated_at:desc"
+      ],
+      "for": "console: one board column, most recently touched first"
+    },
+    {
+      "fields": [
+        "owner_uid",
+        "project_id",
+        "status",
+        "prio_rank",
+        "created_at"
+      ],
+      "for": "console: the Queued column, in the order the scheduler will take them \u2014 the same order as the index above it, so the top of that column is the duty an agent claims next"
+    },
+    {
+      "fields": [
+        "owner_uid",
+        "project_id",
+        "updated_at:desc"
+      ],
+      "for": "console: whole-board activity"
+    },
+    {
+      "fields": [
+        "project_id",
+        "status",
+        "updated_at"
+      ],
+      "for": "member: a board column or the working set, read by someone the board is shared with"
+    },
+    {
+      "fields": [
+        "lane"
+      ],
       "unique": true,
       "for": "THE PARALLEL LIMIT. `lane` is '<project>#<n>' while a duty is active on a board with runner.parallel set, and null otherwise, so two claims racing for the last free lane cannot both land. The function creates this on demand too."
     },
-    { "fields": ["project_id", "kind", "status"], "for": "the function: is a rules duty already open on this board" },
-    { "fields": ["project_id", "reserved_for", "kind", "status"], "for": "the function: is a setup duty already open for this machine" }
+    {
+      "fields": [
+        "project_id",
+        "kind",
+        "status"
+      ],
+      "for": "the function: is a rules duty already open on this board"
+    },
+    {
+      "fields": [
+        "project_id",
+        "reserved_for",
+        "kind",
+        "status"
+      ],
+      "for": "the function: is a setup duty already open for this machine"
+    }
   ],
   "threads": [
-    { "fields": ["duty_id", "created_at"], "for": "the function: a duty's decision log" },
-    { "fields": ["owner_uid", "duty_id", "created_at"], "for": "console: the same log, read directly" },
-    { "fields": ["duty_id", "project_id", "created_at"], "for": "member: the same log, read by someone the board is shared with" }
+    {
+      "fields": [
+        "duty_id",
+        "created_at"
+      ],
+      "for": "the function: a duty's decision log"
+    },
+    {
+      "fields": [
+        "owner_uid",
+        "duty_id",
+        "created_at"
+      ],
+      "for": "console: the same log, read directly"
+    },
+    {
+      "fields": [
+        "duty_id",
+        "project_id",
+        "created_at"
+      ],
+      "for": "member: the same log, read by someone the board is shared with"
+    }
   ],
   "projects": [
-    { "fields": ["owner_uid", "created_at:desc"], "for": "both: a person's boards" }
+    {
+      "fields": [
+        "owner_uid",
+        "created_at:desc"
+      ],
+      "for": "both: a person's boards"
+    }
   ],
   "tokens": [
-    { "fields": ["project_id", "created_at:desc"], "for": "the function: a board's agent tokens" }
+    {
+      "fields": [
+        "project_id",
+        "created_at:desc"
+      ],
+      "for": "the function: a board's agent tokens"
+    }
   ],
   "attachments": [
-    { "fields": ["duty_id", "created_at"], "for": "the function: the files on one duty, oldest first" },
-    { "fields": ["project_id", "created_at"], "for": "the function: sweeping a board's files when it is deleted" }
+    {
+      "fields": [
+        "duty_id",
+        "created_at"
+      ],
+      "for": "the function: the files on one duty, oldest first"
+    },
+    {
+      "fields": [
+        "project_id",
+        "created_at"
+      ],
+      "for": "the function: sweeping a board's files when it is deleted"
+    }
   ],
   "agents": [
-    { "fields": ["owner_uid", "project_id", "last_seen_at:desc"], "for": "console: which agents are working this board" },
-    { "fields": ["project_id", "last_seen_at:desc"], "for": "member: the same strip; also the function's own board/open" },
     {
-      "fields": ["active_duty_id"],
+      "fields": [
+        "owner_uid",
+        "project_id",
+        "last_seen_at:desc"
+      ],
+      "for": "console: which agents are working this board"
+    },
+    {
+      "fields": [
+        "project_id",
+        "last_seen_at:desc"
+      ],
+      "for": "member: the same strip; also the function's own board/open"
+    },
+    {
+      "fields": [
+        "active_duty_id"
+      ],
       "unique": true,
-      "for": "THE MUTEX, not a query. Two agents cannot both hold one duty because the datastore refuses the second write of the same active_duty_id, which fails that whole claim transaction and leaves the duty untouched. Nulls do not collide, so any number of agents may be idle. The function creates this on demand too (see store.ensureUniqueIndex) — auto-indexing would never make it, because what a query needs is never unique."
+      "for": "THE MUTEX, not a query. Two agents cannot both hold one duty because the datastore refuses the second write of the same active_duty_id, which fails that whole claim transaction and leaves the duty untouched. Nulls do not collide, so any number of agents may be idle. The function creates this on demand too (see store.ensureUniqueIndex) \u2014 auto-indexing would never make it, because what a query needs is never unique."
     }
   ],
   "machines": [
-    { "fields": ["owner_uid", "created_at:desc"], "for": "the function: a person's machines" },
-    { "fields": ["machine_id"], "for": "the function: a machine by the id the console knows it by" },
-    { "fields": ["pairing_id"], "unique": true, "for": "THE PAIRING MUTEX: one pairing becomes at most one machine, however many polls race for its key" }
+    {
+      "fields": [
+        "owner_uid",
+        "created_at:desc"
+      ],
+      "for": "the function: a person's machines"
+    },
+    {
+      "fields": [
+        "machine_id"
+      ],
+      "for": "the function: a machine by the id the console knows it by"
+    },
+    {
+      "fields": [
+        "pairing_id"
+      ],
+      "unique": true,
+      "for": "THE PAIRING MUTEX: one pairing becomes at most one machine, however many polls race for its key"
+    }
   ],
   "pairings": [
-    { "fields": ["user_code"], "unique": true, "for": "the function: the pairing a person typed the code of; unique so a code names one machine" },
-    { "fields": ["expires_at"], "for": "the function: sweeping pairings nobody finished" }
+    {
+      "fields": [
+        "user_code"
+      ],
+      "unique": true,
+      "for": "the function: the pairing a person typed the code of; unique so a code names one machine"
+    },
+    {
+      "fields": [
+        "expires_at"
+      ],
+      "for": "the function: sweeping pairings nobody finished"
+    }
   ],
   "machine_links": [
-    { "fields": ["machine_id"], "for": "the function: the boards one machine works" },
-    { "fields": ["project_id"], "for": "the function: the machines on one board" },
-    { "fields": ["project_id", "owner_uid"], "for": "the function: one person's machines on a board, when they leave it" }
+    {
+      "fields": [
+        "machine_id"
+      ],
+      "for": "the function: the boards one machine works"
+    },
+    {
+      "fields": [
+        "project_id"
+      ],
+      "for": "the function: the machines on one board"
+    },
+    {
+      "fields": [
+        "project_id",
+        "owner_uid"
+      ],
+      "for": "the function: one person's machines on a board, when they leave it"
+    }
   ],
   "machine_requests": [
-    { "fields": ["machine_id", "status"], "for": "the function: what one machine has been asked to set up" },
-    { "fields": ["project_id"], "for": "the function: sweeping a deleted board's requests" }
+    {
+      "fields": [
+        "machine_id",
+        "status"
+      ],
+      "for": "the function: what one machine has been asked to set up"
+    },
+    {
+      "fields": [
+        "project_id"
+      ],
+      "for": "the function: sweeping a deleted board's requests"
+    }
   ],
   "memberships": [
-    { "fields": ["uid"], "for": "the function: the boards one person is a member of — their claim, and their board list" },
-    { "fields": ["project_id", "created_at"], "for": "the function: a board's members, oldest first; also the sweep when a board is deleted" }
+    {
+      "fields": [
+        "uid"
+      ],
+      "for": "the function: the boards one person is a member of \u2014 their claim, and their board list"
+    },
+    {
+      "fields": [
+        "project_id",
+        "created_at"
+      ],
+      "for": "the function: a board's members, oldest first; also the sweep when a board is deleted"
+    }
+  ],
+  "push_subscriptions": [
+    {
+      "fields": [
+        "uid"
+      ],
+      "for": "the function: the devices one person gets notifications on"
+    }
   ]
 }

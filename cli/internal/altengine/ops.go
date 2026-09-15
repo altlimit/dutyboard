@@ -188,8 +188,11 @@ func (c *Client) DeployFunction(ctx context.Context, instance, name, code string
 }
 
 // SetFunctionSettings sets a functions instance's CORS origins and outbound allowlist.
-func (c *Client) SetFunctionSettings(ctx context.Context, instance string, cors []string) error {
-	settings := map[string]any{"corsOrigins": cors, "allowedHosts": []string{}}
+func (c *Client) SetFunctionSettings(ctx context.Context, instance string, cors, allowedHosts []string) error {
+	if allowedHosts == nil {
+		allowedHosts = []string{}
+	}
+	settings := map[string]any{"corsOrigins": cors, "allowedHosts": allowedHosts}
 	if c.Local() {
 		return c.Do(ctx, http.MethodPut, "/v1/functions/"+Esc(instance)+"/settings", settings, nil)
 	}

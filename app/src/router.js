@@ -7,6 +7,7 @@ const routes = [
   // Public, and it has to be: it configures the auth instance that signing in would use.
   { path: "/connect", name: "connect", component: () => import("./views/Connect.vue"), meta: { title: "Connect your altengine", public: true } },
   { path: "/pair", name: "pair", component: () => import("./views/Pair.vue"), meta: { title: "Pair a machine" } },
+  { path: "/notifications", name: "notifications", component: () => import("./views/Notifications.vue"), meta: { title: "Notifications" } },
   { path: "/machines", name: "runners", component: () => import("./views/Runners.vue"), meta: { title: "Your machines" } },
   { path: "/b/:projectId", name: "board", component: () => import("./views/Board.vue"), props: true, meta: { title: "Board" } },
   { path: "/b/:projectId/settings", name: "settings", component: () => import("./views/Settings.vue"), props: true, meta: { title: "Board settings" } },

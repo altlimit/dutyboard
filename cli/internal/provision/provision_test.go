@@ -322,6 +322,9 @@ func TestHostedFromNothing(t *testing.T) {
 	if res.ConsoleURL != f.srv.URL+"/site/" {
 		t.Errorf("console URL = %q", res.ConsoleURL)
 	}
+	if b, _ := json.Marshal(f.configs["functions/dutyboard"]["allowedHosts"]); !strings.Contains(string(b), "fcm.googleapis.com") || !strings.Contains(string(b), "web.push.apple.com") {
+		t.Errorf("the function cannot reach the push services: %s", b)
+	}
 	cors := f.configs["functions/dutyboard"]["corsOrigins"]
 	if b, _ := json.Marshal(cors); !strings.Contains(string(b), f.srv.URL) {
 		t.Errorf("the console's origin is not in the function's CORS list: %s", b)

@@ -1,0 +1,11 @@
+{
+  "name": "DutyBoard",
+  "short_name": "DutyBoard",
+  "description": "The task board your agents work from.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f6f7f9",
+  "theme_color": "#1b4fd8",
+  "icons": [{ "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }]
+}

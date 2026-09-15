@@ -314,7 +314,7 @@ export function putSigned(url, headers, file, onProgress) {
  * Live is an enhancement. If the channel instance is missing or the socket will not stay
  * up, the board still works — it just stops updating on its own.
  */
-export function subscribeLive({ projectId, dutyIds = [], mint = null }, onEvent, onState) {
+export function subscribeLive({ projectId, dutyIds = [], mint = null, mintWith = null }, onEvent, onState) {
   // A token the caller already has — `/board/open` hands one back with the board, so the
   // first connection costs no request of its own. Reconnects mint their own below, which
   // is what the endpoint stays for.
@@ -332,7 +332,8 @@ export function subscribeLive({ projectId, dutyIds = [], mint = null }, onEvent,
     firstMint = null;
     if (!minted) {
       try {
-        minted = await api("/live/token", { project_id: projectId, duty_ids: dutyIds });
+        // `mintWith` is for a channel that is not a board's — a person's own, say.
+        minted = mintWith ? await mintWith() : await api("/live/token", { project_id: projectId, duty_ids: dutyIds });
       } catch {
         setState("off");
         return scheduleReconnect();

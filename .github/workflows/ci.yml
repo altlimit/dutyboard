@@ -36,6 +36,10 @@ jobs:
       # notice. The marketing site is built by deploy-site.yml, when site/ changes.
       - run: npm run build:app
 
+      # Web Push encryption and VAPID signing, checked against an independent receiver. Nothing else
+      # can prove them without a real browser and push service.
+      - run: node scripts/webpush-check.mjs
+
       # Every script parses. They are not imported by either build, so a syntax error in one
       # would otherwise surface the first time someone ran a release step.
       - run: for f in scripts/*.mjs functions/build.mjs; do node --check "$f"; done

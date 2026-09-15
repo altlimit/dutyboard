@@ -19,6 +19,7 @@
 // for. The console reads the board directly (row rules, live over a channel) and posts
 // every change back through here.
 
+import { liveMe, pushKey, pushSubscribe, pushTest, pushUnsubscribe } from "./notify.js";
 import { HttpError, errorResponse, json, readJson, notFound, str } from "./http.js";
 import { makeStore } from "./store.js";
 import { identify } from "./identity.js";
@@ -131,6 +132,11 @@ const ROUTES = {
   "/tokens/list": listTokens,
   "/tokens/revoke": revokeToken,
   "/live/token": liveToken,
+  "/live/me": liveMe,
+  "/push/key": pushKey,
+  "/push/subscribe": pushSubscribe,
+  "/push/unsubscribe": pushUnsubscribe,
+  "/push/test": pushTest,
   "/connect/lookup": lookupPairing,
   "/connect/approve": approvePairing,
   "/connect/deny": denyPairing,

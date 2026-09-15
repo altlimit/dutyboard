@@ -340,6 +340,37 @@ async function main() {
   check("poll reports the held duty", poll.active_duty && poll.active_duty.id === soon.duty_id, poll.active_duty);
   check("a held duty is not also runnable", !titles(poll).includes("Configure auth provider"), titles(poll));
 
+  // --- being told a duty needs you ----------------------------------------
+  const myChannel = await call("/live/me", {}, human);
+  check("a person gets a channel of their own", myChannel.channels.length === 1 && /^user\./.test(myChannel.channels[0]), myChannel.channels);
+  const agentMe = await call("/live/me", {}, agent, { expectStatus: true });
+  check("and an agent token does not", agentMe.status === 403, agentMe);
+  const mySocket = await openSocket(myChannel);
+  const pushKeyA = await call("/push/key", {}, human, { expectStatus: true });
+  if (pushKeyA.status === 501) {
+    // The emulator implements only digest of Web Crypto. scripts/webpush-check.mjs proves the crypto;
+    // a hosted deployment is where a push is actually made.
+    check("without Web Crypto, push says it is unavailable rather than failing", /Web Crypto/.test(JSON.stringify(pushKeyA.json)), pushKeyA.json);
+  } else {
+    const pushKeyB = await call("/push/key", {}, human);
+    check(
+      "the deployment has one VAPID key, made on first use",
+      pushKeyA.json.public_key === pushKeyB.public_key && Buffer.from(pushKeyB.public_key, "base64url").length === 65,
+      pushKeyA,
+    );
+  }
+  const device = {
+    endpoint: `https://fcm.googleapis.com/fcm/send/smoke-${Date.now()}`,
+    keys: { p256dh: Buffer.concat([Buffer.from([4]), Buffer.alloc(64, 1)]).toString("base64url"), auth: Buffer.alloc(16, 7).toString("base64url") },
+  };
+  const notAPushService = await call("/push/subscribe", { subscription: { ...device, endpoint: "https://evil.example/push" } }, human, { expectStatus: true });
+  check("a subscription must point at a real push service", notAPushService.status === 400, notAPushService);
+  check("a device can be subscribed", (await call("/push/subscribe", { subscription: device, label: "smoke" }, human)).ok === true);
+  const strangerRemoves = await call("/push/unsubscribe", { endpoint: device.endpoint }, other0.id_token);
+  check("nobody else can turn it off", strangerRemoves.removed === false, strangerRemoves);
+  // Turned off again before the duty below parks: a push to a made-up endpoint would reach the internet.
+  check("and its owner can", (await call("/push/unsubscribe", { endpoint: device.endpoint }, human)).removed === true);
+
   // --- the non-blocking checkpoint ---------------------------------------
   const parked = await call(
     "/duty/checkpoint",
@@ -354,6 +385,13 @@ async function main() {
     agent,
   );
   check("checkpoint parks the duty", parked.state === "needs_decision", parked);
+  const told = await mySocket.next((f) => f.channel === myChannel.channels[0] && f.data && f.data.t === "needs_you" && f.data.duty_id === soon.duty_id);
+  check(
+    "the board's owner is told, on their own channel, with the question and where to answer it",
+    told && /Which provider should we use\?/.test(told.data.body) && told.data.url === `#/b/${projectId}/d/${soon.duty_id}`,
+    told,
+  );
+  mySocket.close();
 
   poll = await call("/duty/poll", { agent_id: "alpha" }, agent);
   check("parking frees the agent", poll.active_duty === null, poll.active_duty);
@@ -1326,6 +1364,13 @@ async function main() {
     "/projects/create": null,
     "/projects/list": null,
     "/me/access": null,
+    // Notifications act on the caller too: their own channel, key, and devices. Turning off a device
+    // that is not yours answers ok and removes nothing, which is checked above.
+    "/live/me": null,
+    "/push/key": null,
+    "/push/subscribe": null,
+    "/push/unsubscribe": null,
+    "/push/test": null,
   };
 
   const uncovered = ROUTE_PATHS.filter((p) => !(p in outsiderArgs));

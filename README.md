@@ -427,6 +427,26 @@ a machine cannot start, because a secret is not set there or its command is not 
 out of that machine's sessions and named on the Machines page. Editing the list is the owner's, like
 every other part of the profile that makes a machine run something.
 
+## Notifications
+
+When a duty lands in **Needs you**, everyone on its board is told — except whoever parked it. The
+console's **Notifications** page turns it on:
+
+- **In a tab.** Allow notifications once, and any open console tab — in the background, on any page —
+  shows one, from the person's own live channel (`user.<uid>`).
+- **Push.** Turned on per device, it arrives with no tab open, and on a phone: the console's service
+  worker holds a Web Push subscription, and the function sends to it. On an iPhone or iPad that works
+  only after **Add to Home Screen**, opened from there.
+
+The function signs pushes with a VAPID key it makes on first use and keeps in the deployment's
+datastore (`settings/webpush`), and encrypts each one to its device (RFC 8291), with no library —
+[`scripts/webpush-check.mjs`](scripts/webpush-check.mjs) checks both against an independent
+receiver. The provisioner allows the function to reach the browsers' push services
+(`fcm.googleapis.com`, `updates.push.services.mozilla.com`, `web.push.apple.com`,
+`*.notify.windows.com`) and nothing else. A device's subscription is its person's alone, and one its
+push service reports gone is forgotten. The local emulator has no Web Crypto beyond hashing, so push
+is hosted-only; notifications in a tab work everywhere.
+
 ## Connecting an agent
 
 Mint a token on the board's **Settings** page — tokens are the owner's to mint. Then, as an MCP server:
