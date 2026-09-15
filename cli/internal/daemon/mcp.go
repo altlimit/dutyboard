@@ -221,8 +221,15 @@ func (d *Daemon) filterTools(reply json.RawMessage, s *session) (json.RawMessage
 		}
 		out = append(out, t)
 	}
-	if s.run != nil && deploysToAltengine(d.view(s.board)) {
-		out = append(out, altengineTools...)
+	if s.run != nil {
+		// Only the tools for the kinds the board allows: a board that publishes a site is not offered a
+		// function deploy it would only refuse.
+		v := d.view(s.board)
+		for _, t := range altengineTools {
+			if kind := map[string]string{"altengine_deploy_static": "static", "altengine_deploy_function": "functions"}[t["name"].(string)]; deploysAs(v, kind) {
+				out = append(out, t)
+			}
+		}
 	}
 	return rpcResult(env.ID, map[string]any{"tools": out}), nil
 }

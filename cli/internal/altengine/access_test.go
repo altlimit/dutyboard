@@ -59,3 +59,21 @@ func TestDeployTarget(t *testing.T) {
 		t.Fatal("write on a functions instance is not enough to deploy there")
 	}
 }
+
+func TestCanDeployChecksOneKind(t *testing.T) {
+	ctx := context.Background()
+	// "cadence" is both a site the key may publish and a functions instance it may not deploy to.
+	c := fakeGrants(t, map[string]string{"cadence": "write"}, map[string]string{"cadence": "write", "api": "full"})
+	if err := c.CanDeploy(ctx, "static", "cadence"); err != nil {
+		t.Fatalf("static cadence: %v", err)
+	}
+	if err := c.CanDeploy(ctx, "functions", "cadence"); err == nil || !strings.Contains(err.Error(), "full on functions") {
+		t.Fatalf("functions cadence should be refused with what to grant: %v", err)
+	}
+	if err := c.CanDeploy(ctx, "functions", "api"); err != nil {
+		t.Fatalf("functions api: %v", err)
+	}
+	if err := c.CanDeploy(ctx, "", "api"); err != nil {
+		t.Fatalf("a plain name deployable either way: %v", err)
+	}
+}

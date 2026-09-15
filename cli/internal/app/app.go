@@ -268,11 +268,11 @@ func SetDeployKey(ctx context.Context, u *ui.UI, f Flags) error {
 					if !b.Linked || b.Profile == nil || b.Profile.Deploy.Method != "altengine" {
 						continue
 					}
-					for _, instance := range b.Profile.Deploy.AltengineInstances {
-						if kind, err := client.DeployTarget(ctx, instance); err != nil {
+					for _, t := range b.Profile.Deploy.Targets() {
+						if err := client.CanDeploy(ctx, t.Kind, t.Instance); err != nil {
 							u.Warn("%s: %v", b.ProjectID, err)
 						} else {
-							u.OK("%s: can deploy to %s %q", b.ProjectID, kind, instance)
+							u.OK("%s: can deploy to %s", b.ProjectID, t.Describe())
 						}
 					}
 				}

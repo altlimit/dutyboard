@@ -342,8 +342,10 @@ The loop is the program's, not the agent's. For each duty it:
 
 After a duty lands, a board that deploys through CI has its run watched (with the GitHub CLI): a
 failing deploy becomes an immediate duty to fix it, with the failing log in its brief. A board that
-deploys to altengine gives sessions `altengine_deploy_static` and `altengine_deploy_function`, which
-deploy only to the instances the board's profile allows, with the machine's **deploy key**. Set it with
+deploys to altengine lists what it may deploy to, each as a **static site** or a **functions** instance,
+and gives sessions `altengine_deploy_static` and `altengine_deploy_function` — only the ones those
+kinds need — which deploy only to those targets, as that kind, with the machine's **deploy key**.
+(Plain instance names from boards saved before targets had a kind still allow either.) Set it with
 `dutyboard --deploy-key`, and give that key write on each site and full on each functions instance
 your boards deploy to — nothing more, since agents run as you and could read it. The key
 `--provision-only` uses manages your whole DutyBoard and is not kept unless you say so. The runner

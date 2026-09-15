@@ -51,7 +51,7 @@ These are in force on this board. Follow them in everything you do for this duty
 {{- if .Deploy.Method}}
 - Deploys by: {{.Deploy.Method}}{{if .Deploy.Workflow}} ({{.Deploy.Workflow}}){{end}}{{if .Deploy.Command}} — `{{.Deploy.Command}}`{{end}}
 {{- if eq .Deploy.Method "ci" "ci-dispatch"}} — the daemon watches CI after your work lands; do not trigger or wait for it yourself.{{end}}
-{{- if eq .Deploy.Method "altengine"}} — after integrating, deploy with `altengine_deploy_static` or `altengine_deploy_function`, to {{join .Deploy.AltengineInstances ", "}} only.{{end}}
+{{- if eq .Deploy.Method "altengine"}} — after integrating, deploy to these and nothing else:{{range .Deploy.Targets}}{{if eq .Kind "static"}} static site `{{.Instance}}` with `altengine_deploy_static`;{{else if eq .Kind "functions"}} functions instance `{{.Instance}}` with `altengine_deploy_function`;{{else}} `{{.Instance}}` with `altengine_deploy_static` or `altengine_deploy_function`;{{end}}{{end}}{{end}}
 {{- end}}
 {{- end}}
 

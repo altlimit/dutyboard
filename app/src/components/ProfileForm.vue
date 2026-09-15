@@ -15,6 +15,13 @@ const modes = computed(() => (draft.value.agent === "codex" ? CODEX_PERMISSION_M
 const agentName = computed(() => agentLabel(draft.value.agent));
 const agentNeeds = computed(() => (AGENTS.find((a) => a.key === draft.value.agent) || AGENTS[0]).install);
 
+const addTarget = () => {
+  draft.value.deploy_targets = [...(draft.value.deploy_targets || []), { kind: "static", instance: "" }];
+};
+const removeTarget = (i) => {
+  draft.value.deploy_targets = draft.value.deploy_targets.filter((_, j) => j !== i);
+};
+
 const addServer = () => {
   draft.value.mcp_servers = [...(draft.value.mcp_servers || []), mcpServerDraft()];
 };
@@ -85,11 +92,26 @@ const removeServer = (i) => {
       <label :for="`${idPrefix}-wf`">Workflow file</label>
       <input :id="`${idPrefix}-wf`" v-model="draft.deploy_workflow" class="mono" placeholder="deploy.yml" />
     </div>
-    <div v-if="draft.deploy_method === 'altengine'" class="field">
-      <label :for="`${idPrefix}-instances`">altengine instances it may deploy to</label>
-      <input :id="`${idPrefix}-instances`" v-model="draft.deploy_instances" class="mono" placeholder="cadence" />
-      <p class="hint">Comma-separated. A session can deploy to these and nothing else, with the machine's stored key.</p>
-    </div>
+    <fieldset v-if="draft.deploy_method === 'altengine'" class="stack">
+      <legend class="label">What it may deploy to</legend>
+      <p class="hint" style="margin: 0">
+        Each altengine instance a session may deploy to, and as what: a <strong>static site</strong> (a built folder) or
+        a <strong>functions</strong> instance (a bundled function). Nothing else can be deployed to, and the machine's
+        deploy key needs write on each site and full on each functions instance.
+      </p>
+      <div v-for="(t, i) in draft.deploy_targets" :key="i" class="row">
+        <label class="sr-only" :for="`${idPrefix}-target-${i}-kind`">Kind of target {{ i + 1 }}</label>
+        <select :id="`${idPrefix}-target-${i}-kind`" v-model="t.kind" style="width: auto">
+          <option value="static">Static site</option>
+          <option value="functions">Functions</option>
+          <option v-if="t.kind === 'any'" value="any">Either (set a kind)</option>
+        </select>
+        <label class="sr-only" :for="`${idPrefix}-target-${i}-name`">Instance name of target {{ i + 1 }}</label>
+        <input :id="`${idPrefix}-target-${i}-name`" v-model="t.instance" class="mono" maxlength="60" placeholder="instance name" style="flex: 1; min-width: 8rem" />
+        <button type="button" class="link small" @click="removeTarget(i)">Remove</button>
+      </div>
+      <div><button type="button" :disabled="(draft.deploy_targets || []).length >= 10" @click="addTarget">Add a target</button></div>
+    </fieldset>
     <details class="stack">
       <summary>Commit author and SSH key <span class="muted small">(optional)</span></summary>
       <p class="hint">

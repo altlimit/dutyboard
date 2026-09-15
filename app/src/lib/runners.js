@@ -141,7 +141,11 @@ export function profileDraft(profile, runner) {
     deploy_method: (p.deploy && p.deploy.method) || "none",
     deploy_workflow: (p.deploy && p.deploy.workflow) || "",
     deploy_command: (p.deploy && p.deploy.command) || "",
-    deploy_instances: ((p.deploy && p.deploy.altengine_instances) || []).join(", "),
+    // One list in the form: targets with a kind, then plain names from before targets had one ("any").
+    deploy_targets: [
+      ...((p.deploy && p.deploy.altengine_targets) || []).map((t) => ({ kind: t.kind, instance: t.instance })),
+      ...((p.deploy && p.deploy.altengine_instances) || []).map((instance) => ({ kind: "any", instance })),
+    ],
     git_mode: (p.git && p.git.mode) || "push",
     git_author_name: (p.git && p.git.author_name) || "",
     git_author_email: (p.git && p.git.author_email) || "",
@@ -163,10 +167,9 @@ export function profilePayload(d) {
   if (d.deploy_method === "command") deploy.command = d.deploy_command.trim();
   // Sent whatever the method, because the function replaces `deploy` whole: leaving a field out
   // would erase what setup recorded there.
-  deploy.altengine_instances = d.deploy_instances
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
+  const targets = (d.deploy_targets || []).map((t) => ({ kind: t.kind, instance: String(t.instance || "").trim() })).filter((t) => t.instance);
+  deploy.altengine_targets = targets.filter((t) => t.kind !== "any");
+  deploy.altengine_instances = targets.filter((t) => t.kind === "any").map((t) => t.instance);
   return {
     profile: {
       type: d.type,

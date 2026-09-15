@@ -198,14 +198,8 @@ type Profile struct {
 		Version string `json:"version"`
 		Why     string `json:"why"`
 	} `json:"toolchain"`
-	Deploy struct {
-		Method             string   `json:"method"`
-		Workflow           string   `json:"workflow"`
-		Branch             string   `json:"branch"`
-		Command            string   `json:"command"`
-		AltengineInstances []string `json:"altengine_instances"`
-	} `json:"deploy"`
-	Git struct {
+	Deploy Deploy `json:"deploy"`
+	Git    struct {
 		Mode        string `json:"mode"`
 		AuthorName  string `json:"author_name"`
 		AuthorEmail string `json:"author_email"`
@@ -218,6 +212,43 @@ type Profile struct {
 		Copy       []string `json:"copy"`
 	} `json:"worktree"`
 	MCPServers []MCPServer `json:"mcp_servers"`
+}
+
+// Deploy is how a board's project ships.
+type Deploy struct {
+	Method   string `json:"method"`
+	Workflow string `json:"workflow"`
+	Branch   string `json:"branch"`
+	Command  string `json:"command"`
+	// AltengineInstances are names a board allowed before targets had a kind: either kind of deploy.
+	AltengineInstances []string          `json:"altengine_instances"`
+	AltengineTargets   []AltengineTarget `json:"altengine_targets"`
+}
+
+// AltengineTarget is an instance a board's sessions may deploy to, and as what.
+type AltengineTarget struct {
+	Kind     string `json:"kind"` // "static" or "functions"; "" for a plain name, which allows either
+	Instance string `json:"instance"`
+}
+
+// Targets are every altengine deploy target, the plain names among them with no kind.
+func (d Deploy) Targets() []AltengineTarget {
+	out := append([]AltengineTarget{}, d.AltengineTargets...)
+	for _, name := range d.AltengineInstances {
+		out = append(out, AltengineTarget{Instance: name})
+	}
+	return out
+}
+
+// Describe is one target as a person reads it: "static site cadence".
+func (t AltengineTarget) Describe() string {
+	switch t.Kind {
+	case "static":
+		return "static site " + t.Instance
+	case "functions":
+		return "functions instance " + t.Instance
+	}
+	return t.Instance + " (static or functions)"
 }
 
 // MCPServer is an MCP server a board's sessions are connected to. Nothing in it is secret: Secrets

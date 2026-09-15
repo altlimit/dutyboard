@@ -25,6 +25,7 @@ import { putOp } from "./store.js";
 export const PROJECT_TYPES = ["game", "website", "webapp", "mobile", "desktop", "api", "cli-lib", "other"];
 export const DEPLOY_METHODS = ["ci", "ci-dispatch", "altengine", "command", "none"];
 export const GIT_MODES = ["push", "squash", "pr"];
+export const ALTENGINE_KINDS = ["static", "functions"];
 export const RUNNER_AGENTS = ["claude-code", "codex"];
 export const PERMISSION_MODES = ["default", "acceptEdits", "plan", "bypassPermissions"];
 export const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
@@ -200,7 +201,23 @@ export function mergeProfile(stored, input) {
       workflow: str(d.workflow, "profile.deploy.workflow", { max: 200 }),
       branch: branch(d.branch, "profile.deploy.branch"),
       command: str(d.command, "profile.deploy.command", { max: 500 }),
-      altengine_instances: list(d.altengine_instances, "profile.deploy.altengine_instances", { max: 10, item: plain(60) }),
+      // Plain names allow either kind of deploy; boards made before targets had a kind keep them.
+      // Both lists are the owner's: a setup duty recording how the project deploys leaves them as they
+      // were unless it names them.
+      altengine_instances: has(d, "altengine_instances")
+        ? list(d.altengine_instances, "profile.deploy.altengine_instances", { max: 10, item: plain(60) })
+        : (next.deploy && next.deploy.altengine_instances) || [],
+      // What a session may deploy to, and as what: a static site, or a functions instance. A name can
+      // be both on altengine, and allowing one should not allow the other.
+      altengine_targets: has(d, "altengine_targets")
+        ? list(d.altengine_targets, "profile.deploy.altengine_targets", {
+            max: 10,
+            item: (t, f) => {
+              const o = obj(t, f);
+              return { kind: oneOf(o.kind, `${f}.kind`, ALTENGINE_KINDS), instance: str(o.instance, `${f}.instance`, { required: true, max: 60 }) };
+            },
+          })
+        : (next.deploy && next.deploy.altengine_targets) || [],
     };
   }
   if (has(p, "git")) {

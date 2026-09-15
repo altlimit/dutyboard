@@ -279,7 +279,11 @@ const TOOLS = [
             workflow: s("For ci / ci-dispatch: the workflow file, e.g. 'deploy.yml'."),
             branch: s("The branch a push to deploys, when it is not the default branch."),
             command: s("For command: what to run."),
-            altengine_instances: { type: "array", items: { type: "string" }, description: "For altengine: the instances this project may deploy to." },
+            altengine_targets: {
+              type: "array",
+              description: "For altengine: what this project may deploy to, and as what. Usually set by the board's owner; leave it out to keep theirs.",
+              items: { type: "object", properties: { kind: s("static or functions.", { enum: ["static", "functions"] }), instance: s("The instance name.") }, required: ["kind", "instance"] },
+            },
           },
         },
         worktree: {

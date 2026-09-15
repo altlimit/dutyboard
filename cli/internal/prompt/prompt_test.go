@@ -27,6 +27,11 @@ func TestEveryKindRenders(t *testing.T) {
 			t.Errorf("system prompt is missing %q:\n%s", want, sys)
 		}
 	}
+	p.Deploy.AltengineInstances = nil
+	p.Deploy.AltengineTargets = []board.AltengineTarget{{Kind: "static", Instance: "cadence"}, {Kind: "functions", Instance: "cadence-api"}}
+	if sys, _ := System(in); !strings.Contains(sys, "static site `cadence` with `altengine_deploy_static`") || !strings.Contains(sys, "functions instance `cadence-api` with `altengine_deploy_function`") {
+		t.Errorf("typed deploy targets are not named with their tools:\n%s", sys)
+	}
 	in.MCPServers = []MCPServer{{Name: "playwright", Note: "screenshots of UI changes", Tools: []string{"browser_take_screenshot"}}}
 	if sys, _ := System(in); !strings.Contains(sys, "**playwright** — screenshots of UI changes (tools you may use: browser_take_screenshot)") {
 		t.Errorf("the board's MCP servers are not named to the session:\n%s", sys)

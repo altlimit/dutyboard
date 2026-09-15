@@ -1033,6 +1033,13 @@ async function main() {
 
   const rawProposes = await call("/board/profile/propose", { duty_id: linked.setup_duty_id, test_command: "rm -rf /" }, rawAgent, { expectStatus: true });
   check("only the agent holding the setup duty records what setup found", rawProposes.status === 403, rawProposes.json);
+  const badTarget = await call("/projects/profile", { project_id: mBoard, profile: { deploy: { method: "altengine", altengine_targets: [{ kind: "database", instance: "x" }] } } }, human, { expectStatus: true });
+  check("a deploy target is a static site or a functions instance", badTarget.status === 400, badTarget.json);
+  await call(
+    "/projects/profile",
+    { project_id: mBoard, profile: { deploy: { method: "altengine", altengine_targets: [{ kind: "static", instance: "cadence" }, { kind: "functions", instance: "cadence-api" }] } } },
+    human,
+  );
   const proposed = await call(
     "/board/profile/propose",
     {
@@ -1047,8 +1054,9 @@ async function main() {
     { board: mBoard },
   );
   check(
-    "setup writes what it found onto the board, and leaves the rest alone",
-    proposed.profile.toolchain[0].name === "godot" && proposed.profile.deploy.method === "ci-dispatch" && proposed.profile.type === "game",
+    "setup writes what it found onto the board, and leaves the rest alone — the owner's deploy targets included",
+    proposed.profile.toolchain[0].name === "godot" && proposed.profile.deploy.method === "ci-dispatch" && proposed.profile.type === "game" &&
+      proposed.profile.deploy.altengine_targets.length === 2 && proposed.profile.deploy.altengine_targets[1].kind === "functions",
     proposed.profile,
   );
   await call("/duty/complete", { duty_id: linked.setup_duty_id, agent_id: lane1, outcome_summary: "Godot 4.7.1 installed and registered." }, mkey, { board: mBoard });

@@ -455,14 +455,14 @@ const probeName = "dutyboard-access-check"
 // that needs the deploy level and then fails harmlessly: the upload list of a deployment that does
 // not exist, and activating a function version that is not valid.
 func (c *Client) DeployTarget(ctx context.Context, instance string) (string, error) {
-	static := c.Do(ctx, http.MethodGet, "/v1/static/"+Esc(instance)+"/deployments/"+probeName+"/uploads", nil, nil)
+	static := c.probeStatic(ctx, instance)
 	if IsStatus(static, 401) {
 		return "", fmt.Errorf("altengine refused the deploy key: %v", static)
 	}
 	if allowed(static, "static instance") {
 		return "static", nil
 	}
-	fns := c.Do(ctx, http.MethodPost, "/v1/functions/"+Esc(instance)+"/"+probeName+"/activate", map[string]any{"version": -1}, nil)
+	fns := c.probeFunctions(ctx, instance)
 	if allowed(fns, "functions instance") {
 		return "functions", nil
 	}
@@ -477,6 +477,41 @@ func (c *Client) DeployTarget(ctx context.Context, instance string) (string, err
 		return "", fmt.Errorf("the deploy key cannot deploy functions to %q (%v) — give it full there", instance, fns)
 	}
 	return "", fmt.Errorf("could not check deploy access to %q: %v", instance, static)
+}
+
+func (c *Client) probeStatic(ctx context.Context, instance string) error {
+	return c.Do(ctx, http.MethodGet, "/v1/static/"+Esc(instance)+"/deployments/"+probeName+"/uploads", nil, nil)
+}
+
+func (c *Client) probeFunctions(ctx context.Context, instance string) error {
+	return c.Do(ctx, http.MethodPost, "/v1/functions/"+Esc(instance)+"/"+probeName+"/activate", map[string]any{"version": -1}, nil)
+}
+
+// CanDeploy says whether the key may deploy to instance as kind ("static" or "functions"), or why
+// not. The same harmless probes as DeployTarget, for one kind only.
+func (c *Client) CanDeploy(ctx context.Context, kind, instance string) error {
+	var err error
+	var missing, need string
+	switch kind {
+	case "static":
+		err, missing, need = c.probeStatic(ctx, instance), "static instance", "write on static"
+	case "functions":
+		err, missing, need = c.probeFunctions(ctx, instance), "functions instance", "full on functions"
+	default:
+		_, err := c.DeployTarget(ctx, instance)
+		return err
+	}
+	switch {
+	case allowed(err, missing):
+		return nil
+	case IsStatus(err, 401):
+		return fmt.Errorf("altengine refused the deploy key: %v", err)
+	case IsStatus(err, 403):
+		return fmt.Errorf("the deploy key cannot deploy to %s %q — give it %s %q", kind, instance, need, instance)
+	case IsStatus(err, 404):
+		return fmt.Errorf("there is no %s named %q", missing, instance)
+	}
+	return fmt.Errorf("could not check deploy access to %s %q: %v", kind, instance, err)
 }
 
 // allowed is a probe that got past the grant check: anything but a refusal, a missing instance, or

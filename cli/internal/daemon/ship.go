@@ -166,9 +166,14 @@ func (d *Daemon) deployNotice(ctx context.Context, v board.BoardView) string {
 	if !deploysToAltengine(v) {
 		return ""
 	}
+	targets := v.Profile.Deploy.Targets()
 	key := deployKey()
 	if key == "" {
-		return fmt.Sprintf("this board deploys to altengine (%s), and this machine has no deploy key — run `dutyboard --deploy-key` here", strings.Join(v.Profile.Deploy.AltengineInstances, ", "))
+		names := make([]string, len(targets))
+		for i, t := range targets {
+			names[i] = t.Describe()
+		}
+		return fmt.Sprintf("this board deploys to altengine (%s), and this machine has no deploy key — run `dutyboard --deploy-key` here", strings.Join(names, ", "))
 	}
 	client := altengine.New(d.opt.Config.Altengine, key)
 	if client.Local() {
@@ -176,14 +181,14 @@ func (d *Daemon) deployNotice(ctx context.Context, v board.BoardView) string {
 	}
 	sum := sha256.Sum256([]byte(key))
 	var notices []string
-	for _, instance := range v.Profile.Deploy.AltengineInstances {
-		id := hex.EncodeToString(sum[:8]) + "/" + instance
+	for _, t := range targets {
+		id := hex.EncodeToString(sum[:8]) + "/" + t.Kind + "/" + t.Instance
 		d.mu.Lock()
 		c, ok := d.access[id]
 		d.mu.Unlock()
 		if !ok || time.Since(c.at) > accessTTL {
 			cctx, cancel := context.WithTimeout(ctx, 20*time.Second)
-			_, err := client.DeployTarget(cctx, instance)
+			err := client.CanDeploy(cctx, t.Kind, t.Instance)
 			cancel()
 			c = accessCheck{at: time.Now()}
 			if err != nil {
@@ -222,7 +227,20 @@ func (d *Daemon) deployRefused(run *Run, instance, why string) error {
 }
 
 func deploysToAltengine(v board.BoardView) bool {
-	return v.Profile != nil && v.Profile.Deploy.Method == "altengine" && len(v.Profile.Deploy.AltengineInstances) > 0
+	return v.Profile != nil && v.Profile.Deploy.Method == "altengine" && len(v.Profile.Deploy.Targets()) > 0
+}
+
+// deploysAs says whether a board allows deploying as kind ("static" or "functions") at all.
+func deploysAs(v board.BoardView, kind string) bool {
+	if !deploysToAltengine(v) {
+		return false
+	}
+	for _, t := range v.Profile.Deploy.Targets() {
+		if t.Kind == "" || t.Kind == kind {
+			return true
+		}
+	}
+	return false
 }
 
 // altengineDeploy runs one of the altengine tools for a session. The daemon holds the key; the
@@ -234,14 +252,22 @@ func (d *Daemon) altengineDeploy(ctx context.Context, s *session, name string, a
 		return nil, errors.New("this board's profile does not deploy to altengine")
 	}
 	instance, _ := args["instance"].(string)
+	kind := "static"
+	if name == "altengine_deploy_function" {
+		kind = "functions"
+	}
 	allowed := false
-	for _, i := range v.Profile.Deploy.AltengineInstances {
-		if i == instance {
-			allowed = true
+	var mayDeploy []string
+	for _, t := range v.Profile.Deploy.Targets() {
+		if t.Kind == "" || t.Kind == kind {
+			mayDeploy = append(mayDeploy, t.Instance)
+			if t.Instance == instance {
+				allowed = true
+			}
 		}
 	}
 	if !allowed {
-		return nil, fmt.Errorf("instance %q is not one this board may deploy to (%s)", instance, strings.Join(v.Profile.Deploy.AltengineInstances, ", "))
+		return nil, fmt.Errorf("%q is not a %s instance this board may deploy to (it may deploy %s to: %s)", instance, kind, kind, strings.Join(mayDeploy, ", "))
 	}
 	key := deployKey()
 	if key == "" {

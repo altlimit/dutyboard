@@ -56,6 +56,17 @@ const columns = ref({});
  *  runs at setup time and would hit the temporal dead zone. */
 const paged = ref(false);
 const agents = ref([]);
+/**
+ * The strip shows who is working and who was around lately. An agent row is never deleted — a
+ * token used once, a machine lane idle since yesterday — so the rest fold behind a count rather than
+ * crowding out the ones that matter. An hour, because a machine's idle lanes are only seen when they
+ * claim; the machine itself being online is what the runner line says.
+ */
+const RECENT_MS = 60 * 60 * 1000;
+const showAllAgents = ref(false);
+const recentAgents = computed(() => agents.value.filter((a) => a.active_duty_id || Date.now() - (a.last_seen_at || 0) < RECENT_MS));
+const shownAgents = computed(() => (showAllAgents.value ? agents.value : recentAgents.value));
+const olderAgents = computed(() => agents.value.length - recentAgents.value.length);
 /** The machines working this board, and the one line the header says about them. */
 const runners = ref([]);
 const runnerStatus = computed(() => runnerSummary(runners.value));
@@ -601,7 +612,7 @@ onUnmounted(() => {
       <h2>Add a duty</h2>
       <div class="field">
         <label for="d-title">Title</label>
-        <input id="d-title" v-model="draft.title" required maxlength="200" placeholder="Configure the auth provider" />
+        <input id="d-title" v-model="draft.title" required maxlength="200" placeholder="A short name for what you want done" />
       </div>
       <div class="field">
         <label for="d-brief">Brief</label>
@@ -610,7 +621,7 @@ onUnmounted(() => {
           v-model="draft.brief"
           required
           maxlength="4000"
-          placeholder="What needs doing, and what done looks like."
+          placeholder="What should change, and how you will know it is done."
         ></textarea>
         <p class="hint">An agent may pick this up with no other context. Write it for that reader.</p>
       </div>
@@ -665,9 +676,12 @@ onUnmounted(() => {
     <section v-if="agents.length" aria-labelledby="agents-h">
       <h2 id="agents-h" class="sr-only">Agents on this board</h2>
       <p class="row small muted" style="margin: 0">
-        <span v-for="a in agents" :key="a.agent_id" class="badge">
+        <span v-for="a in shownAgents" :key="a.agent_id" class="badge">
           {{ a.agent_id }} · {{ a.active_duty_id ? "working" : "idle" }} · seen {{ ago(a.last_seen_at) }}
         </span>
+        <button v-if="olderAgents" type="button" class="link small" :aria-expanded="showAllAgents" @click="showAllAgents = !showAllAgents">
+          {{ showAllAgents ? "Show recent only" : `${olderAgents} not seen in the last hour` }}
+        </button>
       </p>
     </section>
 
