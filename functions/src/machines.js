@@ -25,7 +25,7 @@ import { mintMachineKey, mintDeviceCode, userCode, machineId, requestId, sha256H
 import { putOp, deleteOp } from "./store.js";
 import { requireHuman, requireMachine, resolveProject, memberKey, linkKey } from "./identity.js";
 import { liveConfigured, mintMachineLive, machinesPresent, publishMachine } from "./live.js";
-import { runnableDuties, activeDuties, seedDuty, stripMeta } from "./duties.js";
+import { runnableDuties, activeDuties, seedDuty, stripMeta, blockBehindSetup } from "./duties.js";
 import { mergeRunner, profileView } from "./profile.js";
 import { createProjectFor } from "./projects.js";
 
@@ -529,6 +529,9 @@ export async function linkMachine(ctx, body) {
           now,
         });
   if (setup) ops.push(setup.op);
+  // Duties in progress wait for the setup: it can change what they land against.
+  const paused = setup ? await blockBehindSetup(ctx, project, { id: setup.id, title: `Set up ${caller.machineRow.name} for this project` }, caller.machineRow.name, now) : { ops: [], events: [] };
+  ops.push(...paused.ops);
 
   const rules =
     body.setup === false || project.rules_version || (await hasUnfinished(ctx, project.key, [{ field: "kind", op: "=", value: "rules" }]))
@@ -538,6 +541,7 @@ export async function linkMachine(ctx, body) {
 
   await ctx.store.transaction(ops);
   if (setup) await ctx.publish(project.key, setup.id, { t: "duty", id: setup.id, status: "queued" });
+  for (const e of paused.events) await ctx.publish(project.key, e.id, e.payload);
   if (rules) await ctx.publish(project.key, rules.id, { t: "duty", id: rules.id, status: "queued" });
   await ctx.publish(project.key, null, { t: "runner", machine_id: caller.machineId, state: "linked" });
   if (runnerSet) await ctx.publish(project.key, null, { t: "board", what: "profile" });

@@ -352,7 +352,11 @@ what the key is missing before any duty gets as far as deploying.
 
 A linked board starts with a **setup** duty, which gets this machine ready for the project and
 records the toolchain it installed, and a **rules** duty, which drafts the project's rules for you to
-accept. How many duties run at once is set per board (`runner.parallel`) and per machine
+accept. A setup holds the board from the moment the machine is linked: what it records — the
+toolchain, the test command, how a worktree is prepared — is what every other duty lands against. So
+duties in progress are **blocked** behind it (each keeps the machine and worktree it had, with a note
+saying why), nothing else is claimed while it is unfinished, and when it is done — or fails, or is
+deleted — they go back to the front of the queue. How many duties run at once is set per board (`runner.parallel`) and per machine
 (`max_sessions`).
 
 ### A machine with no screen

@@ -34,7 +34,11 @@
 //      one. A lane is `<board>#<n>` under a unique index, written in the claim's own
 //      transaction — the same trick as `holder` — so two claims racing for the last free lane
 //      cannot both win. A `setup` or `rules` duty needs the board to itself: it is claimed only
-//      when nothing else is active, and nothing else is claimed while it is.
+//      when nothing else is active, and nothing else is claimed while it is. A `setup` duty holds
+//      the board from the moment it is filed: what it records (the toolchain, the test command, how
+//      a worktree is prepared) is what every other duty lands against, so duties in progress when a
+//      machine is linked are blocked behind it, nothing else is claimed until it finishes, and then
+//      they go back to the front of the queue.
 
 import { notifyNeedsYou } from "./notify.js";
 import { badRequest, conflict, forbidden, notFound, str, oneOf, intIn, clip } from "./http.js";
@@ -196,7 +200,98 @@ export async function runnableDuties(ctx, projectKey, agentId, limit) {
   });
   const present = await presenceFor(ctx, rows);
   const now = Date.now();
-  return firstThingsFirst(rows.filter((d) => !claimBlocker(ctx, d, agentId, present, now))).slice(0, limit);
+  const settingUp = await hasUnfinished(ctx, projectKey, [{ field: "kind", op: "=", value: "setup" }]);
+  return firstThingsFirst(rows.filter((d) => !claimBlocker(ctx, d, agentId, present, now) && (!settingUp || d.kind === "setup"))).slice(0, limit);
+}
+
+async function hasUnfinished(ctx, projectKey, where) {
+  const n = await ctx.store.countAtMost(
+    "duties",
+    [{ field: "project_id", op: "=", value: projectKey }, ...where, { field: "status", op: "in", value: UNFINISHED }],
+    1,
+  );
+  return n > 0;
+}
+
+/**
+ * Block every duty in progress on a board behind a setup duty being filed, as ops for the caller's
+ * transaction, with the events to publish after it.
+ *
+ * Each keeps the machine that was working it (its worktree and conversation are there), and gets a
+ * note saying why it stopped. The daemon holding it sees the status change and ends its session.
+ */
+export async function blockBehindSetup(ctx, project, setup, machineName, now = Date.now()) {
+  const active = (await activeDuties(ctx, project.key)).filter((d) => d.kind !== "setup");
+  if (!active.length) return { ops: [], events: [] };
+  const { rows: links } = await ctx.store.query("machine_links", {
+    where: [{ field: "project_id", op: "=", value: project.key }],
+    limit: 50,
+  });
+  const machineOf = (agentId) => links.find((l) => agentId && (agentId === l.agent_prefix || agentId.startsWith(l.agent_prefix + "/")));
+  const ops = [];
+  const events = [];
+  for (const duty of active) {
+    const holder = machineOf(duty.assigned_agent_id);
+    ops.push(
+      putOp("duties", duty.key, {
+        ...stripMeta(duty),
+        status: "blocked",
+        blocked_by: setup.id,
+        holder: null,
+        lane: null,
+        affinity: holder ? { machine_id: holder.machine_id, machine_name: holder.machine_name || "", at: now } : duty.affinity || null,
+        updated_at: now,
+      }),
+      putOp("threads", threadId(), {
+        duty_id: duty.key,
+        project_id: project.key,
+        owner_uid: project.owner_uid,
+        author_type: "agent",
+        author_id: "DutyBoard",
+        kind: "note",
+        message: `Paused: ${machineName} was put on this board, and its setup can change the toolchain, test command and worktree preparation this duty lands against. It picks up where it stopped${holder ? ` on ${holder.machine_name}` : ""} once "${setup.title}" is done.`,
+        metadata: null,
+        created_at: now,
+      }),
+    );
+    if (duty.assigned_agent_id) {
+      const aKey = agentKey(project.key, duty.assigned_agent_id);
+      const agent = await ctx.store.get("agents", aKey);
+      if (agent && agent.active_duty_id === duty.key) ops.push(putOp("agents", aKey, { ...stripMeta(agent), active_duty_id: null, last_seen_at: now }));
+    }
+    events.push({
+      id: duty.key,
+      payload: { t: "duty", id: duty.key, status: "blocked", ...(duty.assigned_agent_id ? { ag: agentEvent(duty.assigned_agent_id, null, now) } : {}) },
+    });
+  }
+  return { ops, events };
+}
+
+/** Everything blocked behind `duty`, put back at the front of the queue, as ops. Answers their ids. */
+async function unblockWaiting(ctx, duty, now, ops) {
+  const { rows } = await ctx.store.query("duties", {
+    where: [
+      { field: "project_id", op: "=", value: duty.project_id },
+      { field: "status", op: "=", value: "blocked" },
+      { field: "blocked_by", op: "=", value: duty.key },
+    ],
+    limit: MAX_ACTIVE_READ,
+  });
+  for (const waiting of rows) {
+    ops.push(
+      putOp("duties", waiting.key, {
+        ...stripMeta(waiting),
+        status: "queued",
+        priority: "immediate_blocker",
+        prio_rank: RANK.immediate_blocker,
+        blocked_by: null,
+        holder: null,
+        lane: null,
+        updated_at: now,
+      }),
+    );
+  }
+  return rows.map((r) => r.key);
 }
 
 /**
@@ -319,6 +414,10 @@ export async function claimDuty(ctx, body) {
   }
   const blocker = claimBlocker(ctx, duty, agentId, await presenceFor(ctx, [duty]), now);
   if (blocker) throw conflict(blocker, { reserved_for: duty.reserved_for || null, affinity: duty.affinity || null });
+  if (duty.kind !== "setup" && (await hasUnfinished(ctx, project.key, [{ field: "kind", op: "=", value: "setup" }]))) {
+    // Worded like the exclusive refusal below, which a daemon already reads as "the board is busy".
+    throw conflict("a machine's setup has the board to itself until it finishes", { waiting_for: "setup" });
+  }
 
   // The board row carries how many duties may be active at once, and which rules are current —
   // both of which a claim needs and `projectOfDuty` deliberately does not read.
@@ -769,6 +868,9 @@ async function finishDuty(ctx, body, terminal) {
   // of the queue. Without this the interrupt pattern is a one-way trip: the parent would
   // sit in `blocked` forever with nothing left to unblock it.
   const parent = await unblockParent(ctx, duty, now, ops);
+  // And everything blocked behind it that is not its parent — the duties a setup paused — whether it
+  // finished or failed: a failed setup must not hold the board for ever.
+  const waiting = (await unblockWaiting(ctx, duty, now, ops)).filter((id) => id !== parent);
 
   await ctx.store.transaction(ops);
   await ctx.publish(project.key, duty.key, {
@@ -778,6 +880,7 @@ async function finishDuty(ctx, body, terminal) {
     ...(freed ? { ag: agentEvent(freed, null, now) } : {}),
   });
   if (parent) await ctx.publish(project.key, parent, { t: "duty", id: parent, status: "queued" });
+  for (const id of waiting) await ctx.publish(project.key, id, { t: "duty", id, status: "queued" });
 
   // After the transaction, never inside it: making a duty findable must not be able to fail
   // finishing one. This is the moment the outcome summary exists, which is the whole reason
@@ -1009,6 +1112,11 @@ export async function deleteDuty(ctx, body) {
   await sweepAttachments(ctx, { field: "duty_id", value: duty.key });
   await unindexDuties(ctx, [duty.key]);
   await ctx.store.delete("duties", [duty.key]);
+  // Deleting a setup a board was waiting on lets the board go again.
+  const released = [];
+  const waiting = await unblockWaiting(ctx, duty, Date.now(), released);
+  if (released.length) await ctx.store.transaction(released);
+  for (const id of waiting) await ctx.publish(project.key, id, { t: "duty", id, status: "queued" });
   // A duty deleted while held frees whoever held it, or that agent can never claim again.
   if (duty.status === "active" && duty.assigned_agent_id) {
     const aKey = agentKey(project.key, duty.assigned_agent_id);

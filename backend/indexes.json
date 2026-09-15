@@ -94,6 +94,22 @@
         "status"
       ],
       "for": "the function: is a setup duty already open for this machine"
+    },
+    {
+      "fields": [
+        "project_id",
+        "status",
+        "blocked_by"
+      ],
+      "for": "the function: the duties waiting behind one that finished, deleted or failed"
+    },
+    {
+      "fields": [
+        "project_id",
+        "kind",
+        "status"
+      ],
+      "for": "the function: whether a board has a setup unfinished, which holds every other claim"
     }
   ],
   "threads": [

@@ -978,17 +978,34 @@ async function main() {
   check("which is the owner's board like any other", ownersList.projects.some((p) => p.project_id === madeHere), ownersList.projects.length);
   await call("/projects/delete", { project_id: madeHere, confirm: madeHere }, human);
 
-  // A board with urgent work already waiting: the machine still sets itself up, then writes the rules.
+  // A board with work in progress when a machine is put on it: that work waits for the machine's setup,
+  // which can change what it lands against, and then picks up where it stopped.
   const busyBoard = `smoke-busy-${Date.now().toString(36)}`;
   await call("/projects/create", { name: "Busy", project_id: busyBoard, profile: { type: "webapp", repo_url: "https://github.com/example/busy.git" } }, human);
-  await call("/duty/enqueue", { project_id: busyBoard, title: "Fix the outage", brief: "urgent", priority: "immediate_blocker" }, human);
+  const outage = await call("/duty/enqueue", { project_id: busyBoard, title: "Fix the outage", brief: "urgent", priority: "immediate_blocker" }, human);
+  const later2 = await call("/duty/enqueue", { project_id: busyBoard, title: "Tidy the logs", brief: "later" }, human);
+  const busyAgent = (await call("/tokens/mint", { project_id: busyBoard, name: "busy agent", default_agent_id: "busy" }, human)).token;
+  await call("/duty/claim", { duty_id: outage.duty_id }, busyAgent);
   const busyLink = await call("/machine/link", { project_id: busyBoard }, mkey);
+  const paused = (await call("/duty/get", { duty_id: outage.duty_id }, human)).duty;
+  check("a duty in progress when a machine is linked is blocked behind its setup", paused.status === "blocked" && paused.blocked_by === busyLink.setup_duty_id, paused);
+  const pausedThread = await call("/duty/thread", { duty_id: outage.duty_id, limit: 10 }, human);
+  check("with a note saying why, and that it resumes", pausedThread.entries.some((e) => /Paused: .* once "Set up .*" is done/.test(e.message)), pausedThread.entries.map((e) => e.message));
+  check("and its agent is free again", (await call("/duty/poll", { agent_id: "busy" }, busyAgent)).active_duty === null);
   const busyPoll = await call("/duty/poll", { agent_id: `${prefix}/1`, limit: 5 }, mkey, { board: busyBoard });
   check(
-    "setup and then rules come before urgent work queued earlier",
-    busyPoll.runnable_duties.map((d) => d.kind).join(",").startsWith("setup,rules,") && busyPoll.runnable_duties[0].id === busyLink.setup_duty_id,
-    busyPoll.runnable_duties.map((d) => [d.kind, d.priority, d.title]),
+    "while the setup is unfinished, it is all the machine is offered",
+    busyPoll.runnable_duties.length === 1 && busyPoll.runnable_duties[0].id === busyLink.setup_duty_id,
+    busyPoll.runnable_duties.map((d) => [d.kind, d.title]),
   );
+  const jumpsQueue = await call("/duty/claim", { duty_id: later2.duty_id }, busyAgent, { expectStatus: true });
+  check("and nobody claims anything else on the board", jumpsQueue.status === 409 && /setup has the board to itself/.test(JSON.stringify(jumpsQueue.json)), jumpsQueue.json);
+  await call("/duty/claim", { duty_id: busyLink.setup_duty_id, agent_id: `${prefix}/1` }, mkey, { board: busyBoard });
+  const setupDone = await call("/duty/complete", { duty_id: busyLink.setup_duty_id, agent_id: `${prefix}/1`, outcome_summary: "Node 22 is installed." }, mkey, { board: busyBoard });
+  const resumed2 = (await call("/duty/get", { duty_id: outage.duty_id }, human)).duty;
+  check("once setup is done, the paused duty is back at the front of the queue", setupDone.ok && resumed2.status === "queued" && resumed2.priority === "immediate_blocker" && !resumed2.blocked_by, resumed2);
+  const afterSetup2 = await call("/duty/claim", { duty_id: later2.duty_id }, busyAgent, { expectStatus: true });
+  check("and the board is open again", afterSetup2.status === 200 || afterSetup2.json?.status === "active", afterSetup2.json);
   await call("/projects/delete", { project_id: busyBoard, confirm: busyBoard }, human);
 
   const lane1 = `${prefix}/1`;
