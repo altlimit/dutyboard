@@ -651,6 +651,14 @@ musictheory over needs a release and its owner at a Windows terminal (see below)
   deployments yet — the listing's shape could not be confirmed with a read.
 - **Hints** (§7) are per project type, embedded, and given to setup and rules sessions with the
   daemon's reading of `.github/workflows`.
+- **Agents**: `runner.Agent` (Name, Check, Run) with Claude Code as the one implementation. A
+  `runner.Job` is agent-neutral — worktree, prompt, instructions, session, MCP servers (command or
+  URL, with their allowed tools), access (a board's mode and extra tools, in its agent's terms) — and
+  each agent turns it into its own command line and reads its own output. A machine that cannot run
+  a board's agent reports it as a problem and does not work the board. A board's extra tools add to
+  the defaults rather than replacing them.
+- **Consoles** are published per deployment, to the root of `<prefix>-console`; www.dutyboard.com is
+  only the marketing site (see the README's "Run your own").
 
 Verified by:
 

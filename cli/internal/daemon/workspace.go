@@ -14,6 +14,7 @@ import (
 
 	"github.com/altlimit/dutyboard/cli/internal/board"
 	"github.com/altlimit/dutyboard/cli/internal/deploy"
+	"github.com/altlimit/dutyboard/cli/internal/runner"
 	"github.com/altlimit/dutyboard/cli/internal/state"
 	"github.com/altlimit/dutyboard/cli/internal/worktree"
 )
@@ -57,7 +58,9 @@ func (d *Daemon) ensureWorkspaces(ctx context.Context) {
 	d.mu.Unlock()
 	for _, v := range views {
 		problem := ""
-		if _, err := d.ensureClone(ctx, v); err != nil {
+		if err := d.agentReady(ctx, v); err != nil {
+			problem = err.Error()
+		} else if _, err := d.ensureClone(ctx, v); err != nil {
 			problem = err.Error()
 		} else if v.Profile != nil && v.Profile.Git.Mode == "pr" && !d.ghReady(ctx, d.folder(v.ProjectID)) {
 			problem = "this board opens pull requests, and the GitHub CLI (gh) is not installed or signed in on this machine — run `gh auth login`"
@@ -183,6 +186,16 @@ func (d *Daemon) retireClone(ctx context.Context, dir string) {
 	if err := os.RemoveAll(dir); err == nil {
 		d.log.Printf("removed %s, which the board no longer uses", dir)
 	}
+}
+
+// agentReady says why this machine cannot run the agent a board's duties are worked by, if it cannot:
+// a board is not worked by a machine that would only fail every duty it claimed.
+func (d *Daemon) agentReady(ctx context.Context, v board.BoardView) error {
+	agent, err := runner.For(agentName(v))
+	if err != nil {
+		return err
+	}
+	return agent.Check(ctx)
 }
 
 // ghReady reports whether the GitHub CLI is signed in, remembered for a few minutes.

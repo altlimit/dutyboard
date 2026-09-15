@@ -33,13 +33,6 @@ func retryDelay() time.Duration {
 	return 30 * time.Second
 }
 
-// defaultTools is what a session may use without asking when the board does not say. Headless, a
-// tool that needs permission is a tool that is refused, so the list is what real work needs.
-// PowerShell is Claude Code's shell tool on Windows, as Bash is elsewhere: without it every command a
-// Windows session runs — node, npm, godot, the project's own scripts — waits for an approval nobody
-// is there to give.
-var defaultTools = []string{"Read", "Edit", "Write", "MultiEdit", "NotebookEdit", "Glob", "Grep", "Bash", "PowerShell", "Agent", "TodoWrite", "WebFetch", "WebSearch", "mcp__dutyboard"}
-
 // Run is one duty being worked on this machine.
 type Run struct {
 	Board, DutyID, Agent, Kind, Title string
@@ -251,7 +244,12 @@ func (d *Daemon) execute(dctx, rctx context.Context, run *Run, duty *board.Duty,
 		run.set("working", "")
 		d.report(dctx, run.Board)
 
-		outcome := runner.Run(rctx, job)
+		agent, err := runner.For(agentName(v))
+		if err != nil {
+			d.park(dctx, run, v, "The runner on this machine could not start this duty: "+err.Error())
+			return
+		}
+		outcome := agent.Run(rctx, job)
 		if logFile != nil {
 			logFile.Close()
 		}
@@ -261,7 +259,6 @@ func (d *Daemon) execute(dctx, rctx context.Context, run *Run, duty *board.Duty,
 			d.log.Printf("%s: %q was refused %d tool call(s): %s — widen the board's allowed tools if the work needs them",
 				run.Board, clip(run.Title, 60), len(outcome.Denied), clip(strings.Join(outcome.Denied, "; "), 400))
 		}
-		_ = os.Remove(job.MCPConfig)
 		if outcome.Session != "" {
 			rec.Session = outcome.Session
 		}
@@ -374,13 +371,28 @@ func clip(s string, n int) string {
 	return s[:n] + "…"
 }
 
-// job is the agent command line for one session.
+// agentName is the agent a board's duties are worked by, "" for the default.
+func agentName(v board.BoardView) string {
+	if v.Runner != nil {
+		return v.Runner.Agent
+	}
+	return ""
+}
+
+// job is one session, in terms that are no one agent's: the agent turns it into its command line.
 func (d *Daemon) job(run *Run, v board.BoardView, path, system, task string, rec state.RunRecord, resume bool) runner.Job {
 	j := runner.Job{
-		Dir: path, Prompt: task, SystemPrompt: system, SessionID: rec.Session, Resume: resume,
-		Name: clip(run.Title, 80), Permission: "acceptEdits", AllowedTools: defaultTools,
-		Timeout: 180 * time.Minute,
-		Env:     append(d.tools.SessionEnv(), "DUTYBOARD_RUN_TOKEN="+run.Token, "DUTYBOARD_HOME="+state.Home()),
+		Dir: path, Prompt: task, Instructions: system, SessionID: rec.Session, Resume: resume,
+		Name:       clip(run.Title, 80),
+		Timeout:    180 * time.Minute,
+		SessionDir: state.Path("run", "sessions", run.Token),
+		// The local bridge is the session's DutyBoard server. The run token in its environment is how
+		// the daemon knows which session a message came from.
+		MCPServers: []runner.MCPServer{{
+			Name: "dutyboard", Command: d.exe, Args: []string{"mcp"},
+			Env: map[string]string{"DUTYBOARD_RUN_TOKEN": run.Token, "DUTYBOARD_HOME": state.Home()},
+		}},
+		Env: append(d.tools.SessionEnv(), "DUTYBOARD_RUN_TOKEN="+run.Token, "DUTYBOARD_HOME="+state.Home()),
 	}
 	if r := v.Runner; r != nil {
 		if r.Model != "" {
@@ -389,12 +401,8 @@ func (d *Daemon) job(run *Run, v board.BoardView, path, system, task string, rec
 		if r.Effort != "" {
 			j.Effort = r.Effort
 		}
-		if r.PermissionMode != "" {
-			j.Permission = r.PermissionMode
-		}
-		if len(r.AllowedTools) > 0 {
-			j.AllowedTools = append(append([]string{}, r.AllowedTools...), "mcp__dutyboard")
-		}
+		// A board's permission mode and extra tools are its agent's own terms; the agent reads them.
+		j.Access = runner.Access{Mode: r.PermissionMode, Tools: r.AllowedTools}
 		if r.SessionMinutes > 0 {
 			j.Timeout = time.Duration(r.SessionMinutes) * time.Minute
 		}
@@ -416,22 +424,7 @@ func (d *Daemon) job(run *Run, v board.BoardView, path, system, task string, rec
 			d.log.Printf("%s: %s — %s", run.Board, clip(run.Title, 60), clip(line, 120))
 		}
 	}
-	j.MCPConfig = d.writeMCPConfig(run)
 	return j
-}
-
-// writeMCPConfig names the local bridge as the session's DutyBoard server. The run token in its
-// environment is how the daemon knows which session a message came from.
-func (d *Daemon) writeMCPConfig(run *Run) string {
-	p := state.Path("run", "sessions", run.Token+".json")
-	cfg := map[string]any{"mcpServers": map[string]any{"dutyboard": map[string]any{
-		"type": "stdio", "command": d.exe, "args": []string{"mcp"},
-		"env": map[string]string{"DUTYBOARD_RUN_TOKEN": run.Token, "DUTYBOARD_HOME": state.Home()},
-	}}}
-	if err := state.WriteJSON(p, cfg, 0o600); err != nil {
-		d.log.Printf("writing the session's MCP config: %v", err)
-	}
-	return p
 }
 
 // park puts a question on the duty for a person, and keeps the duty for this machine.

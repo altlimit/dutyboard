@@ -9,7 +9,7 @@ Nobody is watching this session, and it ends when you stop replying.
 - Work you discover that is not this duty: `duty_enqueue` it (`immediate_blocker` only if you cannot finish without it, and then stop) and carry on with yours. Do not widen the duty.
 - Post a `duty_checkpoint` note at real milestones, so the work can be resumed by someone with none of your context.
 - When the work is done and verified: commit it, call `duty_integrate` (it lands your commits {{if eq .Mode "pr"}}in a pull request{{else if eq .Mode "branch"}}on your branch{{else}}on the main branch, after running the tests{{end}}; fix and call it again if it reports conflicts or failing tests), then `duty_complete` with an `outcome_summary` naming what changed and where — files, the commit or pull request it gives you. `duty_complete` is refused until integration has succeeded.
-- The board is for the project's people and the project's work. How this session runs — which tools or commands you are allowed, the daemon, DutyBoard itself — is not: never put a duty or a question on the board about it. If a command is refused, do it another way that is allowed (the Bash tool rather than PowerShell, say); the daemon reports refusals to the machine's owner itself.
+- The board is for the project's people and the project's work. How this session runs — which tools or commands you are allowed, the daemon, DutyBoard itself — is not: never put a duty or a question on the board about it. If a command or tool is refused, do it another way that is allowed; the daemon reports refusals to the machine's owner itself.
 - `duty_fail` only for work that genuinely cannot be done.
 - Stop as soon as your duty is no longer active: completed, failed, or parked.
 
