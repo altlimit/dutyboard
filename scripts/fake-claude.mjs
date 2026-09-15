@@ -177,6 +177,26 @@ if (title.includes("[park]") && !resumed) {
   finish("parked");
 }
 
+if (title.includes("[multi]")) {
+  // Work across the board's two repositories: open the other one, commit in both, land them together.
+  const opened = await tool("duty_repo_open", { name: "tools" });
+  const where = opened.data?.path;
+  writeFileSync(`multi-${dutyId}.txt`, "main side\n");
+  git("add", "-A");
+  git("commit", "--quiet", "-m", "main side");
+  let otherBranch = null;
+  if (where) {
+    writeFileSync(`${where}/multi-${dutyId}.txt`, "tools side\n");
+    execFileSync("git", ["-C", where, "add", "-A"]);
+    execFileSync("git", ["-C", where, "commit", "--quiet", "-m", "tools side"]);
+    otherBranch = execFileSync("git", ["-C", where, "rev-parse", "--abbrev-ref", "HEAD"], { encoding: "utf8" }).trim();
+  }
+  const integrated = await tool("duty_integrate");
+  const completed = await tool("duty_complete", { duty_id: dutyId, outcome_summary: "Changed both repositories." });
+  record({ event: "multi", dutyId, opened: opened.data, openError: opened.isError ? opened.text : null, otherBranch, integrate: integrated.data, integrateError: integrated.isError ? integrated.text : null, completeError: completed.isError ? completed.text : null });
+  finish("multi");
+}
+
 if (title.includes("[deploy]")) {
   writeFileSync("fn.js", 'export default { async fetch() { return new Response("deployed by a session"); } };\n');
   git("add", "-A");

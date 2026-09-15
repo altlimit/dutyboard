@@ -411,6 +411,22 @@ settings, and **Retry now** there has it check again at once instead of at its n
 Headless is enough for most projects: Godot has `--headless` for exports and tests, Playwright runs a
 headless browser, and anything that must render a window can run under `xvfb-run`.
 
+### Several repositories on one board
+
+A project spread over repositories — an app, its CLI, its site — can be one board. Its repository
+URL is the **main** one; under **More repositories** in its settings, each other one has a name, a
+URL, a branch and a test command. Every machine clones them all, and a setup duty gets the machine
+ready for each, recording each one's test command and worktree preparation by name.
+
+A duty starts in its worktree of the main repository, and opens any other with `duty_repo_open`: a
+worktree of it beside the main one (`<duty>@<name>`), on the same `duty/<id>` branch, prepared the
+way the board says. The session is told every repository, where each is or will be, and which are
+open; a setup duty opens them all. `duty_integrate` lands the main repository, then each opened one
+in the board's order, each with its own test command, and stops at the first that does not — git
+cannot land two repositories at once, so a repository already landed stays landed, and calling it
+again once the other is fixed carries on from there. When the order across repositories matters
+more than that, split the work into blocker duties. A finished duty's worktrees are all removed.
+
 ### How work lands
 
 A board's **git mode** says what `duty_integrate` does with a finished duty's commits:
@@ -576,7 +592,7 @@ only when you first try it hosted.
 | `/board/members/add` · `/board/members/remove` | owner | Share a board by email, or stop sharing it. |
 | `/board/members/agents` | owner | Let a member link their own machines to the board, or stop them. |
 | `/board/profile` · `/board/rules` | both | What the project is and how it is run; the rules in force (people also see a pending draft). |
-| `/board/profile/propose` | agent | While holding a `setup` duty: record the toolchain, test command, deploy method and worktree prep. |
+| `/board/profile/propose` | agent | While holding a `setup` duty: record the toolchain, test command, deploy method and worktree prep — and each other repository's, under `repos`. |
 | `/board/rules/submit` | agent | While holding a `rules` duty: hand in proposed rules, as a draft. |
 | `/board/rules/set` · `/board/rules/accept` | owner | Write the rules by hand, or put the draft in force. |
 | `/me/access` | human | Repair this person's `boards` claim; says whether their token is behind. |

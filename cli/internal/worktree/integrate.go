@@ -96,7 +96,7 @@ type IntegrateOptions struct {
 // work is refused, not swept in, because what lands should be exactly what the session meant to
 // commit.
 func (m *Manager) Integrate(ctx context.Context, s Spec, lock *Lock, o IntegrateOptions) (*Result, error) {
-	path := m.Path(s.Board, s.DutyID)
+	path := m.PathOf(s)
 	if !m.Exists(s) {
 		return nil, fmt.Errorf("duty %s has no worktree", s.DutyID)
 	}

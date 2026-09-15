@@ -1033,6 +1033,14 @@ async function main() {
 
   const rawProposes = await call("/board/profile/propose", { duty_id: linked.setup_duty_id, test_command: "rm -rf /" }, rawAgent, { expectStatus: true });
   check("only the agent holding the setup duty records what setup found", rawProposes.status === 403, rawProposes.json);
+  const repoRefused = async (repos) => (await call("/projects/profile", { project_id: mBoard, profile: { repos } }, human, { expectStatus: true })).status;
+  check(
+    "a board's other repositories need a name and a URL, and names are unique",
+    (await repoRefused([{ name: "cli" }])) === 400 &&
+      (await repoRefused([{ name: "Bad Name", repo_url: "https://github.com/example/cli.git" }])) === 400 &&
+      (await repoRefused([{ name: "cli", repo_url: "https://github.com/example/cli.git" }, { name: "cli", repo_url: "https://github.com/example/cli2.git" }])) === 400,
+  );
+  await call("/projects/profile", { project_id: mBoard, profile: { repos: [{ name: "cli", repo_url: "https://github.com/example/cli.git" }, { name: "site", repo_url: "https://github.com/example/site.git" }] } }, human);
   const badTarget = await call("/projects/profile", { project_id: mBoard, profile: { deploy: { method: "altengine", altengine_targets: [{ kind: "database", instance: "x" }] } } }, human, { expectStatus: true });
   check("a deploy target is a static site or a functions instance", badTarget.status === 400, badTarget.json);
   await call(
@@ -1049,10 +1057,21 @@ async function main() {
       test_command: "tools/run_tests.sh",
       worktree: { prep: "godot --headless --import", prep_inputs: ["project.godot"], cache: [".godot"], copy: [".env"] },
       deploy: { method: "ci-dispatch", workflow: "deploy.yml" },
+      repos: [{ name: "cli", test_command: "go test ./...", worktree: { prep: "go mod download" } }],
     },
     mkey,
     { board: mBoard },
   );
+  const unknownRepo = await call("/board/profile/propose", { duty_id: linked.setup_duty_id, agent_id: lane1, repos: [{ name: "nope", test_command: "x" }] }, mkey, { expectStatus: true, board: mBoard });
+  check("setup records only for repositories the board names", unknownRepo.status === 400, unknownRepo.json);
+  check(
+    "setup records what it found for each of the board's other repositories, and keeps the rest",
+    proposed.profile.repos.length === 2 && proposed.profile.repos[0].test_command === "go test ./..." && proposed.profile.repos[0].worktree.prep === "go mod download" && proposed.profile.repos[1].repo_url === "https://github.com/example/site.git",
+    proposed.profile.repos,
+  );
+  const editedRepos = await call("/projects/profile", { project_id: mBoard, profile: { repos: [{ name: "cli", repo_url: "https://github.com/example/cli.git", default_branch: "main" }] } }, human);
+  check("editing the list keeps what setup recorded for a repository", editedRepos.profile.repos[0].worktree.prep === "go mod download" && editedRepos.profile.repos.length === 1, editedRepos.profile.repos);
+  await call("/projects/profile", { project_id: mBoard, profile: { repos: [] } }, human);
   check(
     "setup writes what it found onto the board, and leaves the rest alone — the owner's deploy targets included",
     proposed.profile.toolchain[0].name === "godot" && proposed.profile.deploy.method === "ci-dispatch" && proposed.profile.type === "game" &&

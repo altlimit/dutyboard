@@ -205,13 +205,27 @@ type Profile struct {
 		AuthorEmail string `json:"author_email"`
 		SSHCommand  string `json:"ssh_command"`
 	} `json:"git"`
-	Worktree struct {
-		Prep       string   `json:"prep"`
-		PrepInputs []string `json:"prep_inputs"`
-		Cache      []string `json:"cache"`
-		Copy       []string `json:"copy"`
-	} `json:"worktree"`
-	MCPServers []MCPServer `json:"mcp_servers"`
+	Worktree   WorktreeSettings `json:"worktree"`
+	MCPServers []MCPServer      `json:"mcp_servers"`
+	// Repos are the board's repositories besides its main one, above.
+	Repos []Repo `json:"repos"`
+}
+
+// WorktreeSettings are how a fresh checkout of a repository is made ready to work in.
+type WorktreeSettings struct {
+	Prep       string   `json:"prep"`
+	PrepInputs []string `json:"prep_inputs"`
+	Cache      []string `json:"cache"`
+	Copy       []string `json:"copy"`
+}
+
+// Repo is one of a board's other repositories.
+type Repo struct {
+	Name          string           `json:"name"`
+	RepoURL       string           `json:"repo_url"`
+	DefaultBranch string           `json:"default_branch"`
+	TestCommand   string           `json:"test_command"`
+	Worktree      WorktreeSettings `json:"worktree"`
 }
 
 // Deploy is how a board's project ships.

@@ -108,12 +108,35 @@ func (d *Daemon) problem(boardID string) string {
 	return d.problems[boardID]
 }
 
-// ensureClone answers the board's clone, making it when it is missing.
+// ensureClone answers the board's clone, making it when it is missing — and the clones of the board's
+// other repositories too, so a duty can open any of them at once.
 func (d *Daemon) ensureClone(ctx context.Context, v board.BoardView) (string, error) {
 	if v.Profile == nil || v.Profile.RepoURL == "" {
 		return "", fmt.Errorf("the board has no repository URL — set one in its settings")
 	}
-	url := v.Profile.RepoURL
+	dir, err := d.cloneRepo(ctx, v, v.ProjectID, v.Profile.RepoURL)
+	if err != nil {
+		return "", err
+	}
+	for _, r := range v.Profile.Repos {
+		if _, err := d.cloneRepo(ctx, v, workspaceKey(v.ProjectID, r.Name), r.RepoURL); err != nil {
+			return "", fmt.Errorf("repository %q: %w", r.Name, err)
+		}
+	}
+	return dir, nil
+}
+
+// workspaceKey is how a clone is known: the board, or the board and the name of one of its other
+// repositories.
+func workspaceKey(boardID, name string) string {
+	if name == "" {
+		return boardID
+	}
+	return boardID + "@" + name
+}
+
+// cloneRepo makes sure the clone for key is of url, in the board's folder.
+func (d *Daemon) cloneRepo(ctx context.Context, v board.BoardView, key, url string) (string, error) {
 	dir := filepath.Join(d.boardDir(v.ProjectID), cloneDirName(url))
 	if err := os.MkdirAll(d.localDir(v.ProjectID), 0o755); err != nil {
 		return "", err
@@ -122,7 +145,7 @@ func (d *Daemon) ensureClone(ctx context.Context, v board.BoardView) (string, er
 		if _, statErr := os.Stat(dir); statErr == nil {
 			_ = os.RemoveAll(dir) // a clone that failed half way
 		}
-		d.log.Printf("%s: cloning %s", v.ProjectID, url)
+		d.log.Printf("%s: cloning %s", key, url)
 		args := []string{"clone", "--quiet"}
 		if v.Profile.Git.SSHCommand != "" {
 			args = append([]string{"-c", "core.sshCommand=" + v.Profile.Git.SSHCommand}, args...)
@@ -139,13 +162,13 @@ func (d *Daemon) ensureClone(ctx context.Context, v board.BoardView) (string, er
 		return "", err
 	}
 
-	previous := d.folder(v.ProjectID)
+	previous := d.folder(key)
 	if filepath.Clean(previous) != filepath.Clean(dir) {
-		if err := state.SetWorkspace(v.ProjectID, dir); err != nil {
+		if err := state.SetWorkspace(key, dir); err != nil {
 			return "", err
 		}
 		d.mu.Lock()
-		d.workspaces[v.ProjectID] = dir
+		d.workspaces[key] = dir
 		d.mu.Unlock()
 		if previous != "" {
 			d.retireClone(ctx, previous)

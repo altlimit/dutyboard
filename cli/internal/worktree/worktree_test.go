@@ -295,3 +295,38 @@ func TestIntegrateSquashesIntoOneCommitNamedForTheDuty(t *testing.T) {
 		t.Fatalf("a second integration should be a no-op: %+v %v", res, err)
 	}
 }
+
+func TestAnotherRepositoryGetsItsOwnWorktreeBeside(t *testing.T) {
+	ctx := context.Background()
+	main, _ := repoWithRemote(t)
+	other, otherRemote := repoWithRemote(t)
+	m := &Manager{Root: t.TempDir()}
+	mainSpec := Spec{Repo: main, Board: "app", DutyID: "duty_M"}
+	otherSpec := Spec{Repo: other, Board: "app", DutyID: "duty_M", Name: "cli"}
+	mainPath, _, err := m.Ensure(ctx, mainSpec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherPath, _, err := m.Ensure(ctx, otherSpec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if otherPath != filepath.Join(m.Root, "app", "duty_M@cli") || filepath.Dir(otherPath) != filepath.Dir(mainPath) {
+		t.Fatalf("the other repository's worktree should sit beside the main one: %s, %s", mainPath, otherPath)
+	}
+	if branch := must(t, ctx, otherPath, "symbolic-ref", "--short", "HEAD"); branch != "duty/duty_M" {
+		t.Fatalf("on branch %q", branch)
+	}
+	if m.RepoOfSpec(ctx, otherSpec) != other {
+		t.Fatalf("RepoOfSpec = %q", m.RepoOfSpec(ctx, otherSpec))
+	}
+	commitIn(t, otherPath, "cli.txt", "cli", "cli change")
+	res, err := m.Integrate(ctx, otherSpec, &Lock{}, IntegrateOptions{Mode: ModePush})
+	if err != nil || !res.OK {
+		t.Fatalf("integrating the other repository: %+v %v", res, err)
+	}
+	must(t, ctx, otherRemote, "cat-file", "-e", "main:cli.txt")
+	if err := m.Remove(ctx, otherSpec, false); err != nil || m.Exists(otherSpec) || !m.Exists(mainSpec) {
+		t.Fatal("removing the other repository's worktree should leave the main one")
+	}
+}

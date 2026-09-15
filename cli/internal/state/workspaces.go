@@ -74,6 +74,8 @@ type RunRecord struct {
 	Agent    string `json:"agent"`
 	Session  string `json:"session"`
 	Attempts int    `json:"attempts"`
+	// Repos are the board's other repositories the duty has opened a worktree of.
+	Repos []string `json:"repos,omitempty"`
 }
 
 var runsMu sync.Mutex

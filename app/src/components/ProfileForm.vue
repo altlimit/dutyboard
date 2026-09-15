@@ -17,6 +17,13 @@ const modes = computed(() =>
 const agentName = computed(() => agentLabel(draft.value.agent));
 const agentNeeds = computed(() => (AGENTS.find((a) => a.key === draft.value.agent) || AGENTS[0]).install);
 
+const addRepo = () => {
+  draft.value.repos = [...(draft.value.repos || []), { name: "", repo_url: "", default_branch: "", test_command: "" }];
+};
+const removeRepo = (i) => {
+  draft.value.repos = draft.value.repos.filter((_, j) => j !== i);
+};
+
 const addTarget = () => {
   draft.value.deploy_targets = [...(draft.value.deploy_targets || []), { kind: "static", instance: "" }];
 };
@@ -76,6 +83,38 @@ const removeServer = (i) => {
       <input :id="`${idPrefix}-test`" v-model="draft.test_command" maxlength="500" class="mono" placeholder="npm test" />
       <p class="hint">Run before any work lands. Setup fills this in when it finds one.</p>
     </div>
+    <fieldset class="stack">
+      <legend class="label">More repositories <span class="muted">(optional)</span></legend>
+      <p class="hint" style="margin: 0">
+        For a project spread over several repositories — an app, its CLI, its site. The one above is the main repository,
+        where every duty starts; a duty opens any of these when it needs to, on the same branch, and its work in all of
+        them lands together, in this order. Machines clone every one.
+      </p>
+      <div v-for="(r, i) in draft.repos" :key="i" class="stack mcp-server">
+        <div class="row">
+          <div class="field" style="flex: 1; min-width: 8rem; margin: 0">
+            <label :for="`${idPrefix}-repo-${i}-name`">Name</label>
+            <input :id="`${idPrefix}-repo-${i}-name`" v-model="r.name" required maxlength="32" class="mono" placeholder="cli" pattern="[a-z0-9][a-z0-9\-]*" />
+          </div>
+          <div class="field" style="flex: 3; min-width: 12rem; margin: 0">
+            <label :for="`${idPrefix}-repo-${i}-url`">Repository URL</label>
+            <input :id="`${idPrefix}-repo-${i}-url`" v-model="r.repo_url" required maxlength="500" class="mono" placeholder="git@github.com:you/project-cli.git" />
+          </div>
+        </div>
+        <div class="row">
+          <div class="field" style="flex: 1; min-width: 8rem; margin: 0">
+            <label :for="`${idPrefix}-repo-${i}-branch`">Main branch <span class="muted">(optional)</span></label>
+            <input :id="`${idPrefix}-repo-${i}-branch`" v-model="r.default_branch" maxlength="100" placeholder="its default" />
+          </div>
+          <div class="field" style="flex: 3; min-width: 12rem; margin: 0">
+            <label :for="`${idPrefix}-repo-${i}-test`">Test command <span class="muted">(optional)</span></label>
+            <input :id="`${idPrefix}-repo-${i}-test`" v-model="r.test_command" maxlength="500" class="mono" placeholder="run from that repository's root" />
+          </div>
+        </div>
+        <div><button type="button" class="link small" @click="removeRepo(i)">Remove {{ r.name || "this repository" }}</button></div>
+      </div>
+      <div><button type="button" :disabled="(draft.repos || []).length >= 8" @click="addRepo">Add a repository</button></div>
+    </fieldset>
   </fieldset>
 
   <fieldset class="stack" :disabled="disabled">

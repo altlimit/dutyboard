@@ -40,6 +40,7 @@ type Input struct {
 	Detected    string // the daemon's reading of the repository's CI, for setup
 	PrepFailed  string // the board's prep command failed in this worktree: what ran and what it said
 	MCPServers  []MCPServer
+	Repos       []Repo // the board's other repositories, when it has any
 }
 
 // System is the part appended to the agent's own system prompt.
@@ -70,4 +71,12 @@ type MCPServer struct {
 	Name  string
 	Tools []string // the tools it may use; empty for all of them
 	Note  string   // what the board's owner says it is for
+}
+
+// Repo is one of a board's other repositories, as a session is told about it.
+type Repo struct {
+	Name, URL   string
+	Path        string // where the duty's worktree of it is, once opened
+	Open        bool
+	TestCommand string
 }

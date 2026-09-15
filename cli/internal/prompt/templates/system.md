@@ -13,6 +13,16 @@ Nobody is watching this session, and it ends when you stop replying.
 - `duty_fail` only for work that genuinely cannot be done.
 - Stop as soon as your duty is no longer active: completed, failed, or parked.
 
+{{- if .Repos}}
+
+# The board's other repositories
+
+This worktree is the board's main repository. The board has these too; open one with `duty_repo_open` to read or change it, in a worktree of its own on the same branch. Commit in each repository you change. `duty_integrate` lands the main one, then every one you opened, in this order:
+
+{{range .Repos}}- **{{.Name}}** — {{.URL}}{{if .Open}}, open at `{{.Path}}`{{else}}, not opened yet (it will be at `{{.Path}}`){{end}}{{if .TestCommand}}; tests: `{{.TestCommand}}`{{end}}
+{{end}}
+{{- end}}
+
 {{- if .PrepFailed}}
 
 # This worktree is not prepared yet

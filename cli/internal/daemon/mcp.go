@@ -10,7 +10,6 @@ import (
 
 	"github.com/altlimit/dutyboard/cli/internal/state"
 	"github.com/altlimit/dutyboard/cli/internal/tools"
-	"github.com/altlimit/dutyboard/cli/internal/worktree"
 )
 
 // session is who an MCP message came from.
@@ -38,8 +37,20 @@ var localTools = []map[string]any{
 		"title": "Land this duty's commits",
 		"description": "Integrate the work committed on this duty's branch: rebase it onto the main branch, run the project's tests, and push — or open a pull request, if the board works that way. " +
 			"Commit first; uncommitted changes are refused. If it reports conflicts, resolve them, `git add` them, `git rebase --continue`, and call it again. " +
-			"If it reports failing tests, fix them, commit, and call it again. duty_complete is refused until this succeeds; a duty with no commits integrates as a no-op.",
+			"If it reports failing tests, fix them, commit, and call it again. duty_complete is refused until this succeeds; a duty with no commits integrates as a no-op. " +
+			"On a board with several repositories it lands the main one, then every one you opened, in the board's order, stopping at the first that does not land; call it again once that one is fixed, and what already landed is skipped.",
 		"inputSchema": map[string]any{"type": "object", "properties": map[string]any{}},
+	},
+	{
+		"name":  "duty_repo_open",
+		"title": "Work in another of the board's repositories",
+		"description": "Open this duty's worktree of one of the board's other repositories — on the same duty branch, prepared the way the board says — and answer where it is. " +
+			"Read or change it there, commit there, and duty_integrate lands it with the rest. Opening one already open just answers where it is.",
+		"inputSchema": map[string]any{
+			"type":       "object",
+			"properties": map[string]any{"name": map[string]any{"type": "string", "description": "The repository's name on the board."}},
+			"required":   []string{"name"},
+		},
 	},
 	{
 		"name":        "tools_list",
@@ -216,7 +227,10 @@ func (d *Daemon) filterTools(reply json.RawMessage, s *session) (json.RawMessage
 		out = append(out, t)
 	}
 	for _, t := range localTools {
-		if s.run == nil && t["name"] == "duty_integrate" {
+		if s.run == nil && (t["name"] == "duty_integrate" || t["name"] == "duty_repo_open") {
+			continue
+		}
+		if t["name"] == "duty_repo_open" && len(boardRepos(d.view(s.board))) == 0 {
 			continue
 		}
 		out = append(out, t)
@@ -242,21 +256,44 @@ func (d *Daemon) localTool(ctx context.Context, s *session, id json.RawMessage, 
 		}
 		run := s.run
 		v := d.view(run.Board)
-		opts := worktree.IntegrateOptions{Mode: modeFor(ctx, v, run.Spec), Title: run.Title, Body: "DutyBoard duty " + run.DutyID}
-		if v.Profile != nil {
-			opts.TestCommand = v.Profile.TestCommand
-		}
 		run.set("integrating", "")
 		d.report(ctx, run.Board)
-		res, err := d.wt.Integrate(ctx, run.Spec, d.lock(run.Board), opts)
+		main, all, err := d.integrateAll(ctx, run, v)
 		run.set("working", "")
 		if err != nil {
 			return toolText(id, "integration failed: "+err.Error(), true), true
 		}
-		if res.OK {
-			run.setIntegrated(res)
+		ok := len(all) > 0
+		for _, r := range all {
+			ok = ok && r.OK
 		}
-		return toolJSON(id, res, !res.OK), true
+		if ok {
+			run.setIntegrated(main)
+		}
+		if len(boardRepos(v)) == 0 {
+			return toolJSON(id, main, !main.OK), true
+		}
+		// The main repository's answer, as on a board with one repository, with every repository's beside it.
+		answer := map[string]any{}
+		if b, err := json.Marshal(main); err == nil {
+			_ = json.Unmarshal(b, &answer)
+		}
+		answer["ok"], answer["repos"] = ok, all
+		return toolJSON(id, answer, !ok), true
+	case "duty_repo_open":
+		if s.run == nil {
+			return toolText(id, "duty_repo_open is for sessions the daemon started", true), true
+		}
+		repoName, _ := args["name"].(string)
+		path, failed, err := d.openRepo(ctx, s.run, d.view(s.run.Board), repoName)
+		if err != nil {
+			return toolText(id, err.Error(), true), true
+		}
+		res := map[string]any{"name": repoName, "path": path, "branch": s.run.Spec.Branch()}
+		if failed != "" {
+			res["prep_failed"] = failed + "\nGet it ready yourself before working in it."
+		}
+		return toolJSON(id, res, false), true
 	case "altengine_deploy_static", "altengine_deploy_function":
 		if s.run == nil {
 			return toolText(id, name+" is for sessions the daemon started", true), true

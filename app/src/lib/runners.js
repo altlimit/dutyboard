@@ -137,6 +137,7 @@ export function profileDraft(profile, runner) {
   const r = runner || {};
   return {
     mcp_servers: (p.mcp_servers || []).map(mcpServerDraft),
+    repos: (p.repos || []).map((r) => ({ name: r.name, repo_url: r.repo_url, default_branch: r.default_branch || "", test_command: r.test_command || "" })),
     type: p.type || "webapp",
     type_other: p.type_other || "",
     description: p.description || "",
@@ -191,6 +192,10 @@ export function profilePayload(d) {
       deploy,
       // Replaced whole on the function, so always the complete list.
       mcp_servers: (d.mcp_servers || []).map(mcpServerPayload),
+      // Also replaced whole; each keeps the worktree preparation setup recorded for it, by name.
+      repos: (d.repos || [])
+        .map((r) => ({ name: r.name.trim(), repo_url: r.repo_url.trim(), default_branch: r.default_branch.trim(), test_command: r.test_command.trim() }))
+        .filter((r) => r.name || r.repo_url),
       git: {
         mode: d.git_mode,
         author_name: d.git_author_name.trim(),

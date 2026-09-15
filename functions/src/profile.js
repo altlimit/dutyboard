@@ -96,6 +96,20 @@ function repoUrl(v, field) {
 
 const EMAIL = /^[^\s@]+@[^\s@]+$/;
 
+/** Repositories a board has besides its main one. */
+export const MAX_REPOS = 8;
+const REPO_NAME = /^[a-z0-9][a-z0-9-]{0,31}$/;
+
+function worktreeSettings(v, field) {
+  const w = obj(v, field);
+  return {
+    prep: str(w.prep, `${field}.prep`, { max: 1000 }),
+    prep_inputs: list(w.prep_inputs, `${field}.prep_inputs`, { max: 20, item: projectPath }),
+    cache: list(w.cache, `${field}.cache`, { max: 20, item: projectPath }),
+    copy: list(w.copy, `${field}.copy`, { max: 50, item: projectPath }),
+  };
+}
+
 /** MCP servers a board's sessions are connected to, beyond DutyBoard's own. */
 export const MAX_MCP_SERVERS = 8;
 const MCP_NAME = /^[a-z0-9][a-z0-9-]{0,31}$/;
@@ -249,14 +263,36 @@ export function mergeProfile(stored, input) {
     }
     next.mcp_servers = servers;
   }
-  if (has(p, "worktree")) {
-    const w = obj(p.worktree, "profile.worktree");
-    next.worktree = {
-      prep: str(w.prep, "profile.worktree.prep", { max: 1000 }),
-      prep_inputs: list(w.prep_inputs, "profile.worktree.prep_inputs", { max: 20, item: projectPath }),
-      cache: list(w.cache, "profile.worktree.cache", { max: 20, item: projectPath }),
-      copy: list(w.copy, "profile.worktree.copy", { max: 50, item: projectPath }),
-    };
+  if (has(p, "worktree")) next.worktree = worktreeSettings(p.worktree, "profile.worktree");
+  if (has(p, "repos")) {
+    // The board's other repositories, beside the main one above. Replaced as a list — the console
+    // edits it in one form — but each keeps the test command and worktree preparation a setup duty
+    // recorded for it unless the edit names them.
+    const before = new Map(((next.repos || [])).map((r) => [r.name, r]));
+    const repos = list(p.repos, "profile.repos", {
+      max: MAX_REPOS,
+      item: (v, f) => {
+        const o = obj(v, f);
+        const name = str(o.name, `${f}.name`, { required: true, max: 32 });
+        if (!REPO_NAME.test(name)) throw badRequest(`'${f}.name' must be lowercase letters, digits and dashes`);
+        const url = repoUrl(o.repo_url, `${f}.repo_url`);
+        if (!url) throw badRequest(`'${f}.repo_url' is required`);
+        const kept = before.get(name) || {};
+        return {
+          name,
+          repo_url: url,
+          default_branch: branch(o.default_branch, `${f}.default_branch`),
+          test_command: has(o, "test_command") ? str(o.test_command, `${f}.test_command`, { max: 500 }) : kept.test_command || "",
+          worktree: has(o, "worktree") ? worktreeSettings(o.worktree, `${f}.worktree`) : kept.worktree || worktreeSettings({}, `${f}.worktree`),
+        };
+      },
+    });
+    const names = new Set();
+    for (const r of repos) {
+      if (names.has(r.name)) throw badRequest(`two repositories are named '${r.name}'`);
+      names.add(r.name);
+    }
+    next.repos = repos;
   }
   return next;
 }
@@ -318,9 +354,20 @@ export async function proposeProfile(ctx, body) {
   const { duty, project } = await heldDutyOfKind(ctx, body, "setup");
   const input = {};
   for (const k of ["toolchain", "deploy", "worktree", "test_command"]) if (has(body, k)) input[k] = body[k];
-  if (!Object.keys(input).length) throw badRequest("send at least one of 'toolchain', 'deploy', 'worktree', 'test_command'");
-
   const board = await ctx.store.get("projects", project.key);
+  if (has(body, "repos")) {
+    // For the board's other repositories, a setup records only what it found — a test command, how a
+    // worktree is prepared — for repositories the owner already named. It adds and removes none.
+    const known = new Map(((board.profile && board.profile.repos) || []).map((r) => [r.name, r]));
+    const found = list(body.repos, "repos", { max: MAX_REPOS, item: (v, f) => obj(v, f) });
+    input.repos = [...known.values()].map((r) => {
+      const update = found.find((u) => u.name === r.name) || {};
+      return { ...r, ...(has(update, "test_command") ? { test_command: update.test_command } : {}), ...(has(update, "worktree") ? { worktree: update.worktree } : {}) };
+    });
+    for (const u of found) if (!known.has(u.name)) throw badRequest(`this board has no repository named '${u.name}'`);
+  }
+  if (!Object.keys(input).length) throw badRequest("send at least one of 'toolchain', 'deploy', 'worktree', 'test_command', 'repos'");
+
   const now = Date.now();
   const next = {
     ...stripMeta(board),

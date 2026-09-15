@@ -88,6 +88,8 @@ async function main() {
   const human = signup.id_token;
   const boardId = `runner-${Date.now().toString(36)}`;
   const remote = join(work, "remote.git");
+  // The board's second repository, "tools".
+  const toolsRemote = join(work, "tools.git");
   const created = await call(
     "/projects/create",
     {
@@ -98,6 +100,7 @@ async function main() {
         default_branch: "main",
         repo_url: `file://${remote}`,
         git: { author_name: "Runner Bot", author_email: "runner-bot@example.com" },
+        repos: [{ name: "tools", repo_url: `file://${toolsRemote}` }],
         mcp_servers: [
           { name: "helper", command: "node", args: ["-e", "0"], env: { HELPER_MODE: "smoke" }, secrets: ["HELPER_TOKEN"], tools: ["ping"], note: "A helper for the smoke test" },
           { name: "absent", url: "https://mcp.example.com/mcp", secrets: ["Authorization"], note: "Nobody set its secret here" },
@@ -130,6 +133,13 @@ async function main() {
   sh("git", ["add", "."], linked);
   sh("git", ["-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "--quiet", "-m", "start"], linked);
   sh("git", ["push", "--quiet", "origin", "HEAD:main"], linked);
+  const toolsSeed = join(work, "tools-seed");
+  sh("git", ["init", "--quiet", "--bare", "-b", "main", toolsRemote], work);
+  sh("git", ["clone", "--quiet", toolsRemote, toolsSeed], work);
+  writeFileSync(join(toolsSeed, "TOOLS.md"), "# tools\n");
+  sh("git", ["add", "."], toolsSeed);
+  sh("git", ["-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "--quiet", "-m", "start"], toolsSeed);
+  sh("git", ["push", "--quiet", "origin", "HEAD:main"], toolsSeed);
   const link = await call("/machine/link", { project_id: boardId }, paired.machine_key);
 
   const hello = await call("/duty/enqueue", { project_id: boardId, title: "Add a hello file", brief: "Anything will do." }, human);
@@ -211,6 +221,28 @@ async function main() {
     const worktrees = () => (existsSync(join(home, "worktrees", boardId)) ? readdirSync(join(home, "worktrees", boardId)).filter((n) => !n.startsWith(".")) : []);
     await until("worktree removed", () => !worktrees().includes(hello.duty_id), 10_000);
     check("its worktree is gone once it is done", !worktrees().includes(hello.duty_id), worktrees());
+
+    // --- one duty, both of the board's repositories -----------------------------------
+    check("setup opened the board's other repository too", events(log).some((e) => e.event === "start" && e.dutyId === link.setup_duty_id && /\*\*tools\*\* — .*open at/.test(e.instructions || "")));
+    const multi = await call("/duty/enqueue", { project_id: boardId, title: "[multi] Change both repositories", brief: "One line in each." }, human);
+    const multiDone = await until("multi done", async () => (await get(multi.duty_id)).status === "done", 60_000);
+    const multiEvent = await until("multi event", () => events(log).find((e) => e.event === "multi" && e.dutyId === multi.duty_id), 10_000);
+    check(
+      "a duty opens the other repository on its own branch",
+      multiEvent && !multiEvent.openError && multiEvent.opened?.path?.endsWith(`${multi.duty_id}@tools`) && multiEvent.otherBranch === `duty/${multi.duty_id}`,
+      multiEvent,
+    );
+    check(
+      "and integrating lands both, the main repository first",
+      !!multiDone && multiEvent?.integrate?.ok && multiEvent.integrate.repos?.map((r) => r.repo).join(",") === ",tools",
+      multiEvent?.integrate || multiEvent?.integrateError,
+    );
+    check(
+      "each on its own main branch",
+      sh("git", ["--git-dir", remote, "show", `main:multi-${multi.duty_id}.txt`]).includes("main side") && sh("git", ["--git-dir", toolsRemote, "show", `main:multi-${multi.duty_id}.txt`]).includes("tools side"),
+    );
+    await until("multi worktrees removed", () => !worktrees().some((n) => n.startsWith(multi.duty_id)), 10_000);
+    check("and both of its worktrees are gone once it is done", !worktrees().some((n) => n.startsWith(multi.duty_id)), worktrees());
     const boardFolder = join(work, "projects", boardId);
     const clones = existsSync(boardFolder) ? readdirSync(boardFolder).filter((n) => n.startsWith("remote-")) : [];
     check("the daemon worked from its own clone, in its projects folder", clones.length === 1 && existsSync(join(boardFolder, "local")), readdirSync(boardFolder));

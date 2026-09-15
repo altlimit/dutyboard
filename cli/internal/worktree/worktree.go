@@ -2,9 +2,10 @@
 // after the duty — and never touches the folder the project was linked from, which stays the
 // person's to work in.
 //
-//	~/.dutyboard/worktrees/<board>/<duty-id>/     the duty's checkout, on duty/<duty-id>
-//	~/.dutyboard/worktrees/<board>/.cache/        expensive ignored folders, handed duty to duty
-//	~/.dutyboard/worktrees/<board>/.meta/<duty>   what was prepared, so prep runs only when needed
+//	~/.dutyboard/worktrees/<board>/<duty-id>/         the duty's checkout, on duty/<duty-id>
+//	~/.dutyboard/worktrees/<board>/<duty-id>@<repo>/  its checkout of the board's other repository <repo>
+//	~/.dutyboard/worktrees/<board>/.cache[@<repo>]/   expensive ignored folders, handed duty to duty
+//	~/.dutyboard/worktrees/<board>/.meta/<duty>[@<repo>]   what was prepared, so prep runs only when needed
 //
 // A duty keeps its folder until it is finished. Parked for a decision, it waits with its edits and
 // build output exactly as they were; answered, it resumes in the same place — which is also what
@@ -30,6 +31,9 @@ type Spec struct {
 	Repo   string // the linked folder: a git repository
 	Board  string
 	DutyID string
+	// Name is which of the board's other repositories this is; "" for its main one. A board with one
+	// repository never sets it, so its worktrees are where they always were.
+	Name string
 	// Base is the branch work starts from and integrates into; empty means the repository's default.
 	Base string
 	// Prep prepares a fresh checkout; PrepInputs are the files whose change means it must run again.
@@ -55,12 +59,22 @@ type Manager struct {
 
 var safeID = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 
-// Path is where a duty's worktree lives.
+// Path is where a duty's worktree of the board's main repository lives.
 func (m *Manager) Path(board, duty string) string { return filepath.Join(m.Root, board, duty) }
 
-func (m *Manager) cacheDir(board string) string { return filepath.Join(m.Root, board, ".cache") }
-func (m *Manager) metaPath(board, duty string) string {
-	return filepath.Join(m.Root, board, ".meta", duty+".json")
+// PathOf is where a spec's worktree lives: beside the main one, suffixed with the repository's name.
+func (m *Manager) PathOf(s Spec) string { return filepath.Join(m.Root, s.Board, s.DutyID+suffix(s)) }
+
+func suffix(s Spec) string {
+	if s.Name == "" {
+		return ""
+	}
+	return "@" + s.Name
+}
+
+func (m *Manager) cacheDir(s Spec) string { return filepath.Join(m.Root, s.Board, ".cache"+suffix(s)) }
+func (m *Manager) metaPath(s Spec) string {
+	return filepath.Join(m.Root, s.Board, ".meta", s.DutyID+suffix(s)+".json")
 }
 
 type meta struct {
@@ -117,9 +131,22 @@ func (m *Manager) RepoOf(ctx context.Context, board, duty string) string {
 	return filepath.Dir(common)
 }
 
+// RepoOfSpec is the repository a spec's existing worktree belongs to, or "" when it has none.
+func (m *Manager) RepoOfSpec(ctx context.Context, s Spec) string {
+	path := m.PathOf(s)
+	if _, err := os.Stat(filepath.Join(path, ".git")); err != nil {
+		return ""
+	}
+	common, err := git(ctx, path, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	if err != nil {
+		return ""
+	}
+	return filepath.Dir(common)
+}
+
 // Exists reports whether the duty already has a worktree.
 func (m *Manager) Exists(s Spec) bool {
-	_, err := os.Stat(filepath.Join(m.Path(s.Board, s.DutyID), ".git"))
+	_, err := os.Stat(filepath.Join(m.PathOf(s), ".git"))
 	return err == nil
 }
 
@@ -128,10 +155,10 @@ func (m *Manager) Exists(s Spec) bool {
 // the latest base. A new worktree takes the board's caches, gets the linked folder's untracked files
 // the profile names, and runs prep when its inputs differ from what the caches were built from.
 func (m *Manager) Ensure(ctx context.Context, s Spec) (path string, created bool, err error) {
-	if !safeID.MatchString(s.Board) || !safeID.MatchString(s.DutyID) {
+	if !safeID.MatchString(s.Board) || !safeID.MatchString(s.DutyID) || (s.Name != "" && !safeID.MatchString(s.Name)) {
 		return "", false, fmt.Errorf("refusing a worktree for board %q duty %q", s.Board, s.DutyID)
 	}
-	path = m.Path(s.Board, s.DutyID)
+	path = m.PathOf(s)
 	if m.Exists(s) {
 		return path, false, m.prepIfNeeded(ctx, s, path, false)
 	}
@@ -190,12 +217,12 @@ func (m *Manager) prepIfNeeded(ctx context.Context, s Spec, path string, fresh b
 	}
 	want := m.prepHash(s, path)
 	var have meta
-	if b, err := os.ReadFile(m.metaPath(s.Board, s.DutyID)); err == nil {
+	if b, err := os.ReadFile(m.metaPath(s)); err == nil {
 		_ = json.Unmarshal(b, &have)
 	}
 	if have.PrepHash == "" && fresh {
 		// A fresh worktree inherits whatever the caches were last prepared for.
-		if b, err := os.ReadFile(filepath.Join(m.cacheDir(s.Board), "meta.json")); err == nil {
+		if b, err := os.ReadFile(filepath.Join(m.cacheDir(s), "meta.json")); err == nil {
 			_ = json.Unmarshal(b, &have)
 		}
 	}
@@ -225,7 +252,7 @@ func (e *PrepError) Error() string {
 func (e *PrepError) Unwrap() error { return e.Err }
 
 func (m *Manager) writeMeta(s Spec, v meta) error {
-	p := m.metaPath(s.Board, s.DutyID)
+	p := m.metaPath(s)
 	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 		return err
 	}
@@ -238,7 +265,7 @@ func cacheName(p string) string { return strings.ReplaceAll(p, "/", "__") }
 
 func (m *Manager) takeCaches(s Spec, path string) {
 	for _, c := range s.Cache {
-		from := filepath.Join(m.cacheDir(s.Board), cacheName(c))
+		from := filepath.Join(m.cacheDir(s), cacheName(c))
 		if _, err := os.Stat(from); err != nil {
 			continue
 		}
@@ -263,7 +290,7 @@ func (m *Manager) returnCaches(s Spec, path string) {
 		if _, err := os.Stat(from); err != nil {
 			continue
 		}
-		to := filepath.Join(m.cacheDir(s.Board), cacheName(c))
+		to := filepath.Join(m.cacheDir(s), cacheName(c))
 		if _, err := os.Stat(to); err == nil {
 			continue
 		}
@@ -272,8 +299,8 @@ func (m *Manager) returnCaches(s Spec, path string) {
 		}
 	}
 	if moved {
-		if b, err := os.ReadFile(m.metaPath(s.Board, s.DutyID)); err == nil {
-			_ = os.WriteFile(filepath.Join(m.cacheDir(s.Board), "meta.json"), b, 0o644)
+		if b, err := os.ReadFile(m.metaPath(s)); err == nil {
+			_ = os.WriteFile(filepath.Join(m.cacheDir(s), "meta.json"), b, 0o644)
 		}
 	}
 }
@@ -313,7 +340,7 @@ func (m *Manager) copyFiles(s Spec, path string) error {
 // Remove deletes a finished duty's worktree and branch, after handing its caches back. keepBranch
 // leaves the branch — for a repository with no remote, where that branch is the work.
 func (m *Manager) Remove(ctx context.Context, s Spec, keepBranch bool) error {
-	path := m.Path(s.Board, s.DutyID)
+	path := m.PathOf(s)
 	if m.Exists(s) {
 		m.returnCaches(s, path)
 		if _, err := git(ctx, s.Repo, "worktree", "remove", "--force", path); err != nil {
@@ -330,7 +357,7 @@ func (m *Manager) Remove(ctx context.Context, s Spec, keepBranch bool) error {
 			_, _ = git(ctx, s.Repo, "push", "--quiet", remote, ":refs/dutyboard/wip/"+s.DutyID)
 		}
 	}
-	_ = os.Remove(m.metaPath(s.Board, s.DutyID))
+	_ = os.Remove(m.metaPath(s))
 	return nil
 }
 
@@ -338,7 +365,7 @@ func (m *Manager) Remove(ctx context.Context, s Spec, keepBranch bool) error {
 // .gitignore excludes — to refs/dutyboard/wip/<duty> on the remote, without moving the branch. It is
 // how another machine resumes a parked duty whose folder is on this one.
 func (m *Manager) Snapshot(ctx context.Context, s Spec) error {
-	path := m.Path(s.Board, s.DutyID)
+	path := m.PathOf(s)
 	remote := Remote(ctx, s.Repo)
 	if remote == "" {
 		return nil

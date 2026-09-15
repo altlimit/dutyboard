@@ -275,12 +275,25 @@ func (d *Daemon) altengineDeploy(ctx context.Context, s *session, name string, a
 	}
 	client := altengine.New(d.opt.Config.Altengine, key)
 
+	// A path in the main worktree, or — absolute — in one of the duty's worktrees of the board's other
+	// repositories.
 	inWorktree := func(rel string) (string, error) {
-		p := filepath.Join(run.Worktree, filepath.FromSlash(rel))
-		if !within(p, run.Worktree) {
-			return "", fmt.Errorf("%q is outside this duty's worktree", rel)
+		roots := []string{run.Worktree}
+		for _, name := range run.openRepos() {
+			if r, ok := findRepo(v, name); ok {
+				roots = append(roots, d.wt.PathOf(d.repoSpec(ctx, run.Board, run.DutyID, r)))
+			}
 		}
-		return p, nil
+		p := filepath.FromSlash(rel)
+		if !filepath.IsAbs(p) {
+			p = filepath.Join(run.Worktree, p)
+		}
+		for _, root := range roots {
+			if within(p, root) {
+				return p, nil
+			}
+		}
+		return "", fmt.Errorf("%q is outside this duty's worktrees", rel)
 	}
 	lock := d.lock("deploy:" + run.Board)
 	if err := lock.Acquire(ctx, run.DutyID); err != nil {

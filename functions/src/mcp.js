@@ -296,6 +296,19 @@ const TOOLS = [
             copy: { type: "array", items: { type: "string" }, description: "Files outside git a checkout needs, copied from the project folder, e.g. '.env'." },
           },
         },
+        repos: {
+          type: "array",
+          description: "For a board with more repositories than its main one: what you found for each, by the name the board gives it.",
+          items: {
+            type: "object",
+            properties: {
+              name: s("The repository's name on the board."),
+              test_command: s("The command that runs that repository's whole test suite, from its root."),
+              worktree: { type: "object", description: "How a fresh checkout of that repository is made ready: prep, prep_inputs, cache, copy — as for the main repository." },
+            },
+            required: ["name"],
+          },
+        },
         agent_id: s("Which agent you are. Defaults to the id configured on this connection."),
       },
       required: ["duty_id"],

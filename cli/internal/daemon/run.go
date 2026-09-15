@@ -44,6 +44,7 @@ type Run struct {
 	mu         sync.Mutex
 	st, det    string
 	integrated *worktree.Result
+	opened     []string // the board's other repositories this duty has a worktree of
 	cancel     context.CancelFunc
 	byBoard    atomic.Bool
 }
@@ -193,6 +194,23 @@ func (d *Daemon) execute(dctx, rctx context.Context, run *Run, duty *board.Duty,
 	records, _ := state.RunRecords()
 	rec := records[run.DutyID]
 	rec.Board, rec.Agent = run.Board, run.Agent
+	// The board's other repositories: the folders for all of them, and a worktree of each the duty
+	// opened before — or of every one, for a setup, which has to make the machine ready for them all.
+	d.repoPlaceholders(dctx, run, v)
+	for _, r := range boardRepos(v) {
+		wanted := run.Kind == "setup"
+		for _, n := range rec.Repos {
+			wanted = wanted || n == r.Name
+		}
+		if !wanted {
+			continue
+		}
+		if _, failed, err := d.openRepo(rctx, run, v, r.Name); err != nil {
+			d.log.Printf("%s: opening repository %q for %s: %v", run.Board, r.Name, run.DutyID, err)
+		} else if failed != "" {
+			prepFailed += fmt.Sprintf("\n\nIn repository %s (%s):\n%s", r.Name, d.wt.PathOf(d.repoSpec(dctx, run.Board, run.DutyID, r)), failed)
+		}
+	}
 	// A conversation can only be resumed where it happened: a new worktree means a new session.
 	resume := !created && rec.Session != "" && (resuming || rec.Attempts > 0)
 	if rec.Session == "" || created {
@@ -211,6 +229,7 @@ func (d *Daemon) execute(dctx, rctx context.Context, run *Run, duty *board.Duty,
 			Duty: *duty, Board: v, Rules: rules, RulesAt: rulesAt, Branch: spec.Branch(), Worktree: path,
 			Mode: string(modeFor(dctx, v, spec)), Resuming: resume, Attempt: rec.Attempts,
 			ProjectRoot: spec.Repo, LocalDir: spec.CopyFrom, Tools: d.tools.Describe(), PrepFailed: prepFailed,
+			Repos: d.promptRepos(dctx, run, v),
 		}
 		servers, _ := d.boardMCPServers(v)
 		for _, s := range servers {
@@ -248,6 +267,7 @@ func (d *Daemon) execute(dctx, rctx context.Context, run *Run, duty *board.Duty,
 		if logFile != nil {
 			job.Log = logFile
 		}
+		rec.Repos = run.openRepos()
 		_ = state.SaveRunRecord(run.DutyID, &rec)
 		run.set("working", "")
 		d.report(dctx, run.Board)
@@ -261,6 +281,7 @@ func (d *Daemon) execute(dctx, rctx context.Context, run *Run, duty *board.Duty,
 		if logFile != nil {
 			logFile.Close()
 		}
+		rec.Repos = run.openRepos()
 		if len(outcome.Denied) > 0 {
 			// Refused tools are the runner's business, so they are said here, where its owner looks —
 			// not left to the session to raise as a duty for someone who never configured them.
@@ -305,6 +326,7 @@ func (d *Daemon) execute(dctx, rctx context.Context, run *Run, duty *board.Duty,
 		if board.IsStatus(err, 404) {
 			d.log.Printf("%s was deleted; removing its worktree", run.DutyID)
 			_ = d.wt.Remove(dctx, spec, false)
+			d.removeRepos(dctx, run, v, false)
 			_ = state.SaveRunRecord(run.DutyID, nil)
 			return
 		}
@@ -319,6 +341,7 @@ func (d *Daemon) execute(dctx, rctx context.Context, run *Run, duty *board.Duty,
 			res := run.integration()
 			keepBranch := res != nil && res.Mode == worktree.ModeBranch && !res.NoOp
 			_ = d.wt.Remove(dctx, spec, keepBranch)
+			d.removeRepos(dctx, run, v, keepBranch)
 			_ = state.SaveRunRecord(run.DutyID, nil)
 			d.log.Printf("%s: %s %q", run.Board, fresh.Status, fresh.Title)
 			if fresh.Status == "done" && res != nil && res.OK && !res.NoOp && (res.Mode == worktree.ModePush || res.Mode == worktree.ModeSquash) {
@@ -413,7 +436,8 @@ func (d *Daemon) job(run *Run, v board.BoardView, path, system, task string, rec
 		}}, servers...),
 		// A worktree's commits are written to its clone's git folder, and setup installs into the tools
 		// folder: an agent that sandboxes its writes to the worktree needs both.
-		Writable: []string{filepath.Join(run.Spec.Repo, ".git"), tools.Dir()},
+		Writable: append(append([]string{filepath.Join(run.Spec.Repo, ".git"), tools.Dir()}, d.repoWritable(v)...), d.repoPlaceholders(context.Background(), run, v)...),
+		AddDirs:  d.repoPlaceholders(context.Background(), run, v),
 		Env:      append(d.tools.SessionEnv(), "DUTYBOARD_RUN_TOKEN="+run.Token, "DUTYBOARD_HOME="+state.Home()),
 	}
 	if r := v.Runner; r != nil {
@@ -430,7 +454,7 @@ func (d *Daemon) job(run *Run, v board.BoardView, path, system, task string, rec
 		}
 	}
 	if run.Kind == "setup" {
-		j.AddDirs = []string{run.Spec.CopyFrom}
+		j.AddDirs = append(j.AddDirs, run.Spec.CopyFrom)
 	}
 	var loggedAt time.Time
 	j.OnActivity = func(line string) {
@@ -470,6 +494,7 @@ func (d *Daemon) afterPark(ctx context.Context, run *Run, rec state.RunRecord) {
 		if err := d.wt.Snapshot(ctx, run.Spec); err != nil {
 			d.log.Printf("snapshotting %s for another machine: %v", run.DutyID, err)
 		}
+		d.snapshotRepos(ctx, run, d.view(run.Board))
 	}
 	d.log.Printf("%s: parked %q; its worktree waits for it", run.Board, run.Title)
 }
