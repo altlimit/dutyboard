@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/altlimit/dutyboard/cli/internal/altengine"
 	"github.com/altlimit/dutyboard/cli/internal/assets"
@@ -39,6 +40,7 @@ type Flags struct {
 	Service       bool
 	DeployKey     bool
 	MCPSecrets    bool
+	Stop          bool
 }
 
 // Main runs the program and returns its exit code.
@@ -70,6 +72,7 @@ func Main(args []string) int {
 	fs.BoolVar(&f.Service, "service", false, "set dutyboard to start by itself (at boot on a server) without asking, start it, and exit")
 	fs.BoolVar(&f.DeployKey, "deploy-key", false, "set the altengine key this machine deploys projects with, then exit")
 	fs.BoolVar(&f.MCPSecrets, "mcp-secrets", false, "set the secrets your boards' MCP servers need on this machine, then exit")
+	fs.BoolVar(&f.Stop, "stop", false, "stop the dutyboard running on this machine; the duties it holds resume when it starts again")
 	fs.Usage = func() {
 		fmt.Fprintln(fs.Output(), "dutyboard — runs your DutyBoard's work on this machine.")
 		fmt.Fprintln(fs.Output(), "\nRun with no flags to connect this machine and start working. Flags:")
@@ -98,6 +101,8 @@ func Main(args []string) int {
 		err = SetDeployKey(ctx, u, f)
 	case f.MCPSecrets:
 		err = SetMCPSecrets(ctx, u)
+	case f.Stop:
+		err = stopRunning(u, true)
 	default:
 		err = Start(ctx, u, f)
 	}
@@ -374,4 +379,28 @@ func SetMCPSecrets(ctx context.Context, u *ui.UI) error {
 		return nil
 	}
 	return reloadDaemon(u)
+}
+
+// stopRunning stops the daemon running on this machine, if there is one. With say, it explains when
+// and how it comes back.
+func stopRunning(u *ui.UI, say bool) error {
+	if !localmcp.Running() {
+		if say {
+			u.OK("dutyboard is not running on this machine")
+		}
+		return nil
+	}
+	c, err := localmcp.Dial()
+	if err != nil {
+		return err
+	}
+	defer c.Close()
+	if err := c.Stop(2 * time.Minute); err != nil {
+		return err
+	}
+	if say {
+		u.OK("stopped — the duties it held are resumed when it starts again")
+		u.Say("Started by itself from your crontab, it is back within 5 minutes; `dutyboard --service` starts it now.")
+	}
+	return nil
 }

@@ -54,6 +54,14 @@ function revoke(m) {
   act(() => api("/machines/revoke", { machine_id: m.machine_id }), `${m.name} is revoked.`);
 }
 
+function retry(m, link) {
+  act(
+    () => api("/machines/retry", { machine_id: m.machine_id, project_id: link.project_id }),
+    `Asked ${m.name} to check ${link.project_id} again — its answer shows here in a few seconds.`,
+  );
+  setTimeout(() => load({ quiet: true }), 8000);
+}
+
 function unlink(m, link) {
   if (!confirm(`Take ${m.name} off ${link.project_id}? Duties it is working on there stay held until it is linked again or someone moves them.`)) return;
   act(() => api("/machines/unlink", { machine_id: m.machine_id, project_id: link.project_id }), `${m.name} no longer works ${link.project_id}.`);
@@ -166,6 +174,9 @@ onUnmounted(() => clearInterval(timer));
                 <td class="mono small">{{ l.path_hint || "—" }}</td>
                 <td>
                   <p v-if="l.problem" class="notice notice--warn small" style="margin: 0 0 0.3rem">{{ l.problem }}</p>
+                  <button v-if="l.problem" type="button" class="link small" :disabled="busy" @click="retry(m, l)">
+                    Retry now<span class="sr-only"> for {{ l.project_id }}</span>
+                  </button>
                   <span v-if="!l.runs.length" class="muted">idle</span>
                   <ul v-else class="runs">
                     <li v-for="r in l.runs" :key="r.duty_id">

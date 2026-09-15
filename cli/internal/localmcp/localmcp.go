@@ -36,6 +36,9 @@ type Handler interface {
 	MCP(ctx context.Context, runToken, cwd string, message json.RawMessage) (json.RawMessage, error)
 	// Reload re-reads links and settings, after another invocation linked a folder.
 	Reload()
+	// Stop shuts the daemon down as Ctrl+C would: sessions end, and the duties they held are resumed
+	// when it starts again.
+	Stop()
 }
 
 // Endpoint is run/daemon.json.
@@ -119,6 +122,9 @@ func serveConn(ctx context.Context, c net.Conn, h Handler, secret string) {
 		case "reload":
 			h.Reload()
 			_ = enc.Encode(response{})
+		case "stop":
+			_ = enc.Encode(response{})
+			h.Stop()
 		case "ping":
 			_ = enc.Encode(response{})
 		default:
@@ -207,6 +213,26 @@ func (c *Client) Reload() error {
 	}
 	if res.Error != "" {
 		return errors.New(res.Error)
+	}
+	return nil
+}
+
+// Stop asks the daemon to shut down, and waits up to `within` for it to be gone.
+func (c *Client) Stop(within time.Duration) error {
+	res, err := c.do(request{Op: "stop"})
+	if err != nil {
+		return err
+	}
+	if res.Error != "" {
+		return errors.New(res.Error)
+	}
+	c.Close()
+	deadline := time.Now().Add(within)
+	for Running() {
+		if time.Now().After(deadline) {
+			return fmt.Errorf("dutyboard was asked to stop and is still running after %s", within)
+		}
+		time.Sleep(300 * time.Millisecond)
 	}
 	return nil
 }

@@ -26,6 +26,7 @@ import (
 	"github.com/altlimit/dutyboard/cli/internal/board"
 	"github.com/altlimit/dutyboard/cli/internal/live"
 	"github.com/altlimit/dutyboard/cli/internal/localmcp"
+	"github.com/altlimit/dutyboard/cli/internal/runner"
 	"github.com/altlimit/dutyboard/cli/internal/state"
 	"github.com/altlimit/dutyboard/cli/internal/tools"
 	"github.com/altlimit/dutyboard/cli/internal/worktree"
@@ -241,6 +242,14 @@ func (d *Daemon) wake() {
 }
 
 // Reload is called by another `dutyboard` invocation that has just linked a folder.
+// Stop shuts the daemon down, as asked by `dutyboard --stop` or a restart.
+func (d *Daemon) Stop() {
+	d.log.Printf("stopping, as asked on this machine; the duties it holds are resumed next time")
+	if d.stop != nil {
+		d.stop()
+	}
+}
+
 func (d *Daemon) Reload() {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -332,6 +341,23 @@ func (d *Daemon) onEvent(ev live.Event) {
 			}
 		case "links":
 			go d.Reload()
+		case "retry":
+			// A person fixed what this machine reported and wants it checked now: forget every answer kept
+			// to save asking again — the deploy key's access, the GitHub CLI, the agent's sign-in.
+			d.log.Printf("checking again, as asked from the console")
+			d.mu.Lock()
+			d.access = map[string]accessCheck{}
+			d.ghCheckedAt = time.Time{}
+			d.mu.Unlock()
+			runner.ForgetChecks()
+			go func() {
+				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer cancel()
+				if err := d.refresh(ctx); err != nil {
+					d.log.Printf("reloading settings: %v", err)
+				}
+				d.wake()
+			}()
 		default: // setup, pause, resume, config
 			d.wake()
 		}

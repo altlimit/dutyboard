@@ -1103,6 +1103,12 @@ async function main() {
   check("and the machine sees it as its own to resume", boardView.runnable.some((d) => d.duty_id === pauseMenu.duty_id && d.resumes), boardView);
   check("and how many machines work the board", boardView.machines === 1, boardView.machines);
 
+  const retried = await call("/machines/retry", { machine_id: paired.machine_id, project_id: mBoard }, human);
+  const heardRetry = await socket.next((f) => f.channel === `machine.${paired.machine_id}` && f.data && f.data.t === "retry");
+  check("its owner can have it check again now, and it hears so on its own channel", retried.ok && heardRetry && heardRetry.data.project_id === mBoard, heardRetry);
+  const strangerRetry = await call("/machines/retry", { machine_id: paired.machine_id }, other.id_token, { expectStatus: true });
+  check("nobody else can", strangerRetry.status === 404, strangerRetry);
+
   const setupRequest = await call("/machine/request", { machine_id: paired.machine_id, project_id: mBoard, path: "machines" }, human);
   const heardSetup = await socket.next((f) => f.data && f.data.t === "setup");
   check("a setup asked for in the console reaches the daemon on its own channel", heardSetup && heardSetup.data.request_id === setupRequest.request.request_id, heardSetup);
@@ -1358,6 +1364,7 @@ async function main() {
     "/connect/start": null,
     // Acts on whoever is calling: an outsider gets their own, empty, list.
     "/machines/list": null,
+    "/machines/retry": () => ({ machine_id: paired.machine_id, project_id: projectId }),
     // These two take no target: they act on whoever is calling. An outsider calling them
     // gets their OWN empty world, which is correct rather than a leak — so they are
     // excluded deliberately, and named here so the exclusion is a decision on the record.

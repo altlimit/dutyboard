@@ -99,6 +99,14 @@ func installService(u *ui.UI, cfg *state.Config) error {
 	if err != nil {
 		return err
 	}
+	// Restarting is what running this again after an update means: the dutyboard already running is
+	// the old binary, and starting another would only find it there and leave.
+	if localmcp.Running() {
+		u.Say("Stopping the dutyboard already running, to start this one…")
+		if err := stopRunning(u, false); err != nil {
+			return err
+		}
+	}
 	inst, err := service.Install(exe)
 	if err != nil {
 		return fmt.Errorf("could not set dutyboard to start by itself: %w", err)

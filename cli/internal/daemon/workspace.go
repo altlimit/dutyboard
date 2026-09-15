@@ -132,7 +132,7 @@ func (d *Daemon) ensureClone(ctx context.Context, v board.BoardView) (string, er
 		cmd := exec.CommandContext(cctx, "git", append(args, url, dir)...)
 		cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
 		if out, err := cmd.CombinedOutput(); err != nil {
-			return "", fmt.Errorf("could not clone %s: %s", url, lastLine(string(out), err))
+			return "", fmt.Errorf("could not clone %s: %s%s", url, lastLine(string(out), err), cloneHint(url, string(out)))
 		}
 	}
 	if err := applyGitSettings(ctx, dir, v); err != nil {
@@ -226,4 +226,29 @@ func lastLine(out string, err error) string {
 		return l
 	}
 	return err.Error()
+}
+
+// cloneHint says what to do about the clone failures a machine can fix, in words for its owner.
+func cloneHint(url, out string) string {
+	switch {
+	case strings.Contains(out, "could not read Username") || strings.Contains(out, "Authentication failed"):
+		return " — this machine has no GitHub credentials for a private repository over https. On it, run `gh auth login` then `gh auth setup-git`, or add an SSH key to GitHub and use the git@github.com: URL"
+	case strings.Contains(out, "Host key verification failed"):
+		return " — this machine has never connected to the host over SSH. On it, run `ssh-keyscan " + sshHost(url) + " >> ~/.ssh/known_hosts`"
+	case strings.Contains(out, "Permission denied (publickey)"):
+		return " — the repository's host did not accept this machine's SSH key. Add ~/.ssh/id_ed25519.pub to the repository's deploy keys (with write access) or to your account"
+	case strings.Contains(out, "Repository not found"):
+		return " — the URL is wrong, or this machine's credentials cannot see the repository"
+	}
+	return ""
+}
+
+func sshHost(url string) string {
+	if at := strings.Index(url, "@"); at >= 0 {
+		rest := url[at+1:]
+		if i := strings.IndexAny(rest, ":/"); i >= 0 {
+			return rest[:i]
+		}
+	}
+	return "github.com"
 }

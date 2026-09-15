@@ -63,6 +63,13 @@ var codexLogin struct {
 	err error
 }
 
+// ForgetChecks drops remembered answers about the agents on this machine, so the next check asks again.
+func ForgetChecks() {
+	codexLogin.Lock()
+	codexLogin.at = time.Time{}
+	codexLogin.Unlock()
+}
+
 // Check finds Codex and asks it whether it is signed in, remembering the answer for a few minutes: a
 // daemon checks every board on every tick.
 func (Codex) Check(ctx context.Context) error {

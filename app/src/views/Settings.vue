@@ -74,6 +74,25 @@ async function saveRules() {
 // Machines working this board, whoever's they are.
 const runners = ref([]);
 
+const retried = ref({});
+async function retryRunner(r) {
+  busy.value = true;
+  error.value = "";
+  try {
+    const res = await api("/machines/retry", { machine_id: r.machine_id, project_id: props.projectId });
+    retried.value = { ...retried.value, [r.machine_id]: res.online === false ? "It is offline — it checks again when it is back." : "Asked it to check again…" };
+    // Its answer arrives as a new report; give it a moment, then read the runners again.
+    setTimeout(async () => {
+      runners.value = (await api("/board/runners", { project_id: props.projectId }).catch(() => ({ runners: runners.value }))).runners;
+      retried.value = { ...retried.value, [r.machine_id]: "" };
+    }, 8000);
+  } catch (err) {
+    error.value = err.message;
+  } finally {
+    busy.value = false;
+  }
+}
+
 async function unlinkRunner(r) {
   if (!confirm(`Take ${r.machine_name} off this board? Duties it holds stay held until someone moves them.`)) return;
   busy.value = true;
@@ -408,6 +427,10 @@ onUnmounted(() => {
             </template>
           </span>
           <span v-if="r.problem" class="notice notice--warn small" style="flex-basis: 100%; margin: 0">{{ r.problem }}</span>
+          <button v-if="r.problem && (isOwner || (me && r.owner_uid === me.uid))" type="button" class="link small" :disabled="busy" @click="retryRunner(r)">
+            Retry now<span class="sr-only"> on {{ r.machine_name }}</span>
+          </button>
+          <span v-if="retried[r.machine_id]" class="small muted" role="status">{{ retried[r.machine_id] }}</span>
           <button v-if="isOwner || (me && r.owner_uid === me.uid)" type="button" class="link small" :disabled="busy" @click="unlinkRunner(r)">
             Unlink<span class="sr-only"> {{ r.machine_name }}</span>
           </button>

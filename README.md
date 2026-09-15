@@ -373,6 +373,15 @@ covers boot and a crash and needs no login or admin. If an admin later runs
 `sudo loginctl enable-linger <user>`, `dutyboard --service` again switches to systemd. Run without
 `--service`, and with nobody at the terminal, `dutyboard` simply runs — for a supervisor of your own.
 
+**Updating** is the same command again: `alt update altlimit/dutyboard && dutyboard --service`. It
+stops the `dutyboard` already running — which is still the old binary — and starts the new one; the
+duties it held are resumed. `dutyboard --stop` only stops it (the crontab line starts it again within
+five minutes).
+
+A machine that reports a problem on a board — it could not clone the repository, its agent is not
+signed in, its deploy key cannot deploy — says how to fix it on the Machines page and in the board's
+settings, and **Retry now** there has it check again at once instead of at its next scheduled check.
+
 Headless is enough for most projects: Godot has `--headless` for exports and tests, Playwright runs a
 headless browser, and anything that must render a window can run under `xvfb-run`.
 

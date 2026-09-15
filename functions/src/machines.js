@@ -344,6 +344,26 @@ export async function revokeMachine(ctx, body) {
 }
 
 /**
+ * `POST /machines/retry` — `{ machine_id, project_id? }`. Has the machine check its boards again now —
+ * clone, agent, keys — rather than at its next scheduled check, after a person fixed what it reported.
+ * The machine's owner may ask, and so may the owner of a board it works, naming that board.
+ */
+export async function retryMachine(ctx, body) {
+  const caller = requireHuman(ctx.caller);
+  const id = str(body.machine_id, "machine_id", { required: true, max: 40 });
+  const { rows } = await ctx.store.query("machines", { where: [{ field: "machine_id", op: "=", value: id }], limit: 1 });
+  const row = rows[0];
+  if (!row) throw notFound(`machine '${id}' not found`);
+  if (row.owner_uid !== caller.uid) {
+    if (!body.project_id) throw notFound(`machine '${id}' not found`);
+    const project = await resolveProject(caller, body.project_id, ctx.store, { ownerOnly: true });
+    if (!(await ctx.store.get("machine_links", linkKey(project.key, id)))) throw notFound(`machine '${id}' not found`);
+  }
+  await publishMachine(ctx, id, { t: "retry", project_id: body.project_id ? String(body.project_id) : null });
+  return { ok: true, online: (await machinesPresent(ctx, [id])).get(id) };
+}
+
+/**
  * `POST /machines/unlink` — `{ machine_id, project_id }`. Either the machine's owner, taking it off a
  * board, or the board's owner, taking someone's machine off their board.
  */
