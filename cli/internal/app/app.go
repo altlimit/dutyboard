@@ -13,6 +13,7 @@ import (
 
 	"github.com/altlimit/dutyboard/cli/internal/altengine"
 	"github.com/altlimit/dutyboard/cli/internal/assets"
+	"github.com/altlimit/dutyboard/cli/internal/board"
 	"github.com/altlimit/dutyboard/cli/internal/localmcp"
 	"github.com/altlimit/dutyboard/cli/internal/provision"
 	"github.com/altlimit/dutyboard/cli/internal/state"
@@ -35,6 +36,7 @@ type Flags struct {
 	Name          string
 	Root          string
 	NoService     bool
+	DeployKey     bool
 }
 
 // Main runs the program and returns its exit code.
@@ -63,6 +65,7 @@ func Main(args []string) int {
 	fs.StringVar(&f.Name, "name", "", "this machine's name, when pairing")
 	fs.StringVar(&f.Root, "root", "", "the folder setups requested from the console clone into (default ~/dutyboard)")
 	fs.BoolVar(&f.NoService, "no-service", false, "do not offer to start dutyboard at login; run in this terminal")
+	fs.BoolVar(&f.DeployKey, "deploy-key", false, "set the altengine key this machine deploys projects with, then exit")
 	fs.Usage = func() {
 		fmt.Fprintln(fs.Output(), "dutyboard — runs your DutyBoard's work on this machine.")
 		fmt.Fprintln(fs.Output(), "\nRun with no flags to connect this machine and start working. Flags:")
@@ -87,6 +90,8 @@ func Main(args []string) int {
 	switch {
 	case f.ProvisionOnly:
 		_, err = Provision(ctx, u, f)
+	case f.DeployKey:
+		err = SetDeployKey(ctx, u, f)
 	default:
 		err = Start(ctx, u, f)
 	}
@@ -147,9 +152,13 @@ func Provision(ctx context.Context, u *ui.UI, f Flags) (*provision.Result, error
 		return nil, err
 	}
 	// Only a key a person just typed is offered for keeping. One from the environment belongs to
-	// whatever set it — a CI job must never leave a credential file behind.
+	// whatever set it — a CI job must never leave a credential file behind. And not by default: this
+	// key can manage the whole deployment, agents on this machine run as the same user, and all it
+	// is needed for again is the next upgrade. Projects deploy with a key of their own.
 	if typed && u.Interactive {
-		keep, err := u.Confirm("Keep the altengine key on this machine, for upgrades and project deploys?", true)
+		u.Say("This key can manage your DutyBoard deployment. Agents on this machine run as you and could read a key kept here,")
+		u.Say("so keep it only if this machine runs no agents. Projects deploy with a narrower key: `dutyboard --deploy-key`.")
+		keep, err := u.Confirm("Keep this key on this machine for the next upgrade?", false)
 		if err != nil {
 			return nil, err
 		}
@@ -208,4 +217,87 @@ func loadAssets(ctx context.Context, u *ui.UI, source string) (*assets.Bundle, e
 	}
 	u.Say("this build carries no DutyBoard assets; downloading them from the release")
 	return assets.Download(ctx, Version, state.Path("cache"))
+}
+
+// SetDeployKey stores the altengine key projects are deployed with, checks it against the instances
+// the boards this machine works deploy to, and offers to drop the provisioning key if one is kept.
+func SetDeployKey(ctx context.Context, u *ui.UI, f Flags) error {
+	if !u.Interactive {
+		return errors.New("--deploy-key asks for the key: run it in a terminal")
+	}
+	u.Say("The key the runner deploys projects with. Give it only what deploys need, on only the instances your boards")
+	u.Say("deploy to: write on a static site, full on a functions instance. Nothing else — agents run as you.")
+	u.Say("(altengine console → Settings → API keys.) Leave it empty to remove the one kept here.")
+	key, err := u.Secret("altengine deploy key")
+	if err != nil {
+		return err
+	}
+	if key == "" {
+		if err := state.DeleteCredential(state.DeployKey); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		u.OK("removed this machine's deploy key")
+		return reloadDaemon(u)
+	}
+
+	cfg, err := state.LoadConfig()
+	if err != nil {
+		return err
+	}
+	base := f.Altengine
+	if base == "" {
+		base = cfg.Altengine
+	}
+	client := altengine.New(base, key)
+	if cfg.Server != "" && !client.Local() {
+		if mk, _ := state.Credential(state.MachineKey); mk != "" {
+			api := board.New(cfg.Server, mk)
+			if boards, err := api.Boards(ctx); err == nil {
+				for _, b := range boards {
+					if !b.Linked || b.Profile == nil || b.Profile.Deploy.Method != "altengine" {
+						continue
+					}
+					for _, instance := range b.Profile.Deploy.AltengineInstances {
+						if kind, err := client.DeployTarget(ctx, instance); err != nil {
+							u.Warn("%s: %v", b.ProjectID, err)
+						} else {
+							u.OK("%s: can deploy to %s %q", b.ProjectID, kind, instance)
+						}
+					}
+				}
+			}
+		}
+	}
+	if err := state.SetCredential(state.DeployKey, key); err != nil {
+		return fmt.Errorf("storing the deploy key: %w", err)
+	}
+	u.OK("stored this machine's deploy key")
+
+	if k, _ := state.Credential(state.AltengineKey); k != "" && k != key {
+		drop, err := u.Confirm("This machine also keeps the key DutyBoard was provisioned with, which can manage your whole deployment. Remove it?", true)
+		if err != nil {
+			return err
+		}
+		if drop {
+			_ = state.DeleteCredential(state.AltengineKey)
+			u.OK("removed the provisioning key; the next upgrade asks for it")
+		}
+	}
+	return reloadDaemon(u)
+}
+
+// reloadDaemon has a running daemon pick up a changed key now rather than at its next check.
+func reloadDaemon(u *ui.UI) error {
+	if !localmcp.Running() {
+		return nil
+	}
+	c, err := localmcp.Dial()
+	if err != nil {
+		return nil
+	}
+	defer c.Close()
+	if err := c.Reload(); err == nil {
+		u.OK("the running dutyboard has picked it up")
+	}
+	return nil
 }

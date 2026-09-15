@@ -433,3 +433,52 @@ func FilesUnderExcept(fsys fs.FS, dir, prefix string, exclude []string) ([]Stati
 	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
 	return out, err
 }
+
+// probeName is a deployment and a function no one has: the probes below address it so that, once
+// the platform has checked the key, the request fails on the missing thing and changes nothing.
+const probeName = "dutyboard-access-check"
+
+// DeployTarget answers what the key may deploy to the named instance: "static" when it can publish
+// the site there (write), "functions" when it can deploy functions there (full). An error says what
+// is missing, in words for the machine's owner.
+//
+// The platform checks a key's grant before it looks the instance up, so each probe is a request
+// that needs the deploy level and then fails harmlessly: the upload list of a deployment that does
+// not exist, and activating a function version that is not valid.
+func (c *Client) DeployTarget(ctx context.Context, instance string) (string, error) {
+	static := c.Do(ctx, http.MethodGet, "/v1/static/"+Esc(instance)+"/deployments/"+probeName+"/uploads", nil, nil)
+	if IsStatus(static, 401) {
+		return "", fmt.Errorf("altengine refused the deploy key: %v", static)
+	}
+	if allowed(static, "static instance") {
+		return "static", nil
+	}
+	fns := c.Do(ctx, http.MethodPost, "/v1/functions/"+Esc(instance)+"/"+probeName+"/activate", map[string]any{"version": -1}, nil)
+	if allowed(fns, "functions instance") {
+		return "functions", nil
+	}
+	switch {
+	case IsStatus(static, 404) && IsStatus(fns, 404):
+		return "", fmt.Errorf("there is no static or functions instance named %q", instance)
+	case IsStatus(static, 403) && IsStatus(fns, 403):
+		return "", fmt.Errorf("the deploy key has no deploy access to %q — give it write on static %q for a site, or full on functions %q for a function", instance, instance, instance)
+	case IsStatus(static, 403):
+		return "", fmt.Errorf("the deploy key cannot publish to static %q (%v) — give it write there", instance, static)
+	case IsStatus(fns, 403):
+		return "", fmt.Errorf("the deploy key cannot deploy functions to %q (%v) — give it full there", instance, fns)
+	}
+	return "", fmt.Errorf("could not check deploy access to %q: %v", instance, static)
+}
+
+// allowed is a probe that got past the grant check: anything but a refusal, a missing instance, or
+// a failure to reach the platform at all.
+func allowed(err error, missing string) bool {
+	if err == nil {
+		return true
+	}
+	var ae *APIError
+	if !errors.As(err, &ae) || ae.Status == 401 || ae.Status == 403 || ae.Status >= 500 {
+		return false
+	}
+	return !(ae.Status == 404 && strings.Contains(ae.Message+ae.Body, missing))
+}

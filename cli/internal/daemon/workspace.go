@@ -63,6 +63,20 @@ func (d *Daemon) ensureWorkspaces(ctx context.Context) {
 			problem = "this board opens pull requests, and the GitHub CLI (gh) is not installed or signed in on this machine — run `gh auth login`"
 		}
 		d.setProblem(ctx, v.ProjectID, problem)
+		d.setNotice(ctx, v.ProjectID, d.deployNotice(ctx, v))
+	}
+}
+
+func (d *Daemon) setNotice(ctx context.Context, boardID, notice string) {
+	d.mu.Lock()
+	changed := d.notices[boardID] != notice
+	d.notices[boardID] = notice
+	d.mu.Unlock()
+	if changed {
+		if notice != "" {
+			d.log.Printf("%s: %s", boardID, notice)
+		}
+		d.report(ctx, boardID)
 	}
 }
 

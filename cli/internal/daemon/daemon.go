@@ -71,6 +71,8 @@ type Daemon struct {
 	reportDue    map[string]bool
 	requests     map[string]bool   // setup requests being handled
 	problems     map[string]string // board → what stops this machine working it
+	notices      map[string]string // board → what the owner should fix, which does not stop work
+	access       map[string]accessCheck
 	ghOK         bool
 	ghCheckedAt  time.Time
 	limitedUntil time.Time
@@ -124,6 +126,8 @@ func New(opt Options) (*Daemon, error) {
 		reportDue:  map[string]bool{},
 		requests:   map[string]bool{},
 		problems:   map[string]string{},
+		notices:    map[string]string{},
+		access:     map[string]accessCheck{},
 		wakeCh:     make(chan struct{}, 1),
 		relink:     make(chan struct{}, 1),
 	}, nil
@@ -240,6 +244,9 @@ func (d *Daemon) wake() {
 func (d *Daemon) Reload() {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+	d.mu.Lock()
+	d.access = map[string]accessCheck{} // a reload is often a new deploy key: check again now
+	d.mu.Unlock()
 	if err := d.refresh(ctx); err != nil {
 		d.log.Printf("reload: %v", err)
 	}
@@ -542,6 +549,9 @@ func (d *Daemon) report(ctx context.Context, boardID string) {
 		}
 	}
 	problem := d.problems[boardID]
+	if problem == "" {
+		problem = d.notices[boardID]
+	}
 	d.mu.Unlock()
 	sort.Slice(runs, func(i, j int) bool { return runs[i].DutyID < runs[j].DutyID })
 	key := fmt.Sprint(runs, problem)

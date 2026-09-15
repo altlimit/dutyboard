@@ -12,6 +12,9 @@ import (
 const (
 	MachineKey   = "machine-key"
 	AltengineKey = "altengine-key"
+	// DeployKey is the altengine key the daemon deploys projects with — write on their sites and
+	// nothing else — kept apart from the provisioning key, which can manage the whole deployment.
+	DeployKey = "altengine-deploy-key"
 )
 
 const keyringService = "dutyboard"

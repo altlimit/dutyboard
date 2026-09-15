@@ -2,6 +2,8 @@ package daemon
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -139,6 +141,86 @@ var altengineTools = []map[string]any{
 	},
 }
 
+// deployKey is the key projects are deployed with: the deploy key, else — on a machine set up before
+// there was one — the provisioning key, if it was kept.
+func deployKey() string {
+	if k, err := state.Credential(state.DeployKey); err == nil && k != "" {
+		return k
+	}
+	k, _ := state.Credential(state.AltengineKey)
+	return k
+}
+
+type accessCheck struct {
+	at     time.Time
+	notice string
+}
+
+// accessTTL is how long an answer about the deploy key stands. A reload — which setting a key
+// sends — forgets them all.
+const accessTTL = 30 * time.Minute
+
+// deployNotice checks, before any duty gets as far as deploying, that this machine's deploy key can
+// deploy to every instance the board allows, and says what to fix when it cannot.
+func (d *Daemon) deployNotice(ctx context.Context, v board.BoardView) string {
+	if !deploysToAltengine(v) {
+		return ""
+	}
+	key := deployKey()
+	if key == "" {
+		return fmt.Sprintf("this board deploys to altengine (%s), and this machine has no deploy key — run `dutyboard --deploy-key` here", strings.Join(v.Profile.Deploy.AltengineInstances, ", "))
+	}
+	client := altengine.New(d.opt.Config.Altengine, key)
+	if client.Local() {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(key))
+	var notices []string
+	for _, instance := range v.Profile.Deploy.AltengineInstances {
+		id := hex.EncodeToString(sum[:8]) + "/" + instance
+		d.mu.Lock()
+		c, ok := d.access[id]
+		d.mu.Unlock()
+		if !ok || time.Since(c.at) > accessTTL {
+			cctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+			_, err := client.DeployTarget(cctx, instance)
+			cancel()
+			c = accessCheck{at: time.Now()}
+			if err != nil {
+				c.notice = err.Error()
+			}
+			d.mu.Lock()
+			d.access[id] = c
+			d.mu.Unlock()
+		}
+		if c.notice != "" {
+			notices = append(notices, c.notice)
+		}
+	}
+	if len(notices) == 0 {
+		return ""
+	}
+	return strings.Join(notices, "; ") + " — then run `dutyboard --deploy-key` if the key itself changes"
+}
+
+// deployRefused is a deploy the platform would not take from this machine's key. It is the machine
+// owner's to fix, so the owner is told where they look, and the session is told how to park the duty
+// so that answering it is the whole of what a person does afterwards.
+func (d *Daemon) deployRefused(run *Run, instance, why string) error {
+	d.mu.Lock()
+	d.access = map[string]accessCheck{}
+	d.mu.Unlock()
+	d.reportSoon(run.Board)
+	name := d.opt.Config.MachineName
+	if name == "" {
+		name = "this machine"
+	}
+	return fmt.Errorf("the runner could not deploy to %q with this machine's deploy key: %s. "+
+		"Its owner has been told on the Machines page. Do not look for another way to deploy. Park this duty: duty_checkpoint with set_status \"needs_decision\" "+
+		"and the question \"The work has landed but is not deployed: the deploy key on %s cannot deploy to %s. Fix the key's access (or run `dutyboard --deploy-key` there), then answer this to deploy.\" — and stop",
+		instance, why, name, instance)
+}
+
 func deploysToAltengine(v board.BoardView) bool {
 	return v.Profile != nil && v.Profile.Deploy.Method == "altengine" && len(v.Profile.Deploy.AltengineInstances) > 0
 }
@@ -161,9 +243,9 @@ func (d *Daemon) altengineDeploy(ctx context.Context, s *session, name string, a
 	if !allowed {
 		return nil, fmt.Errorf("instance %q is not one this board may deploy to (%s)", instance, strings.Join(v.Profile.Deploy.AltengineInstances, ", "))
 	}
-	key, err := state.Credential(state.AltengineKey)
-	if err != nil || key == "" {
-		return nil, errors.New("this machine has no altengine key — its owner can store one by running `dutyboard --provision-only`, or deploy by hand")
+	key := deployKey()
+	if key == "" {
+		return nil, d.deployRefused(run, instance, "this machine has no altengine deploy key")
 	}
 	client := altengine.New(d.opt.Config.Altengine, key)
 
@@ -207,6 +289,9 @@ func (d *Daemon) altengineDeploy(ctx context.Context, s *session, name string, a
 		}
 		message, _ := args["message"].(string)
 		url, id, err := client.DeployStatic(ctx, instance, message, files)
+		if altengine.IsStatus(err, 401) || altengine.IsStatus(err, 403) {
+			return nil, d.deployRefused(run, instance, err.Error())
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -229,6 +314,9 @@ func (d *Daemon) altengineDeploy(ctx context.Context, s *session, name string, a
 			_ = json.Unmarshal(b, &grants)
 		}
 		res, err := client.DeployFunction(ctx, instance, fn, string(code), grants)
+		if altengine.IsStatus(err, 401) || altengine.IsStatus(err, 403) {
+			return nil, d.deployRefused(run, instance, err.Error())
+		}
 		if err != nil {
 			return nil, err
 		}
