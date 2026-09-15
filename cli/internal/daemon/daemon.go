@@ -111,7 +111,7 @@ func New(opt Options) (*Daemon, error) {
 	return &Daemon{
 		opt:        opt,
 		api:        api,
-		wt:         &worktree.Manager{Root: state.Path("worktrees"), Log: logWriter{logger}},
+		wt:         &worktree.Manager{Root: state.Path("worktrees"), Log: logWriter{logger}, Env: reg.SessionEnv},
 		tools:      reg,
 		log:        logger,
 		exe:        exe,

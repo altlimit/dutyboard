@@ -126,7 +126,8 @@ func TestEnsurePreparesAndHandsCachesOn(t *testing.T) {
 func TestIntegratePushesAndRefusesUncommittedWork(t *testing.T) {
 	ctx := context.Background()
 	linked, remote := repoWithRemote(t)
-	m := &Manager{Root: t.TempDir()}
+	// The test command sees the machine's registered tools, as a session does.
+	m := &Manager{Root: t.TempDir(), Env: func() []string { return []string{"REGISTERED_TOOL=yes"} }}
 	s := Spec{Repo: linked, Board: "web", DutyID: "duty_P"}
 	path, _, err := m.Ensure(ctx, s)
 	if err != nil {
@@ -143,7 +144,7 @@ func TestIntegratePushesAndRefusesUncommittedWork(t *testing.T) {
 	}
 	commitIn(t, path, "new.txt", "hello", "add new")
 
-	res, err := m.Integrate(ctx, s, lock, IntegrateOptions{Mode: ModePush, TestCommand: "test -f new.txt"})
+	res, err := m.Integrate(ctx, s, lock, IntegrateOptions{Mode: ModePush, TestCommand: `test -f new.txt && test "$REGISTERED_TOOL" = yes`})
 	if err != nil || !res.OK || res.Commit == "" {
 		t.Fatalf("push failed: %+v %v", res, err)
 	}

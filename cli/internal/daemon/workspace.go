@@ -60,7 +60,9 @@ func (d *Daemon) ensureWorkspaces(ctx context.Context) {
 		problem := ""
 		if err := d.agentReady(ctx, v); err != nil {
 			problem = err.Error()
-		} else if _, err := d.ensureClone(ctx, v); err != nil {
+		} else if dir, err := d.ensureClone(ctx, v); err != nil {
+			problem = err.Error()
+		} else if err := commitIdentity(ctx, dir); err != nil {
 			problem = err.Error()
 		} else if v.Profile != nil && v.Profile.Git.Mode == "pr" && !d.ghReady(ctx, d.folder(v.ProjectID)) {
 			problem = "this board opens pull requests, and the GitHub CLI (gh) is not installed or signed in on this machine — run `gh auth login`"
@@ -198,6 +200,15 @@ func applyGitSettings(ctx context.Context, dir string, v board.BoardView) error 
 		if err := set(kv[0], kv[1]); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// commitIdentity says why commits made in the clone would fail for want of an author: the board sets
+// none, and neither does this machine's git. Found now, not when a finished duty cannot land.
+func commitIdentity(ctx context.Context, dir string) error {
+	if err := exec.CommandContext(ctx, "git", "-C", dir, "var", "GIT_COMMITTER_IDENT").Run(); err != nil {
+		return fmt.Errorf("git on this machine has no commit author, and the board sets none — set the commit author in the board's settings, or on this machine run `git config --global user.name \"Your Name\"` and `git config --global user.email you@example.com`")
 	}
 	return nil
 }

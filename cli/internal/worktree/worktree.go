@@ -55,6 +55,16 @@ type Manager struct {
 	Root string
 	// Log receives the output of git and prep commands worth keeping.
 	Log io.Writer
+	// Env is what the board's own commands (prep, the test command) add to the environment: the
+	// machine's registered tools, so a command finds what a session would.
+	Env func() []string
+}
+
+func (m *Manager) env() []string {
+	if m.Env == nil {
+		return nil
+	}
+	return m.Env()
 }
 
 var safeID = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
@@ -230,7 +240,7 @@ func (m *Manager) prepIfNeeded(ctx context.Context, s Spec, path string, fresh b
 		return nil
 	}
 	m.logf("prep: %s", s.Prep)
-	out, err := Shell(ctx, path, s.Prep, nil)
+	out, err := Shell(ctx, path, s.Prep, m.env())
 	m.logf("%s", out)
 	if err != nil {
 		return &PrepError{Command: s.Prep, Output: tail(out, 2000), Err: err}

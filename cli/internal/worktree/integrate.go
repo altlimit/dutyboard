@@ -167,7 +167,7 @@ func (m *Manager) Integrate(ctx context.Context, s Spec, lock *Lock, o Integrate
 			return nil, err
 		}
 		if o.TestCommand != "" {
-			out, err := Shell(ctx, path, o.TestCommand, nil)
+			out, err := Shell(ctx, path, o.TestCommand, m.env())
 			if err != nil {
 				return &Result{Mode: mode, TestOutput: tail(out, 4000),
 					Message: fmt.Sprintf("the test command (%s) failed after rebasing onto %s: fix it, commit, and integrate again", o.TestCommand, target)}, nil
