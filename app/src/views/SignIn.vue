@@ -77,7 +77,13 @@ onMounted(async () => {
     if (!canSignUp.value && mode.value === "signup") mode.value = "signin";
     await trySignInLink();
   } catch (err) {
-    error.value = `Could not reach the auth service (${err.message}). Check that altengine is running and that VITE_ALTENGINE_URL points at it.`;
+    // The one cause a person can fix from here: the page moved (a renamed site, a new host), and the
+    // auth instance does not know its new address yet.
+    error.value = /origin/i.test(err.message || "")
+      ? `This page's address, ${location.origin}, is not on your deployment's allowed origins yet — ` +
+        `run \`dutyboard --provision-only\` again (it adds wherever the console is now served), or add it ` +
+        `to the auth instance's allowed origins and the functions instance's CORS list in the altengine console.`
+      : `Could not reach the auth service (${err.message}). Check that the altengine this console points at is up.`;
   }
 });
 
