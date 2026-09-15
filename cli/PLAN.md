@@ -651,7 +651,7 @@ musictheory over needs a release and its owner at a Windows terminal (see below)
   deployments yet — the listing's shape could not be confirmed with a read.
 - **Hints** (§7) are per project type, embedded, and given to setup and rules sessions with the
   daemon's reading of `.github/workflows`.
-- **Agents**: `runner.Agent` (Name, Check, Run) with Claude Code as the one implementation. A
+- **Agents**: `runner.Agent` (Name, Check, Run), implemented for Claude Code and Codex (`codex exec --json`, its sandbox kept to the worktree plus the clone's git folder and tools folder, MCP secrets through its environment, sessions resumed by the thread id it reports). A
   `runner.Job` is agent-neutral — worktree, prompt, instructions, session, MCP servers (command or
   URL, with their allowed tools), access (a board's mode and extra tools, in its agent's terms) — and
   each agent turns it into its own command line and reads its own output. A machine that cannot run

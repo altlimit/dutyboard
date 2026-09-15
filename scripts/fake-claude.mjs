@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-// A stand-in for `claude -p`, for scripts/smoke-runner.mjs.
+// A stand-in for `claude -p` — and, started as `… exec`, for `codex exec --json` — for
+// scripts/smoke-runner.mjs.
 //
 // It is started by the dutyboard daemon exactly as Claude Code would be — same arguments, same MCP
 // config — and does what a well-behaved session does: starts the `dutyboard mcp` server named in the
@@ -12,21 +13,63 @@
 
 import { spawn, execFileSync } from "node:child_process";
 import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 
 const args = process.argv.slice(2);
 const opt = (name) => {
   const i = args.indexOf(name);
   return i === -1 ? null : args[i + 1];
 };
-const prompt = opt("-p") || "";
-const session = opt("--resume") || opt("--session-id");
-const resumed = !!opt("--resume");
-const record = (entry) => appendFileSync(process.env.FAKE_CLAUDE_LOG, JSON.stringify({ ...entry, at: Date.now() }) + "\n");
-const say = (event) => process.stdout.write(JSON.stringify(event) + "\n");
+const codex = args[0] === "exec";
+if (args[0] === "login" && args[1] === "status") {
+  console.log("Logged in using ChatGPT");
+  process.exit(0);
+}
+
+// Codex: `-c key=value` pairs, the values TOML as the daemon writes them — JSON, except that an inline
+// table says `"k" = "v"`.
+const config = {};
+if (codex) {
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] !== "-c") continue;
+    const [key, ...rest] = args[++i].split("=");
+    const raw = rest.join("=");
+    config[key] = JSON.parse(raw.startsWith("{") ? raw.replace(/"\s=\s"/g, '":"') : raw);
+  }
+}
+const codexResume = codex && args[1] === "resume";
+const prompt = codex ? args[args.length - 1] : opt("-p") || "";
+const session = codex ? (codexResume ? args[args.length - 2] : randomUUID()) : opt("--resume") || opt("--session-id");
+const resumed = codex ? codexResume : !!opt("--resume");
+const record = (entry) => appendFileSync(process.env.FAKE_CLAUDE_LOG, JSON.stringify({ ...entry, agent: codex ? "codex" : "claude", at: Date.now() }) + "\n");
+const say = (event) => {
+  if (codex) {
+    // The same moments, as Codex reports them.
+    if (event.type === "system") event = { type: "thread.started", thread_id: session };
+    else if (event.type === "assistant") event = { type: "item.started", item: { type: "command_execution", command: `bash -lc '${event.message.content[0].input.command}'`, status: "in_progress" } };
+    else if (event.type === "result") event = event.is_error ? { type: "turn.failed", error: { message: event.result } } : { type: "turn.completed", usage: {} };
+  }
+  process.stdout.write(JSON.stringify(event) + "\n");
+};
 
 say({ type: "system", subtype: "init", session_id: session, cwd: process.cwd() });
 
-const mcpServers = JSON.parse(readFileSync(opt("--mcp-config"), "utf8")).mcpServers;
+function codexServers() {
+  const servers = {};
+  for (const [key, value] of Object.entries(config)) {
+    const m = key.match(/^mcp_servers\.([^.]+)\.(.+)$/);
+    if (!m) continue;
+    servers[m[1]] ||= {};
+    servers[m[1]][m[2]] = value;
+  }
+  for (const s of Object.values(servers)) {
+    // env_vars are passed through from Codex's own environment, which is where the daemon put them.
+    s.env = { ...(s.env || {}) };
+    for (const name of s.env_vars || []) s.env[name] = process.env[name];
+  }
+  return servers;
+}
+const mcpServers = codex ? codexServers() : JSON.parse(readFileSync(opt("--mcp-config"), "utf8")).mcpServers;
 const server = mcpServers.dutyboard;
 const mcp = spawn(server.command, server.args, { env: { ...process.env, ...server.env }, stdio: ["pipe", "pipe", "inherit"] });
 let buffer = "";
@@ -68,7 +111,9 @@ const dutyId = (prompt.match(/`(duty_[0-9A-Z]+)`/) || [])[1];
 const title = (prompt.match(/^# (?!The project|Working|Tools|From)(.+)$/m) || [])[1] || "";
 record({
   event: "start", dutyId, title, resumed, session, tools, cwd: process.cwd(), branch: git("rev-parse", "--abbrev-ref", "HEAD"), path: process.env.PATH.split(":")[0],
-  mcp: mcpServers, strictMCP: args.includes("--strict-mcp-config"), allowedTools: (opt("--allowedTools") || "").split(","), instructions: opt("--append-system-prompt") || "",
+  mcp: mcpServers, strictMCP: args.includes("--strict-mcp-config"), allowedTools: (opt("--allowedTools") || "").split(","),
+  instructions: (codex ? config.developer_instructions : opt("--append-system-prompt")) || "",
+  sandbox: codex ? { mode: config.sandbox_mode, writable: config["sandbox_workspace_write.writable_roots"] } : null,
 });
 
 if (/make this machine ready/.test(prompt)) {

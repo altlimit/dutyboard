@@ -335,6 +335,11 @@ func createBoard(ctx context.Context, u *ui.UI, api *board.Client, repo, url str
 		return "", err
 	}
 	profile["git"] = map[string]any{"mode": []string{"push", "pr"}[mode]}
+	agents := []string{"Claude Code", "Codex"}
+	agent, err := u.Choose("Which agent works its duties on this machine?", agents, 0)
+	if err != nil {
+		return "", err
+	}
 	parallelText, err := u.Ask("How many duties may run at once on this board", "1")
 	if err != nil {
 		return "", err
@@ -345,7 +350,7 @@ func createBoard(ctx context.Context, u *ui.UI, api *board.Client, repo, url str
 	}
 	id, err := api.CreateBoard(ctx, map[string]any{
 		"name": name, "project_id": name, "profile": profile,
-		"runner": map[string]any{"agent": "claude-code", "parallel": parallel},
+		"runner": map[string]any{"agent": []string{"claude-code", "codex"}[agent], "parallel": parallel},
 	})
 	if err != nil {
 		return "", err

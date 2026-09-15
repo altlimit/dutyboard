@@ -33,6 +33,7 @@ const DefaultAgent = "claude-code"
 
 var agents = map[string]Agent{
 	DefaultAgent: Claude{},
+	"codex":      Codex{},
 }
 
 // For answers the agent a board names, "" being the default.
@@ -72,9 +73,12 @@ type Job struct {
 	MCPServers []MCPServer
 	Access     Access
 	AddDirs    []string // folders outside the worktree the session may read, such as the board's local files
-	Env        []string
-	Log        io.Writer // the agent's raw output, one event per line
-	Timeout    time.Duration
+	// Writable are folders outside the worktree a sandboxed agent must be able to write: the
+	// repository's git data (a worktree's commits land there), the tools folder.
+	Writable []string
+	Env      []string
+	Log      io.Writer // the agent's raw output, one event per line
+	Timeout  time.Duration
 	// OnActivity receives a short line each time the agent starts something: "Editing
 	// src/ui/pause.gd", "Running `npm test`". Called from the reading goroutine; keep it cheap.
 	OnActivity func(string)
@@ -86,9 +90,11 @@ type MCPServer struct {
 	Name    string
 	Command string
 	Args    []string
-	Env     map[string]string
+	Env     map[string]string // plain settings, for a command
 	URL     string
-	Headers map[string]string
+	// Secrets are credentials: environment variables for a command, headers for a URL. Kept apart
+	// from Env so an agent can keep them off its command line.
+	Secrets map[string]string
 	// Tools are the server's tools the session may call without asking; empty allows them all.
 	Tools []string
 }
@@ -129,7 +135,7 @@ type stream interface {
 // runProcess runs an agent's command in the job's worktree until it exits, the job times out or the
 // context ends, feeding each line of its output to s. Shared by every agent: what differs between
 // them is the command and the reading, not keeping a process and its children in hand.
-func runProcess(ctx context.Context, j Job, bin string, args []string, s stream) Outcome {
+func runProcess(ctx context.Context, j Job, bin string, args []string, stdin io.Reader, s stream) Outcome {
 	runCtx := ctx
 	var cancel context.CancelFunc
 	if j.Timeout > 0 {
@@ -140,7 +146,7 @@ func runProcess(ctx context.Context, j Job, bin string, args []string, s stream)
 	cmd := exec.Command(bin, args...)
 	cmd.Dir = j.Dir
 	cmd.Env = append(os.Environ(), j.Env...)
-	cmd.Stdin = nil
+	cmd.Stdin = stdin
 	isolate(cmd)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {

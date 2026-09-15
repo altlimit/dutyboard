@@ -29,6 +29,16 @@ export const GIT_MODES = [
 ];
 
 export const EFFORTS = ["", "low", "medium", "high", "xhigh", "max"];
+export const AGENTS = [
+  { key: "claude-code", label: "Claude Code", install: "Claude Code installed and signed in" },
+  { key: "codex", label: "Codex", install: "Codex installed (npm i -g @openai/codex) and signed in with codex login" },
+];
+/** Codex has a sandbox rather than Claude Code's modes: the board keeps one value, read per agent. */
+export const CODEX_PERMISSION_MODES = [
+  { key: "acceptEdits", label: "Sandboxed to its worktree (recommended)" },
+  { key: "bypassPermissions", label: "No sandbox (sandboxed machines only)" },
+];
+export const agentLabel = (key) => (AGENTS.find((a) => a.key === key) || AGENTS[0]).label;
 export const PERMISSION_MODES = [
   { key: "acceptEdits", label: "Accept edits (recommended)" },
   { key: "default", label: "Ask for everything (nothing will run unattended)" },
@@ -131,6 +141,7 @@ export function profileDraft(profile, runner) {
     git_author_name: (p.git && p.git.author_name) || "",
     git_author_email: (p.git && p.git.author_email) || "",
     git_ssh_command: (p.git && p.git.ssh_command) || "",
+    agent: r.agent || "claude-code",
     parallel: r.parallel || 1,
     model: r.model || "",
     effort: r.effort || "",
@@ -174,7 +185,7 @@ export function profilePayload(d) {
       },
     },
     runner: {
-      agent: "claude-code",
+      agent: d.agent || "claude-code",
       parallel: Number(d.parallel) || 1,
       model: d.model.trim(),
       effort: d.effort,

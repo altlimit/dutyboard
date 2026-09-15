@@ -52,9 +52,9 @@ func TestClaudeArgs(t *testing.T) {
 		Dir: dir, Prompt: "do it", Instructions: "how", SessionID: "s1", SessionDir: filepath.Join(dir, "session"),
 		Access: Access{Tools: []string{"Bash(git log:*)"}},
 		MCPServers: []MCPServer{
-			{Name: "dutyboard", Command: "/bin/dutyboard", Args: []string{"mcp"}, Env: map[string]string{"DUTYBOARD_RUN_TOKEN": "t"}},
+			{Name: "dutyboard", Command: "/bin/dutyboard", Args: []string{"mcp"}, Secrets: map[string]string{"DUTYBOARD_RUN_TOKEN": "t"}},
 			{Name: "playwright", Command: "npx", Args: []string{"@playwright/mcp"}, Tools: []string{"browser_take_screenshot"}},
-			{Name: "docs", URL: "https://docs.example/mcp", Headers: map[string]string{"Authorization": "Bearer x"}},
+			{Name: "docs", URL: "https://docs.example/mcp", Secrets: map[string]string{"Authorization": "Bearer x"}},
 		},
 	}
 	args, err := claudeArgs(j)

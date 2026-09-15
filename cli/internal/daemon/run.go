@@ -18,6 +18,7 @@ import (
 	"github.com/altlimit/dutyboard/cli/internal/prompt"
 	"github.com/altlimit/dutyboard/cli/internal/runner"
 	"github.com/altlimit/dutyboard/cli/internal/state"
+	"github.com/altlimit/dutyboard/cli/internal/tools"
 	"github.com/altlimit/dutyboard/cli/internal/worktree"
 )
 
@@ -404,9 +405,13 @@ func (d *Daemon) job(run *Run, v board.BoardView, path, system, task string, rec
 		// the daemon knows which session a message came from.
 		MCPServers: append([]runner.MCPServer{{
 			Name: "dutyboard", Command: d.exe, Args: []string{"mcp"},
-			Env: map[string]string{"DUTYBOARD_RUN_TOKEN": run.Token, "DUTYBOARD_HOME": state.Home()},
+			Env:     map[string]string{"DUTYBOARD_HOME": state.Home()},
+			Secrets: map[string]string{"DUTYBOARD_RUN_TOKEN": run.Token},
 		}}, servers...),
-		Env: append(d.tools.SessionEnv(), "DUTYBOARD_RUN_TOKEN="+run.Token, "DUTYBOARD_HOME="+state.Home()),
+		// A worktree's commits are written to its clone's git folder, and setup installs into the tools
+		// folder: an agent that sandboxes its writes to the worktree needs both.
+		Writable: []string{filepath.Join(run.Spec.Repo, ".git"), tools.Dir()},
+		Env:      append(d.tools.SessionEnv(), "DUTYBOARD_RUN_TOKEN="+run.Token, "DUTYBOARD_HOME="+state.Home()),
 	}
 	if r := v.Runner; r != nil {
 		if r.Model != "" {

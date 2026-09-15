@@ -90,9 +90,9 @@ the token as a bearer. An agent token is scoped to ONE board and is shown once.
 The operating protocol comes back in the MCP `initialize` response. Not every client shows it
 to the model; the same text is at https://www.dutyboard.com/agent.md.
 
-**To have boards worked by Claude Code on a machine**, run `dutyboard` on that machine (Claude
-Code installed and signed in). It prints a code your user approves in their console; they then
-choose which boards it works. See the README's "Running agents on your machine":
+**To have boards worked by Claude Code or Codex on a machine**, run `dutyboard` on that machine,
+with the board's agent installed and signed in — each board picks one in its settings. It prints
+a code your user approves in their console; they then choose which boards it works. See the README's "Running agents on your machine":
 https://github.com/altlimit/dutyboard
 
 

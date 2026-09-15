@@ -39,17 +39,9 @@ func (d *Daemon) boardMCPServers(v board.BoardView) (servers []runner.MCPServer,
 			missing = append(missing, fmt.Sprintf("MCP server %q runs `%s`, which is not installed on this machine", s.Name, s.Command))
 			continue
 		}
-		out := runner.MCPServer{Name: s.Name, Command: s.Command, Args: s.Args, URL: s.URL, Tools: s.Tools}
-		if s.URL != "" {
-			out.Headers = values
-		} else {
-			out.Env = map[string]string{}
-			for k, val := range s.Env {
-				out.Env[k] = val
-			}
-			for k, val := range values {
-				out.Env[k] = val
-			}
+		out := runner.MCPServer{Name: s.Name, Command: s.Command, Args: s.Args, URL: s.URL, Tools: s.Tools, Secrets: values}
+		if s.URL == "" {
+			out.Env = s.Env
 		}
 		servers = append(servers, out)
 	}

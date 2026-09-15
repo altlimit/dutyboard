@@ -80,7 +80,7 @@ onMounted(load);
         <h1>Your boards</h1>
         <p class="muted" style="margin: 0">
           A board is one stream of work. A machine running <code class="mono">dutyboard</code> works it with
-          Claude Code, or an agent connects to it with a token — either way it only ever sees the duties on it.
+          Claude Code or Codex, or an agent connects to it with a token — either way it only ever sees the duties on it.
         </p>
       </div>
       <button

@@ -301,8 +301,10 @@ sharing, and the reason members are managed only through the owner-only endpoint
 
 ## Running agents on your machine
 
-`dutyboard` is also the runner. On the computer that should do the work, with Claude Code installed
-and signed in:
+`dutyboard` is also the runner. On the computer that should do the work, with the board's agent
+installed and signed in — [Claude Code](https://claude.com/claude-code), or
+[Codex](https://github.com/openai/codex) (`npm i -g @openai/codex`, then `codex login`); each board
+picks one in its settings:
 
 ```bash
 dutyboard --root D:\dutyboard      # or any folder; ~/dutyboard by default
@@ -352,6 +354,21 @@ A linked board starts with a **setup** duty, which gets this machine ready for t
 records the toolchain it installed, and a **rules** duty, which drafts the project's rules for you to
 accept. How many duties run at once is set per board (`runner.parallel`) and per machine
 (`max_sessions`).
+
+### Claude Code or Codex
+
+Each board says which agent works it (**Settings → How agents run on it**). A machine without that
+agent installed and signed in says so on the Machines page and takes none of the board's duties. The
+runner gives either one the same duty, rules, instructions, worktree and MCP servers; what differs
+is how they are started:
+
+- **Claude Code** runs as `claude -p` with the board's permission mode, the tools it may use, and an
+  MCP config of exactly the board's servers.
+- **Codex** runs as `codex exec --json`, never asking for approval, with its sandbox limited to the
+  worktree plus the clone's git folder and the tools folder, and network access on. A board set to
+  bypass permissions runs it without the sandbox. Its MCP servers' secrets reach it through its
+  environment, never its command line. It resumes the session it started when a parked duty comes
+  back.
 
 ### MCP servers for a board's sessions
 

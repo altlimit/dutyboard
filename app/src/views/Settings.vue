@@ -5,7 +5,7 @@ import { api, subscribeLive } from "../lib/altengine.js";
 import { user as me } from "../lib/session.js";
 import { config } from "../config.js";
 import { ago } from "../lib/duties.js";
-import { profileDraft, profilePayload, runStateLabel } from "../lib/runners.js";
+import { agentLabel, profileDraft, profilePayload, runStateLabel } from "../lib/runners.js";
 import ProfileForm from "../components/ProfileForm.vue";
 
 const props = defineProps({ projectId: { type: String, required: true } });
@@ -375,7 +375,7 @@ onUnmounted(() => {
       </div>
       <p style="margin: 0">
         {{ freeMachines.length ? "Or add another computer" : "On the computer that should do the work" }} — with
-        Claude Code installed and signed in:
+        {{ agentLabel(profile.agent) }} installed and signed in:
       </p>
       <pre class="token" style="white-space: pre-wrap">{{ linkCommand }}</pre>
       <div class="row">

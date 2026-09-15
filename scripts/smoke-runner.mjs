@@ -139,8 +139,10 @@ async function main() {
   writeFileSync(fake, `#!/bin/sh\nexec node ${JSON.stringify(join(root, "scripts", "fake-claude.mjs"))} "$@"\n`);
   chmodSync(fake, 0o755);
   const log = join(work, "fake-claude.log");
+  // Codex is "not installed" until the test puts the same fake at this path.
+  const fakeCodex = join(work, "fake-codex");
   const daemon = spawn(bin, ["--no-service"], {
-    env: { ...process.env, DUTYBOARD_HOME: home, DUTYBOARD_NO_KEYRING: "1", DUTYBOARD_CLAUDE: fake, FAKE_CLAUDE_LOG: log, DUTYBOARD_RETRY_SECONDS: "1", DUTYBOARD_ACTIVITY_SECONDS: "1" },
+    env: { ...process.env, DUTYBOARD_HOME: home, DUTYBOARD_NO_KEYRING: "1", DUTYBOARD_CLAUDE: fake, DUTYBOARD_CODEX: fakeCodex, FAKE_CLAUDE_LOG: log, DUTYBOARD_RETRY_SECONDS: "1", DUTYBOARD_ACTIVITY_SECONDS: "1" },
     stdio: ["ignore", "pipe", "pipe"],
   });
   let daemonOut = "";
@@ -298,6 +300,36 @@ async function main() {
       check("and takes none of its duties", (await get(waiting.duty_id)).status === "queued");
       await call("/projects/profile", { project_id: boardId, profile: { git: { mode: "push" } } }, human);
     }
+
+    // --- the same board, worked by Codex ------------------------------------------
+    await call("/projects/profile", { project_id: boardId, runner: { agent: "codex" } }, human);
+    const noCodex = await until("codex missing", async () => {
+      const r = await call("/board/runners", { project_id: boardId }, human);
+      return /Codex is not installed/.test(r.runners[0]?.problem || "") && r.runners[0];
+    }, 30_000);
+    check("a board worked by Codex says so on a machine without it", !!noCodex, noCodex);
+    writeFileSync(fakeCodex, `#!/bin/sh\nexec node ${JSON.stringify(join(root, "scripts", "fake-claude.mjs"))} "$@"\n`);
+    chmodSync(fakeCodex, 0o755);
+    const codexPark = await call("/duty/enqueue", { project_id: boardId, title: "[park] Codex picks a colour", brief: "Ask, then do it." }, human);
+    const codexParked = await until("codex parked", async () => (await get(codexPark.duty_id)).status === "needs_decision", 60_000);
+    const codexStart = events(log).find((e) => e.event === "start" && e.dutyId === codexPark.duty_id);
+    check("once it is installed, Codex works the board's duties", !!codexParked && codexStart?.agent === "codex", codexStart?.agent);
+    check(
+      "sandboxed to its worktree, with the clone's git folder writable",
+      codexStart?.sandbox?.mode === "workspace-write" && codexStart.sandbox.writable?.some((p) => p.endsWith(".git")),
+      codexStart?.sandbox,
+    );
+    check(
+      "connected to DutyBoard and the board's MCP server, secrets passed through its environment",
+      !!codexStart?.mcp?.dutyboard?.env?.DUTYBOARD_RUN_TOKEN && codexStart.mcp.helper?.env?.HELPER_TOKEN === "s3cret" && codexStart.mcp.helper.enabled_tools?.[0] === "ping",
+      codexStart?.mcp,
+    );
+    check("and given the same instructions", /\*\*helper\*\* — A helper for the smoke test/.test(codexStart?.instructions || ""));
+    await call("/duty/resolve", { duty_id: codexPark.duty_id, resolution_text: "Red." }, human);
+    const codexDone = await until("codex resumed", async () => (await get(codexPark.duty_id)).status === "done", 60_000);
+    const codexResumed = events(log).find((e) => e.event === "start" && e.dutyId === codexPark.duty_id && e.resumed);
+    check("answered, Codex resumes its own session and finishes", !!codexDone && codexResumed?.session === codexStart?.session, { first: codexStart?.session, resumed: codexResumed?.session });
+    await call("/projects/profile", { project_id: boardId, runner: { agent: "claude-code" } }, human);
 
     const machines = await call("/machines/list", {}, human);
     check("the console sees the machine online", machines.machines[0]?.online === true, machines.machines[0]);

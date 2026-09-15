@@ -25,7 +25,7 @@ import { putOp } from "./store.js";
 export const PROJECT_TYPES = ["game", "website", "webapp", "mobile", "desktop", "api", "cli-lib", "other"];
 export const DEPLOY_METHODS = ["ci", "ci-dispatch", "altengine", "command", "none"];
 export const GIT_MODES = ["push", "pr"];
-export const RUNNER_AGENTS = ["claude-code"];
+export const RUNNER_AGENTS = ["claude-code", "codex"];
 export const PERMISSION_MODES = ["default", "acceptEdits", "plan", "bypassPermissions"];
 export const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
 

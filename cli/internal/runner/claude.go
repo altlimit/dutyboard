@@ -51,16 +51,20 @@ func (c Claude) Run(ctx context.Context, j Job) Outcome {
 	if err != nil {
 		return Outcome{Err: err}
 	}
-	return runProcess(ctx, j, claudeBinary(), args, &claudeStream{dir: j.Dir, last: time.Now()})
+	return runProcess(ctx, j, claudeBinary(), args, nil, &claudeStream{dir: j.Dir, last: time.Now()})
 }
 
 // claudeArgs builds the command line for a job, writing the session's MCP config into its SessionDir.
 func claudeArgs(j Job) ([]string, error) {
 	args := []string{"-p", j.Prompt, "--output-format", "stream-json", "--verbose"}
-	if j.Resume && j.SessionID != "" {
-		args = append(args, "--resume", j.SessionID)
-	} else if j.SessionID != "" {
-		args = append(args, "--session-id", j.SessionID)
+	// A session another agent started (its id carries that agent's prefix) is not one Claude Code can
+	// continue: it starts a new one, and says its id in its first event.
+	if id := j.SessionID; id != "" && !strings.Contains(id, ":") {
+		if j.Resume {
+			args = append(args, "--resume", id)
+		} else {
+			args = append(args, "--session-id", id)
+		}
 	}
 	if j.Instructions != "" {
 		args = append(args, "--append-system-prompt", j.Instructions)
@@ -132,8 +136,8 @@ func writeClaudeMCPConfig(j Job) (string, error) {
 	for _, s := range j.MCPServers {
 		if s.URL != "" {
 			entry := map[string]any{"type": "http", "url": s.URL}
-			if len(s.Headers) > 0 {
-				entry["headers"] = s.Headers
+			if len(s.Secrets) > 0 {
+				entry["headers"] = s.Secrets
 			}
 			servers[s.Name] = entry
 			continue
@@ -142,8 +146,15 @@ func writeClaudeMCPConfig(j Job) (string, error) {
 		if s.Args == nil {
 			entry["args"] = []string{}
 		}
-		if len(s.Env) > 0 {
-			entry["env"] = s.Env
+		env := map[string]string{}
+		for k, v := range s.Env {
+			env[k] = v
+		}
+		for k, v := range s.Secrets {
+			env[k] = v
+		}
+		if len(env) > 0 {
+			entry["env"] = env
 		}
 		servers[s.Name] = entry
 	}
