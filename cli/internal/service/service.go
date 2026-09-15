@@ -219,9 +219,9 @@ func lingerNotes() []string {
 	}
 	// Allowed without sudo on many systems; where polkit wants a password it is refused rather than
 	// asked, since this may be running with nobody at the terminal.
-	cmd := exec.Command("loginctl", "enable-linger", who)
-	cmd.Stdin = nil
-	if cmd.Run() == nil {
+	// --no-ask-password, and its output kept: without them loginctl tries to start a polkit agent to
+	// ask, and prints its own failure to do so over the message below.
+	if exec.Command("loginctl", "--no-ask-password", "enable-linger", who).Run() == nil {
 		return []string{"turned on lingering for " + who + ", so it starts at boot without anyone logging in"}
 	}
 	return []string{"it runs while you are logged in; to have it start at boot and keep running after you log out, run: sudo loginctl enable-linger " + who}
