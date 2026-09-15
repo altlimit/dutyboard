@@ -57,10 +57,12 @@ DutyBoard runs on [altengine](https://www.altengine.net) — no server of its ow
 | Piece | Service | What it does |
 | --- | --- | --- |
 | `board` | **functions** | The whole state machine, as one deployed module. REST at `/duty/*` and an MCP endpoint at `/mcp`. |
-| `dutyboard` | **datastore** | `projects`, `duties`, `threads`, `agents`, `tokens`. |
+| `dutyboard` | **datastore** | `projects`, `duties`, `threads`, `agents`, `tokens`, `memberships`, `attachments`; the machines paired to it and the boards they work; push subscriptions; and `settings` (the console's address, the push key). |
 | `dutyboard-auth` | **auth** | The people on boards. Row rules scope every read to boards you own or are a member of. |
-| `dutyboard-live` | **channel** | Board and duty events, so the console moves as agents work. |
+| `dutyboard-live` | **channel** | Board, duty and per-person events, so the console moves as agents work and machines hear about work the moment it is filed. |
 | `dutyboard-files` | **blob** | Attachments on duties: screenshots, recordings, logs. |
+| `dutyboard-search` | **search** | Finished duties and their outcome summaries, so an agent can ask whether something was done before. |
+| `dutyboard-console` | **static** | The console, pointed at this deployment. |
 
 The split that matters: **the console reads the datastore directly and writes nothing.**
 
@@ -81,8 +83,9 @@ for anyone else's board, and does not have to remember to try.
 | --- | --- | --- |
 | **A person** | An auth identity token (`id_token`) | `env.auth.verifyToken` — the signing secret never enters this code. Ownership or membership is checked per request, against rows. |
 | **An agent** | A project token, `db_…` | Only its SHA-256 is stored, and that hash **is** the document key. Verifying a token is one point-read; the row names exactly one board, so an agent can never reach another. |
+| **A machine** | A machine key, `dbm_…` | Handed over once, when a person approves the machine's pairing code; stored as a hash like a token. It reaches only the boards the machine is linked to, naming one per call. |
 
-The `db_` prefix is what tells them apart. A token is shown once, at mint, and never again.
+The prefix is what tells them apart. A token or key is shown once and never again.
 
 ## Run your own
 
@@ -107,11 +110,16 @@ It finds a DutyBoard already in the organization and upgrades it, or provisions 
   allowed origins;
 - a check that `/health` reports the version it just deployed.
 
-It prints the console's address and stores it with the function, so a `dutyboard` that is pairing
-a machine can tell you where to approve it. It is also always in the altengine console, as the
-`dutyboard-console` static site. Every step is idempotent, so running it again is how you
-upgrade. The binary carries the function and the console it deploys: the machine running it
-needs no Node and no checkout.
+It prints the console's address and records it in the deployment's datastore, where `/health`
+reads it back, so a `dutyboard` that is pairing a machine can tell you where to approve it. It is
+also always in the altengine console, as the `dutyboard-console` static site. Every step is
+idempotent, so running it again is how you upgrade. The binary carries the function and the
+console it deploys: the machine running it needs no Node and no checkout.
+
+**Upgrading has two halves.** The server and the console change only when `--provision-only` runs;
+`/health` reports the version they are at. Machines update themselves with
+`alt update altlimit/dutyboard && dutyboard --service`. A release that changes only the runner needs
+the second; one that changes the board, the API or the console needs the first too.
 
 **The key** needs the **MCP / AI agent access** toggles on the key form, which are off by default:
 `Instances & data: Write` and `Functions: Write`. Not Full — nothing here deletes an instance.
@@ -145,7 +153,9 @@ Two hosted details, both found the hard way:
 
 - **Subdomains are minted, not the instance name.** A functions instance called `dutyboard`
   answers on `https://<random>-fn.altengine.app`, and a static site on another random subdomain.
-  The provisioner asks the platform where things landed rather than guessing.
+  The provisioner asks the platform where things landed rather than guessing. Renaming the
+  console's subdomain in the altengine console changes its origin, and sign-in fails until
+  `--provision-only` runs again and allows the new one.
 - **The console addresses its auth instance by ID.** Sign-in carries no API key, so the platform
   has no organization in which to resolve a name. The `config.js` the provisioner writes uses the
   ID; the datastore and channel stay names, because those calls carry an identity token.
@@ -164,9 +174,11 @@ one.
 `index.html` setting `window.DUTYBOARD_CONFIG` — the fields are in
 [`app/src/config.js`](app/src/config.js), and `ConsoleConfig` in
 [`cli/internal/provision`](cli/internal/provision/provision.go) writes one. Add the origin you
-serve it from to the auth instance's allowed origins and the function's CORS list. Set the
-function's `DUTYBOARD_CONSOLE_URL` secret (`env` exposure) to its address, so machines pairing
-can say where to go.
+serve it from to the auth instance's allowed origins and the function's CORS list. So that machines
+pairing can say where to go, give the function its address: the `DUTYBOARD_CONSOLE_URL` secret
+(`env` exposure, set in the altengine console — hosted, secrets cannot be set with an API key), or a
+`settings/deployment` document with a `console_url` field in the datastore, which is what the
+provisioner writes.
 
 A console with no `config.js` values can be pointed at a deployment from its sign-in screen
 (**Connect your altengine**), which keeps the values in that browser.
@@ -224,6 +236,8 @@ provisioning, the console and the marketing site.
 | `npm run deploy:site` | Uploads `site/public` to the static instance behind www.dutyboard.com and makes it live. |
 | `npm run demo` | Fills a board with a plausible afternoon's work, and prints the sign-in. |
 | `npm run smoke` | The whole state machine end to end, plus a cross-tenant matrix over every endpoint. |
+| `npm run smoke:runner` | A real `dutyboard` daemon working a board on the emulator, with a stand-in agent (as Claude Code and as Codex). |
+| `node scripts/webpush-check.mjs` | Web Push encryption and signing, checked against an independent receiver. Runs in CI. |
 
 Provisioning is HTTP — the emulator's admin API locally, the MCP endpoint hosted — which is why
 it lives in [`cli/internal/provision`](cli/internal/provision). `npm run setup` and
@@ -262,6 +276,8 @@ A board has one owner and up to 25 members. The owner adds someone by email unde
 | Delete a duty | ✓ | |
 | Rename or delete the board, add or remove members | ✓ | |
 | Mint or revoke agent tokens | ✓ | |
+| Edit the board's profile, runner settings and rules | ✓ | |
+| Put their own machines on the board | ✓ | if the owner allows it |
 
 The split is who can hurt the board or reach outside it. A token is how software gets onto a
 board, so handing them out stays with the person the board belongs to.
@@ -311,8 +327,8 @@ dutyboard --root D:\dutyboard      # or any folder; ~/dutyboard by default
 ```
 
 The first time, it pairs this machine with your DutyBoard: it prints a code, you approve it in the
-console, and the machine gets its own key. It offers to start itself when you log in, and runs in
-the background from then on. Which boards it works you choose in the console — **Work it on …** on
+console, and the machine gets its own key. It offers to start itself — when you log in, or at boot
+on a server — and runs in the background from then on. Which boards it works you choose in the console — **Work it on …** on
 a board's settings, or on the Machines page. Run in a repository, it also offers the boards that
 name that repository, or to create one.
 
@@ -320,7 +336,9 @@ A board worked by a machine names its **repository URL**, and the machine keeps 
 at `<root>/<board>/`. It never works in, or adds branches to, a checkout you use. Point a board at
 another repository and machines clone that one; duties under way finish where they started. Files
 the project needs that git does not carry (an `.env`) go in `<root>/<board>/local/`, and the setup
-duty tells you which.
+duty tells you which. Tools a setup duty installs — an engine, an SDK, a browser — go in
+`<root>/_tools/` and are registered, so every later session on the machine finds them on its PATH
+and nothing is downloaded twice.
 
 Git runs as the machine's user, with its keys and credentials. A board can set the **commit author**
 and an **SSH command** (another key or account) — written into the machine's clone of that board,
@@ -332,10 +350,11 @@ The loop is the program's, not the agent's. For each duty it:
 1. **claims** it — within seconds of it being filed, from the board's live channel;
 2. **prepares a git worktree** for it at `~/.dutyboard/worktrees/<board>/<duty>` on branch
    `duty/<id>`, so your own checkout is never touched and several duties can run at once;
-3. **starts Claude Code** there with that one duty, the board's rules and the project's profile,
-   and a local MCP server that only lets the session change its own duty;
+3. **starts the board's agent** (Claude Code or Codex) there with that one duty, the board's rules
+   and the project's profile, and a local MCP server that only lets the session change its own duty;
 4. **checks the board** when the session ends: done means the work was integrated — rebased,
-   tested and pushed, or opened as a pull request — and the worktree is removed. Parked on a
+   tested and pushed (as it is, or squashed), or opened as a pull request — and the worktree is
+   removed. Parked on a
    question means the worktree waits, and your answer resumes the same conversation in the same
    folder. Stopped early means it is retried, and after three tries it is put to you with the
    session log attached.
@@ -358,8 +377,8 @@ accept. A setup holds the board from the moment the machine is linked: what it r
 toolchain, the test command, how a worktree is prepared — is what every other duty lands against. So
 duties in progress are **blocked** behind it (each keeps the machine and worktree it had, with a note
 saying why), nothing else is claimed while it is unfinished, and when it is done — or fails, or is
-deleted — they go back to the front of the queue. How many duties run at once is set per board (`runner.parallel`) and per machine
-(`max_sessions`).
+deleted — they go back to the front of the queue. How many duties run at once is set per board
+(`runner.parallel`) and per machine (`max_sessions`).
 
 ### A machine with no screen
 
@@ -486,7 +505,8 @@ apart — and the server is named after the board so you can have more than one:
 new token after revoking the old.
 
 The agent gets `duty_poll`, `duty_claim`, `duty_enqueue`, `duty_checkpoint`,
-`duty_complete`, `duty_fail` and `duty_thread` as tools. `?agent=alpha` names the worker
+`duty_complete`, `duty_fail`, `duty_thread`, `duty_search`, `duty_attach` and
+`duty_attachments` as tools, plus `board_profile` and `board_rules` to read how the project is run. `?agent=alpha` names the worker
 so the model does not have to repeat it on every call — and so two agents on one board
 never look like the same one.
 
@@ -553,10 +573,11 @@ only when you first try it hosted.
 | `/me/access` | human | Repair this person's `boards` claim; says whether their token is behind. |
 | `/projects/*` | human | `create` (optionally with a `profile` and `runner`), `list` (owned and shared), `rename`, `profile` and `delete` (owner only). |
 | `/tokens/*` | owner | `mint`, `list`, `revoke`. |
-| `/live/token` | human | A subscribe-only channel token for one board. |
+| `/live/token` · `/live/me` | human | A subscribe-only channel token for one board; or for the person's own channel, where "needs you" events arrive. |
+| `/push/*` | human | `key` (the deployment's VAPID public key), `subscribe` and `unsubscribe` a device, `test`. |
 | `/connect/start` · `/connect/poll` | anyone | A `dutyboard` daemon pairing: start, then poll until approved for its `dbm_` machine key (handed over once). |
 | `/connect/lookup` · `/connect/approve` · `/connect/deny` | human | Approve or refuse a pairing by the code the daemon printed. |
-| `/machines/*` | human | `list` your machines (online, boards, what each is doing), `update`, `revoke`, `unlink` (also the board's owner). |
+| `/machines/*` | human | `list` your machines (online, boards, what each is doing), `update`, `revoke`, `unlink` and `retry` (the last two also the board's owner). |
 | `/machine/*` | machine | `me`, `link` / `unlink` a board, `poll` every linked board at once, `live` (channel token), `state`, `request` (a person asks a machine to set a board up) and `request/report`. |
 | `/mcp` | agent | The same tools over JSON-RPC. |
 | `/health` | anyone | No credential; safe to check a deploy with. |
@@ -569,7 +590,9 @@ A `dbm_` machine key reaches only the boards its machine is linked to, and names
 is about in an `x-dutyboard-board` header; with it, every agent endpoint above works exactly as it
 does for a project token. Its agent ids are its own prefix and `<prefix>/<n>`. On a board whose
 `runner.parallel` is set, a claim beyond that many active duties is a `409`, and a `setup` or
-`rules` duty only runs with the board to itself.
+`rules` duty only runs with the board to itself. A machine's setup holds the board from the moment
+it is filed: duties in progress are blocked behind it, and every other claim is a `409` until it
+finishes.
 
 ## The rules the state machine actually enforces
 
@@ -698,6 +721,6 @@ checked, not assumed.
 
 ## What this is not
 
-There is no sharing yet — a board has one owner. No sub-boards, no scheduled duties, no
-notifications. Deliberately: the point is the loop, and each of those is a real feature
-rather than a corner to cut.
+No sub-boards, no scheduled duties, and no notifications beyond "a duty needs you" — no email, no
+digest. Deliberately: the point is the loop, and each of those is a real feature rather than a
+corner to cut.
