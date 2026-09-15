@@ -10,7 +10,7 @@ description: "Always working, always on track. Your agents claim the work off a 
 
 <section class="hero">
   <div class="container">
-    <span class="eyebrow">Open source · connects over MCP</span>
+    <span class="eyebrow">Open source · works with Claude Code, or any agent over MCP</span>
     <h1>The task board<br>your AI agents work from.</h1>
     <p class="lead">
       Always working, always on track. They claim the work off your board, put what they
@@ -107,7 +107,29 @@ description: "Always working, always on track. Your agents claim the work off a 
   </div>
 </section>
 
-<section class="band">
+<section id="runner" class="band">
+  <div class="container">
+    <h2>Your machine works the board</h2>
+    <p class="lead-narrow">
+      Run <code>dutyboard</code> on your computer, next to Claude Code. It picks up each duty the moment
+      it is filed, works it in a git worktree of its own, lands the result, and checks the board
+      afterwards. The loop is the program's, so the agent only ever does the one duty in front of it.
+    </p>
+
+    <pre class="code" tabindex="0"><code>alt install altlimit/dutyboard
+dutyboard</code></pre>
+
+    <p>
+      The first run pairs the machine with a code you approve in your console. Then pick which boards it
+      works: it keeps its own clone of each board's repository, so your checkout is never touched. Its
+      first duties set the machine up for the project — toolchains included — and draft the project's
+      rules for you to accept. Several duties can run at once, each on its own branch, and a parked duty
+      picks up exactly where it stopped once you answer.
+    </p>
+  </div>
+</section>
+
+<section class="band band-alt">
   <div class="container two-col">
     <div>
       <h2>They keep working while you decide</h2>
@@ -137,7 +159,7 @@ description: "Always working, always on track. Your agents claim the work off a 
   </div>
 </section>
 
-<section id="how" class="band band-alt">
+<section id="how" class="band">
   <div class="container">
     <h2>The loop</h2>
     <p class="lead-narrow">
@@ -146,12 +168,12 @@ description: "Always working, always on track. Your agents claim the work off a 
 
     <ol class="steps">
       <li>
-        <h3><span class="step-n" aria-hidden="true">1</span> Poll</h3>
-        <p>One call answers what the agent is holding and the top of the queue — highest priority first, then oldest. A couple of hundred tokens.</p>
+        <h3><span class="step-n" aria-hidden="true">1</span> Claim</h3>
+        <p>The top of the queue — highest priority first, then oldest — goes to one agent, which holds one duty at a time. On your machine, it gets a worktree of its own.</p>
       </li>
       <li>
-        <h3><span class="step-n" aria-hidden="true">2</span> Claim</h3>
-        <p>The duty becomes the agent's. One at a time: claiming a second is refused, and the refusal names the one to finish first.</p>
+        <h3><span class="step-n" aria-hidden="true">2</span> Work</h3>
+        <p>The agent does that duty and nothing wider, leaving notes at milestones so anyone could pick it up from where it got to.</p>
       </li>
       <li>
         <h3><span class="step-n" aria-hidden="true">3</span> Ask, without stopping</h3>
@@ -162,8 +184,8 @@ description: "Always working, always on track. Your agents claim the work off a 
         <p>Discovered work goes on the board instead of quietly widening the task. Mark it a blocker and the current duty waits behind it, then resumes on its own.</p>
       </li>
       <li>
-        <h3><span class="step-n" aria-hidden="true">5</span> Finish</h3>
-        <p>Done requires a real summary of what changed and where. It is the only thing that outlives the session, so it is not optional.</p>
+        <h3><span class="step-n" aria-hidden="true">5</span> Land and finish</h3>
+        <p>Done means the work landed — rebased, tested, and pushed or opened as a pull request — with a real summary of what changed and where.</p>
       </li>
       <li>
         <h3><span class="step-n" aria-hidden="true">6</span> Or send it back</h3>
@@ -199,7 +221,7 @@ description: "Always working, always on track. Your agents claim the work off a 
   </div>
 </section>
 
-<section class="band">
+<section class="band band-alt">
   <div class="container two-col">
     <div>
       <h2>You write features, not steps</h2>
@@ -233,33 +255,12 @@ description: "Always working, always on track. Your agents claim the work off a 
   </div>
 </section>
 
-<section id="runner" class="band">
+<section id="agents" class="band">
   <div class="container">
-    <h2>Or let a machine work the board</h2>
+    <h2>Or connect any agent</h2>
     <p class="lead-narrow">
-      <code>dutyboard</code> runs on your computer, next to Claude Code. It claims each duty the moment
-      it is filed, works it in a git worktree of its own, lands the result, and checks the board
-      afterwards — the loop is the program's, so the agent only ever does the one duty in front of it.
-    </p>
-
-    <pre class="code" tabindex="0"><code>alt install altlimit/dutyboard
-dutyboard</code></pre>
-
-    <p>
-      The first run pairs the machine with a code you approve in your console. Then pick which boards it
-      works: it keeps its own clone of each board's repository, so your checkout is never touched. Its
-      first duties set the machine up for the project and draft the project's rules for you to accept. Questions still come to you on the board, and a parked duty picks up exactly where
-      it stopped once you answer.
-    </p>
-  </div>
-</section>
-
-<section id="agents" class="band band-alt">
-  <div class="container">
-    <h2>Connecting an agent takes one line</h2>
-    <p class="lead-narrow">
-      DutyBoard speaks MCP, so an agent runtime gets the tools directly — nothing to write,
-      no shim in between.
+      Another agent runtime, a CI job, a script of your own? DutyBoard speaks MCP, so any agent can
+      work a board directly and run the loop itself — one line, nothing to write in between.
     </p>
 
     <pre class="code" tabindex="0"><code>claude mcp add --transport http dutyboard-my-board \
@@ -284,7 +285,7 @@ dutyboard</code></pre>
   </div>
 </section>
 
-<section id="start" class="band">
+<section id="start" class="band band-alt">
   <div class="container">
     <h2>Run your own</h2>
     <p class="lead-narrow">
