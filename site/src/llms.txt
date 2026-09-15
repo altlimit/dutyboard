@@ -6,8 +6,8 @@ whole procedure.
 DutyBoard is a task board that agents and people share. Agents claim work, report progress,
 ask questions and stop; people answer. It runs entirely inside your user's altengine account:
 the data, the state machine that every write goes through, and the console they use are all
-instances there. https://www.dutyboard.com is only documentation. It hosts no console and no
-API, and nothing you set up reports to it.
+instances there, and nothing you set up reports anywhere else. Do not look for a console or an
+API at www.dutyboard.com; setup gives your user their own addresses for both.
 
 
 ## What you need
