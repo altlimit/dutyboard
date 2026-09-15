@@ -44,10 +44,14 @@ func Start(ctx context.Context, u *ui.UI, f Flags) error {
 	}
 	api := board.New(cfg.Server, key)
 
-	if u.Interactive {
+	if u.Interactive && !f.Service {
 		if err := offerLink(ctx, u, api); err != nil {
 			return err
 		}
+	}
+
+	if f.Service {
+		return installService(u, cfg)
 	}
 
 	if localmcp.Running() {
@@ -62,18 +66,16 @@ func Start(ctx context.Context, u *ui.UI, f Flags) error {
 	}
 
 	if u.Interactive && !f.NoService && !service.Installed() {
-		yes, err := u.Confirm("Start dutyboard automatically when you log in?", true)
+		yes, err := u.Confirm("Start dutyboard by itself — when you log in, or at boot on a server?", true)
 		if err != nil {
 			return err
 		}
 		if yes {
-			exe, _ := os.Executable()
-			logs, err := service.Install(exe)
-			if err == nil {
-				u.OK("installed and started — follow it with: %s", logs)
+			if err := installService(u, cfg); err == nil {
 				return nil
+			} else {
+				u.Warn("%v; running here instead", err)
 			}
-			u.Warn("could not install the service (%v); running here instead", err)
 		}
 	}
 
@@ -88,11 +90,38 @@ func Start(ctx context.Context, u *ui.UI, f Flags) error {
 	return d.Run(ctx)
 }
 
+// installService sets the daemon to start by itself and starts it, saying anything left to do.
+func installService(u *ui.UI, cfg *state.Config) error {
+	exe, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	if localmcp.Running() && service.Installed() {
+		u.OK("dutyboard is already set to start by itself, and running")
+		return nil
+	}
+	inst, err := service.Install(exe)
+	if err != nil {
+		return fmt.Errorf("could not set dutyboard to start by itself: %w", err)
+	}
+	u.OK("set to start by itself, and started — follow it with: %s", inst.Logs)
+	for _, n := range inst.Notes {
+		u.Say("%s", n)
+	}
+	if cfg.Console != "" {
+		u.Say("Put it on boards from your console: %s#/machines", strings.TrimRight(cfg.Console, "/")+"/")
+	}
+	return nil
+}
+
 // pairMachine connects this machine to a DutyBoard: an existing one by URL, or one it provisions
 // first. Answers the machine key, stored.
+//
+// With --server it needs no terminal: it prints the code and the link, and waits for a person to
+// approve it — so a server can be paired from a provisioning script or over plain SSH.
 func pairMachine(ctx context.Context, u *ui.UI, cfg *state.Config, f Flags) (string, error) {
-	if !u.Interactive {
-		return "", errors.New("this machine is not paired with a DutyBoard yet — run `dutyboard` once in a terminal")
+	if !u.Interactive && f.Server == "" && cfg.Server == "" {
+		return "", errors.New("this machine is not paired with a DutyBoard yet — run `dutyboard` in a terminal, or `dutyboard --server <API URL>` to pair without one")
 	}
 	server := f.Server
 	if server == "" {
@@ -133,6 +162,9 @@ func pairMachine(ctx context.Context, u *ui.UI, cfg *state.Config, f Flags) (str
 	}
 
 	name := f.Name
+	if name == "" && !u.Interactive {
+		name = defaultMachineName()
+	}
 	if name == "" {
 		if name, err = u.Ask("Name for this machine", defaultMachineName()); err != nil {
 			return "", err

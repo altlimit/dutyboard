@@ -106,7 +106,7 @@ async function setAgents(m, allowed) {
   }
 }
 
-const linkCommand = computed(() => `alt install altlimit/dutyboard\ndutyboard --server ${config.api} --root /path/for/projects`);
+const linkCommand = computed(() => `alt install altlimit/dutyboard\ndutyboard --server ${config.api} --root /path/for/projects --service`);
 
 // Your paired machines, for putting this board on one of them without leaving the page.
 const myMachines = ref([]);

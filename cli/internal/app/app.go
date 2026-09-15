@@ -36,6 +36,7 @@ type Flags struct {
 	Name          string
 	Root          string
 	NoService     bool
+	Service       bool
 	DeployKey     bool
 	MCPSecrets    bool
 }
@@ -66,6 +67,7 @@ func Main(args []string) int {
 	fs.StringVar(&f.Name, "name", "", "this machine's name, when pairing")
 	fs.StringVar(&f.Root, "root", "", "the folder setups requested from the console clone into (default ~/dutyboard)")
 	fs.BoolVar(&f.NoService, "no-service", false, "do not offer to start dutyboard at login; run in this terminal")
+	fs.BoolVar(&f.Service, "service", false, "set dutyboard to start by itself (at boot on a server) without asking, start it, and exit")
 	fs.BoolVar(&f.DeployKey, "deploy-key", false, "set the altengine key this machine deploys projects with, then exit")
 	fs.BoolVar(&f.MCPSecrets, "mcp-secrets", false, "set the secrets your boards' MCP servers need on this machine, then exit")
 	fs.Usage = func() {

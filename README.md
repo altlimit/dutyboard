@@ -355,6 +355,25 @@ records the toolchain it installed, and a **rules** duty, which drafts the proje
 accept. How many duties run at once is set per board (`runner.parallel`) and per machine
 (`max_sessions`).
 
+### A machine with no screen
+
+A server, a VM, a box you only reach over SSH: pairing and installing need no terminal.
+
+```bash
+alt install altlimit/dutyboard
+dutyboard --server https://<slug>-fn.altengine.app/board --name build-1 --root ~/dutyboard --service
+```
+
+It prints the pairing code and a link, waits for you to approve it in your console, sets itself to
+start by itself, starts, and exits. On Linux that is a systemd user service; it turns on lingering
+for your user so the service starts at boot and survives logging out, or prints the
+`sudo loginctl enable-linger <user>` to run when it may not. With no systemd user manager (a
+container, WSL without systemd) it adds an `@reboot` line to your crontab instead. Run without
+`--service`, and with nobody at the terminal, `dutyboard` simply runs — for a supervisor of your own.
+
+Headless is enough for most projects: Godot has `--headless` for exports and tests, Playwright runs a
+headless browser, and anything that must render a window can run under `xvfb-run`.
+
 ### How work lands
 
 A board's **git mode** says what `duty_integrate` does with a finished duty's commits:

@@ -16,7 +16,7 @@ const busy = ref(false);
 const notice = ref("");
 const setupFor = ref({}); // machine_id → { project_id, path }
 
-const installCommand = computed(() => `alt install altlimit/dutyboard\ndutyboard --server ${config.api} --root /path/for/projects`);
+const installCommand = computed(() => `alt install altlimit/dutyboard\ndutyboard --server ${config.api} --root /path/for/projects --service`);
 
 async function load({ quiet = false } = {}) {
   if (!quiet) loading.value = true;
@@ -119,8 +119,9 @@ onUnmounted(() => clearInterval(timer));
       <pre class="token" style="white-space: pre-wrap">{{ installCommand }}</pre>
       <div><button type="button" @click="copy(installCommand)">Copy</button></div>
       <p class="small muted" style="margin: 0">
-        It prints a code and opens this console to approve it. Then choose which boards it works — here, or on a
-        board's settings. It clones each board's repository into its projects folder.
+        It prints a code to approve here, then sets itself to start by itself — at boot on a server — and exits. It
+        needs no terminal, so it works over SSH or from a setup script. Then choose which boards it works — here, or
+        on a board's settings. It clones each board's repository into its projects folder.
       </p>
     </section>
 
