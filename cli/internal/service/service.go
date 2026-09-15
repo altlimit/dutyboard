@@ -88,17 +88,31 @@ func install(exe string) (string, []string, error) {
 	path := os.Getenv("PATH")
 	switch runtime.GOOS {
 	case "linux":
-		if exec.Command("systemctl", "--user", "show-environment").Run() != nil {
-			// No systemd user manager to talk to — a container, WSL without systemd, a session cron
-			// started. crontab's @reboot needs neither a login nor systemd.
-			if _, err := exec.LookPath("crontab"); err != nil {
+		// A systemd user service when it will keep running: the user lingers, or lingering can be turned
+		// on. Otherwise it would stop when the user logs out and not start at boot, and turning lingering
+		// on needs an admin — so the user's own crontab starts it instead, which needs neither.
+		systemd := exec.Command("systemctl", "--user", "show-environment").Run() == nil
+		_, cronErr := exec.LookPath("crontab")
+		lingers, turnedOn := linger()
+		who := os.Getenv("USER")
+		if !systemd || (!lingers && cronErr == nil) {
+			if cronErr != nil {
 				return "", nil, fmt.Errorf("%w: neither systemd user services nor crontab are available (on WSL, enable systemd in /etc/wsl.conf)", ErrUnsupported)
+			}
+			if systemd {
+				_ = exec.Command("systemctl", "--user", "disable", "--now", unitName).Run()
+				_ = os.Remove(unitPath())
 			}
 			if err := installCron(exe, path, logPath); err != nil {
 				return "", nil, err
 			}
-			return "tail -f " + logPath, []string{"it starts at boot from your crontab (@reboot), with no systemd user manager to run it"}, nil
+			note := "your crontab starts it — every 5 minutes when it is not already running, which covers boot and a crash — with no login needed"
+			if systemd {
+				note += fmt.Sprintf(". A systemd user service would stop when you log out, since %s does not linger; if an admin runs `sudo loginctl enable-linger %s`, run `dutyboard --service` again to switch to it", who, who)
+			}
+			return "tail -f " + logPath, []string{note}, nil
 		}
+		_ = removeCron()
 		unit := fmt.Sprintf(`[Unit]
 Description=DutyBoard runner
 After=network-online.target
@@ -124,7 +138,14 @@ WantedBy=default.target
 				return "", nil, fmt.Errorf("systemctl %s: %v: %s", strings.Join(args, " "), err, out)
 			}
 		}
-		return "journalctl --user -u dutyboard -f", lingerNotes(), nil
+		var notes []string
+		switch {
+		case turnedOn:
+			notes = append(notes, "turned on lingering for "+who+", so it starts at boot without anyone logging in")
+		case !lingers:
+			notes = append(notes, "it runs while you are logged in; to have it start at boot and keep running after you log out, an admin can run: sudo loginctl enable-linger "+who)
+		}
+		return "journalctl --user -u dutyboard -f", notes, nil
 	case "darwin":
 		plist := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -205,26 +226,25 @@ func xmlEscape(s string) string {
 	return r.Replace(s)
 }
 
-// lingerNotes turns lingering on for this user when it is off, or says how. A systemd user service
-// runs while its user has a session; without lingering, a server that reboots — or a person who logs
-// out of SSH — stops it until someone logs in again.
-func lingerNotes() []string {
+// linger says whether this user lingers, turning it on when it can. A systemd user service runs while
+// its user has a session; without lingering, a server that reboots — or a person who logs out of SSH
+// — stops it until someone logs in again.
+func linger() (lingers, turnedOn bool) {
 	who := os.Getenv("USER")
 	if who == "" {
-		return nil
+		return false, false
 	}
 	out, err := exec.Command("loginctl", "show-user", who, "--property=Linger", "--value").Output()
 	if err == nil && strings.TrimSpace(string(out)) == "yes" {
-		return nil
+		return true, false
 	}
-	// Allowed without sudo on many systems; where polkit wants a password it is refused rather than
-	// asked, since this may be running with nobody at the terminal.
-	// --no-ask-password, and its output kept: without them loginctl tries to start a polkit agent to
-	// ask, and prints its own failure to do so over the message below.
+	// Allowed without sudo on some systems. --no-ask-password: where polkit wants a password it is
+	// refused rather than asked, since nobody may be at the terminal, and loginctl does not try to
+	// start a polkit agent and print its failure to.
 	if exec.Command("loginctl", "--no-ask-password", "enable-linger", who).Run() == nil {
-		return []string{"turned on lingering for " + who + ", so it starts at boot without anyone logging in"}
+		return true, true
 	}
-	return []string{"it runs while you are logged in; to have it start at boot and keep running after you log out, run: sudo loginctl enable-linger " + who}
+	return false, false
 }
 
 const cronMark = "# dutyboard"
@@ -271,10 +291,11 @@ func removeCron() error {
 	return writeCrontab(keep)
 }
 
-// installCron adds an @reboot line that starts the daemon, replacing one this wrote before, and starts
-// it now in the background.
+// installCron adds a line that starts the daemon every five minutes — which does nothing when one is
+// already running — replacing one this wrote before, and starts it now in the background. One line
+// rather than @reboot as well: two starting in the same minute at boot would both find nothing running.
 func installCron(exe, path, logPath string) error {
-	line := fmt.Sprintf("@reboot PATH=%s DUTYBOARD_HOME=%s %s --no-service >> %s 2>&1 %s",
+	line := fmt.Sprintf("*/5 * * * * PATH=%s DUTYBOARD_HOME=%s %s --no-service >> %s 2>&1 %s",
 		shellQuote(path), shellQuote(state.Home()), shellQuote(exe), shellQuote(logPath), cronMark)
 	var lines []string
 	for _, l := range crontabLines() {

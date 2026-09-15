@@ -45,7 +45,7 @@ func TestCronFallbackReplacesItsOwnLineAndKeepsTheRest(t *testing.T) {
 		}
 	}
 	lines := crontabLines()
-	if len(lines) != 2 || lines[0] != "0 3 * * * backup.sh" || !strings.HasPrefix(lines[1], "@reboot PATH='/usr/bin:/bin' DUTYBOARD_HOME='") || !strings.Contains(lines[1], `it'\''s`) {
+	if len(lines) != 2 || lines[0] != "0 3 * * * backup.sh" || !strings.HasPrefix(lines[1], "*/5 * * * * PATH='/usr/bin:/bin' DUTYBOARD_HOME='") || !strings.Contains(lines[1], `it'\''s`) {
 		t.Fatalf("crontab after installing twice:\n%s", strings.Join(lines, "\n"))
 	}
 	if !cronInstalled() {

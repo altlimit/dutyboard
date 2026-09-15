@@ -55,6 +55,9 @@ func Start(ctx context.Context, u *ui.UI, f Flags) error {
 	}
 
 	if localmcp.Running() {
+		if !u.Interactive {
+			return nil // started by cron or a supervisor while one is running: nothing to do, and nothing to log
+		}
 		c, err := localmcp.Dial()
 		if err == nil {
 			defer c.Close()
@@ -95,10 +98,6 @@ func installService(u *ui.UI, cfg *state.Config) error {
 	exe, err := os.Executable()
 	if err != nil {
 		return err
-	}
-	if localmcp.Running() && service.Installed() {
-		u.OK("dutyboard is already set to start by itself, and running")
-		return nil
 	}
 	inst, err := service.Install(exe)
 	if err != nil {

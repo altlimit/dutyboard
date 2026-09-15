@@ -365,10 +365,12 @@ dutyboard --server https://<slug>-fn.altengine.app/board --name build-1 --root ~
 ```
 
 It prints the pairing code and a link, waits for you to approve it in your console, sets itself to
-start by itself, starts, and exits. On Linux that is a systemd user service; it turns on lingering
-for your user so the service starts at boot and survives logging out, or prints the
-`sudo loginctl enable-linger <user>` to run when it may not. With no systemd user manager (a
-container, WSL without systemd) it adds an `@reboot` line to your crontab instead. Run without
+start by itself, starts, and exits. On Linux that is a systemd user service when your user lingers
+(or lingering can be turned on without an admin), so it starts at boot and survives logging out.
+Otherwise — a standard user on a server, a container, WSL without systemd — it uses your own
+crontab: a line every five minutes that starts `dutyboard` when it is not already running, which
+covers boot and a crash and needs no login or admin. If an admin later runs
+`sudo loginctl enable-linger <user>`, `dutyboard --service` again switches to systemd. Run without
 `--service`, and with nobody at the terminal, `dutyboard` simply runs — for a supervisor of your own.
 
 Headless is enough for most projects: Godot has `--headless` for exports and tests, Playwright runs a
