@@ -862,6 +862,8 @@ async function main() {
   check("a board made with a profile starts with its rules to write", !!mCreated.rules_duty_id, mCreated);
   const escape = await call("/projects/profile", { project_id: mBoard, profile: { worktree: { copy: ["../../.ssh/id_ed25519"] } } }, human, { expectStatus: true });
   await call("/projects/profile", { project_id: mBoard, profile: { git: { author_name: "Cadence Bot", author_email: "bot@example.com" } } }, human);
+  await call("/projects/profile", { project_id: mBoard, profile: { git: { mode: "squash" } } }, human);
+  check("a board can land its work as squashed commits", (await call("/board/profile", { project_id: mBoard }, human)).profile.git.mode === "squash");
   await call("/projects/profile", { project_id: mBoard, profile: { git: { mode: "push" } } }, human);
   const gitKept = (await call("/board/profile", { project_id: mBoard }, human)).profile.git;
   check("saving the git mode keeps the commit author already set", gitKept.author_email === "bot@example.com" && gitKept.mode === "push", gitKept);

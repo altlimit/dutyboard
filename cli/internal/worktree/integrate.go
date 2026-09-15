@@ -18,6 +18,8 @@ type Mode string
 const (
 	// ModePush rebases onto the base branch, tests, and pushes to it.
 	ModePush Mode = "push"
+	// ModeSquash is ModePush with the duty's commits made into one, named for the duty, first.
+	ModeSquash Mode = "squash"
 	// ModePR pushes the duty branch and opens a pull request.
 	ModePR Mode = "pr"
 	// ModeBranch leaves the work on its duty branch — a repository with no remote to push to.
@@ -85,8 +87,8 @@ func (l *Lock) Release(duty string) {
 type IntegrateOptions struct {
 	Mode        Mode
 	TestCommand string
-	Title       string // for a pull request
-	Body        string
+	Title       string // a pull request's title, or a squashed commit's subject
+	Body        string // a pull request's body, or a line at the end of a squashed commit's message
 }
 
 // Integrate lands a duty's committed work: on the base branch (push), in a pull request (pr), or on
@@ -169,6 +171,16 @@ func (m *Manager) Integrate(ctx context.Context, s Spec, lock *Lock, o Integrate
 			if err != nil {
 				return &Result{Mode: mode, TestOutput: tail(out, 4000),
 					Message: fmt.Sprintf("the test command (%s) failed after rebasing onto %s: fix it, commit, and integrate again", o.TestCommand, target)}, nil
+			}
+		}
+		if mode == ModeSquash {
+			// After the tests, so a failure leaves the session's own commits to fix on top of.
+			squashed, err := squash(ctx, path, target, o)
+			if err != nil {
+				return nil, err
+			}
+			if !squashed {
+				return &Result{OK: true, Mode: mode, NoOp: true, Message: "nothing to integrate: " + target + " already has everything this duty changed"}, nil
 			}
 		}
 		_, err := git(ctx, path, "push", "--quiet", remote, "HEAD:refs/heads/"+base)
@@ -285,4 +297,38 @@ func Toplevel(ctx context.Context, dir string) (string, error) {
 		return "", ErrNotARepo
 	}
 	return out, nil
+}
+
+// squash makes everything on the branch since target one commit: the duty's title as its subject,
+// the commits it replaces listed under it, and the body's line last. Answers false when, rebased,
+// the branch changes nothing target does not already have.
+func squash(ctx context.Context, path, target string, o IntegrateOptions) (bool, error) {
+	subjects, _ := git(ctx, path, "log", "--reverse", "--format=%s", target+"..HEAD")
+	if _, err := git(ctx, path, "reset", "--soft", target); err != nil {
+		return false, err
+	}
+	if _, err := git(ctx, path, "diff", "--cached", "--quiet"); err == nil {
+		return false, nil
+	}
+	subject := strings.TrimSpace(o.Title)
+	if subject == "" {
+		subject = "Work from DutyBoard"
+	}
+	var msg strings.Builder
+	msg.WriteString(subject + "\n")
+	if lines := strings.Split(strings.TrimSpace(subjects), "\n"); len(lines) > 1 || (len(lines) == 1 && lines[0] != "" && lines[0] != subject) {
+		msg.WriteString("\n")
+		for _, l := range lines {
+			if l = strings.TrimSpace(l); l != "" {
+				msg.WriteString("- " + l + "\n")
+			}
+		}
+	}
+	if o.Body != "" {
+		msg.WriteString("\n" + o.Body + "\n")
+	}
+	if _, err := gitEnv(ctx, path, nil, "commit", "--quiet", "--no-verify", "-m", msg.String()); err != nil {
+		return false, err
+	}
+	return true, nil
 }

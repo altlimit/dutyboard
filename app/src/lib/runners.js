@@ -24,7 +24,12 @@ export const DEPLOY_METHODS = [
 ];
 
 export const GIT_MODES = [
-  { key: "push", label: "Push to the main branch", hint: "Rebased, tested with the test command, and pushed." },
+  { key: "push", label: "Push to the main branch", hint: "Rebased, tested with the test command, and pushed with its own commits." },
+  {
+    key: "squash",
+    label: "Squash into one commit on the main branch",
+    hint: "Rebased and tested the same way, then landed as a single commit titled with the duty's title.",
+  },
   { key: "pr", label: "Open a pull request", hint: "Pushed to its own branch, for a person to merge." },
 ];
 

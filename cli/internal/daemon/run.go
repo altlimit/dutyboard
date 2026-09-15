@@ -141,6 +141,9 @@ func modeFor(ctx context.Context, v board.BoardView, s worktree.Spec) worktree.M
 	if v.Profile != nil && v.Profile.Git.Mode == "pr" {
 		return worktree.ModePR
 	}
+	if v.Profile != nil && v.Profile.Git.Mode == "squash" {
+		return worktree.ModeSquash
+	}
 	return worktree.ModePush
 }
 
@@ -318,7 +321,7 @@ func (d *Daemon) execute(dctx, rctx context.Context, run *Run, duty *board.Duty,
 			_ = d.wt.Remove(dctx, spec, keepBranch)
 			_ = state.SaveRunRecord(run.DutyID, nil)
 			d.log.Printf("%s: %s %q", run.Board, fresh.Status, fresh.Title)
-			if fresh.Status == "done" && res != nil && res.OK && !res.NoOp && res.Mode == worktree.ModePush {
+			if fresh.Status == "done" && res != nil && res.OK && !res.NoOp && (res.Mode == worktree.ModePush || res.Mode == worktree.ModeSquash) {
 				d.watchDeploy(dctx, run, v, spec, res.Commit)
 			}
 			return

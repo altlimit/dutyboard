@@ -355,6 +355,17 @@ records the toolchain it installed, and a **rules** duty, which drafts the proje
 accept. How many duties run at once is set per board (`runner.parallel`) and per machine
 (`max_sessions`).
 
+### How work lands
+
+A board's **git mode** says what `duty_integrate` does with a finished duty's commits:
+
+- **push** — rebase onto the main branch, run the test command, push the commits as they are;
+- **squash** — the same, but the duty's commits become one commit titled with the duty's title,
+  listing the commits it replaced;
+- **pr** — push the duty's branch and open a pull request with the GitHub CLI, for a person to merge.
+
+A repository with no remote leaves the work on the duty's branch.
+
 ### Claude Code or Codex
 
 Each board says which agent works it (**Settings → How agents run on it**). A machine without that

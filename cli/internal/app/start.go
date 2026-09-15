@@ -330,11 +330,15 @@ func createBoard(ctx context.Context, u *ui.UI, api *board.Client, repo, url str
 	}
 	profile["repo_url"] = url
 	profile["default_branch"] = worktree.DefaultBranch(ctx, repo, worktree.Remote(ctx, repo))
-	mode, err := u.Choose("When a duty is done, its work should be:", []string{"Pushed to " + profile["default_branch"].(string), "Opened as a pull request"}, 0)
+	mode, err := u.Choose("When a duty is done, its work should be:", []string{
+		"Pushed to " + profile["default_branch"].(string),
+		"Squashed into one commit named for the duty, and pushed to " + profile["default_branch"].(string),
+		"Opened as a pull request",
+	}, 0)
 	if err != nil {
 		return "", err
 	}
-	profile["git"] = map[string]any{"mode": []string{"push", "pr"}[mode]}
+	profile["git"] = map[string]any{"mode": []string{"push", "squash", "pr"}[mode]}
 	agents := []string{"Claude Code", "Codex"}
 	agent, err := u.Choose("Which agent works its duties on this machine?", agents, 0)
 	if err != nil {

@@ -124,6 +124,9 @@ WantedBy=default.target
 		if err := os.WriteFile(plistPath(), []byte(plist), 0o644); err != nil {
 			return "", err
 		}
+		// Unloaded first: loading a label launchd already has fails, and installing again after an
+		// upgrade is exactly that.
+		_ = exec.Command("launchctl", "unload", plistPath()).Run()
 		if out, err := exec.Command("launchctl", "load", "-w", plistPath()).CombinedOutput(); err != nil {
 			return "", fmt.Errorf("launchctl load: %v: %s", err, out)
 		}

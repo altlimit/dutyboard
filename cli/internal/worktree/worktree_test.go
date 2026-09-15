@@ -252,3 +252,46 @@ func TestNoRemoteLeavesTheWorkOnItsBranch(t *testing.T) {
 		t.Fatal("main was moved in a repository with no remote")
 	}
 }
+
+func TestIntegrateSquashesIntoOneCommitNamedForTheDuty(t *testing.T) {
+	ctx := context.Background()
+	linked, remote := repoWithRemote(t)
+	m := &Manager{Root: t.TempDir()}
+	s := Spec{Repo: linked, Board: "web", DutyID: "duty_Q"}
+	path, _, err := m.Ensure(ctx, s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	commitIn(t, path, "a.txt", "a", "first step")
+	commitIn(t, path, "b.txt", "b", "second step")
+	// Someone else lands work meanwhile: the squash sits on top of it.
+	other := filepath.Join(t.TempDir(), "other")
+	must(t, ctx, filepath.Dir(other), "clone", "--quiet", remote, other)
+	commitIn(t, other, "c.txt", "c", "their work")
+	must(t, ctx, other, "push", "--quiet", "origin", "HEAD:main")
+
+	before := must(t, ctx, remote, "rev-parse", "main")
+	opts := IntegrateOptions{Mode: ModeSquash, Title: "Add a and b", Body: "DutyBoard duty duty_Q", TestCommand: "test -f a.txt && test -f b.txt"}
+	res, err := m.Integrate(ctx, s, &Lock{}, opts)
+	if err != nil || !res.OK || res.Mode != ModeSquash {
+		t.Fatalf("squash failed: %+v %v", res, err)
+	}
+	if got := must(t, ctx, remote, "rev-list", "--count", before+"..main"); got != "1" {
+		t.Fatalf("main gained %s commits, want exactly one", got)
+	}
+	if parent := must(t, ctx, remote, "rev-parse", "main~1"); parent != before {
+		t.Fatalf("the squashed commit is not on top of the work already there")
+	}
+	msg := must(t, ctx, remote, "log", "-1", "--format=%B", "main")
+	if !strings.HasPrefix(msg, "Add a and b\n") || !strings.Contains(msg, "- first step\n- second step") || !strings.Contains(msg, "DutyBoard duty duty_Q") {
+		t.Fatalf("commit message:\n%s", msg)
+	}
+	for _, f := range []string{"a.txt", "b.txt", "c.txt"} {
+		must(t, ctx, remote, "cat-file", "-e", "main:"+f)
+	}
+
+	// Integrating again changes nothing.
+	if res, err := m.Integrate(ctx, s, &Lock{}, opts); err != nil || !res.NoOp {
+		t.Fatalf("a second integration should be a no-op: %+v %v", res, err)
+	}
+}
