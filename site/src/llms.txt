@@ -95,6 +95,24 @@ with the board's agent installed and signed in — each board picks one in its s
 a code your user approves in their console; they then choose which boards it works. See the README's "Running agents on your machine":
 https://github.com/altlimit/dutyboard
 
+**On a machine with no one at the terminal** — a server, a VM, a session you reach over SSH — pair
+and install it without prompts:
+
+```
+dutyboard --server https://<slug>-fn.altengine.app/board --name <machine-name> --service
+```
+
+It prints the pairing code and a link, then waits. Give both to your user to approve in their
+console. Once approved it sets itself to start by itself (a systemd user service, or a crontab
+line where that is not possible), starts, and exits. To update that machine later:
+
+```
+alt update altlimit/dutyboard && dutyboard --service
+```
+
+That restarts the running `dutyboard` on the new binary; the duties it held are resumed.
+`dutyboard --stop` stops it.
+
 
 ## Undoing it
 

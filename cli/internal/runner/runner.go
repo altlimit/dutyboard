@@ -12,6 +12,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -192,7 +193,7 @@ func runProcess(ctx context.Context, j Job, bin string, args []string, stdin io.
 	case ctx.Err() != nil:
 		out.Canceled = true
 	case err != nil && !out.Limited:
-		out.Err = fmt.Errorf("%s exited: %w: %s", bin, err, strings.TrimSpace(stderr.String()))
+		out.Err = fmt.Errorf("%s exited: %w: %s%s", filepath.Base(bin), err, strings.TrimSpace(stderr.String()), killedHint(err))
 	}
 	return out
 }
@@ -213,4 +214,19 @@ func (l *limited) Write(p []byte) (int, error) {
 	l.n -= len(q)
 	_, _ = l.w.Write(q)
 	return len(p), nil
+}
+
+// killedHint explains an agent that died of a signal the runner did not send — its own stops are
+// reported as a timeout or a cancellation instead. The usual cause is a command in the session that
+// matched the agent's own process: `pkill -f` or `pgrep -f` on text that appears in its prompt.
+func killedHint(err error) string {
+	var exit *exec.ExitError
+	if !errors.As(err, &exit) {
+		return ""
+	}
+	code := exit.ExitCode()
+	if code == 143 || code == 137 || code == -1 {
+		return " — it was killed by something on this machine, not by the runner: often a command in the session (pkill -f, or a script's cleanup) matched the agent's own process, whose command line carries the whole prompt"
+	}
+	return ""
 }
