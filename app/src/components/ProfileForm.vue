@@ -1,6 +1,6 @@
 <script setup>
 import { computed } from "vue";
-import { AGENTS, CODEX_PERMISSION_MODES, DEPLOY_METHODS, EFFORTS, GIT_MODES, PERMISSION_MODES, PROJECT_TYPES, agentLabel, mcpServerDraft } from "../lib/runners.js";
+import { AGENTS, CODEX_PERMISSION_MODES, CURSOR_PERMISSION_MODES, DEPLOY_METHODS, EFFORTS, GIT_MODES, PERMISSION_MODES, PROJECT_TYPES, agentLabel, mcpServerDraft } from "../lib/runners.js";
 
 // The questions a board is created with, and edited with later: what the project is, how its work
 // lands, and how agents run on it. The model is a draft from lib/runners.js `profileDraft`; the
@@ -11,7 +11,9 @@ import { AGENTS, CODEX_PERMISSION_MODES, DEPLOY_METHODS, EFFORTS, GIT_MODES, PER
 const draft = defineModel({ type: Object, required: true });
 defineProps({ idPrefix: { type: String, default: "pf" }, disabled: { type: Boolean, default: false } });
 
-const modes = computed(() => (draft.value.agent === "codex" ? CODEX_PERMISSION_MODES : PERMISSION_MODES));
+const modes = computed(() =>
+  draft.value.agent === "codex" ? CODEX_PERMISSION_MODES : draft.value.agent === "cursor" ? CURSOR_PERMISSION_MODES : PERMISSION_MODES,
+);
 const agentName = computed(() => agentLabel(draft.value.agent));
 const agentNeeds = computed(() => (AGENTS.find((a) => a.key === draft.value.agent) || AGENTS[0]).install);
 

@@ -35,6 +35,10 @@ func (d *Daemon) boardMCPServers(v board.BoardView) (servers []runner.MCPServer,
 			missing = append(missing, fmt.Sprintf("MCP server %q needs %s on this machine — run `dutyboard --mcp-secrets`", s.Name, strings.Join(unset, ", ")))
 			continue
 		}
+		if agentName(v) == "cursor" && s.URL != "" && len(s.Secrets) > 0 {
+			missing = append(missing, fmt.Sprintf("MCP server %q is a URL that needs a secret, which a Cursor session could only be given written into its worktree — it is left out of Cursor sessions", s.Name))
+			continue
+		}
 		if s.Command != "" && !d.commandExists(s.Command) {
 			missing = append(missing, fmt.Sprintf("MCP server %q runs `%s`, which is not installed on this machine", s.Name, s.Command))
 			continue

@@ -35,6 +35,7 @@ const DefaultAgent = "claude-code"
 var agents = map[string]Agent{
 	DefaultAgent: Claude{},
 	"codex":      Codex{},
+	"cursor":     Cursor{},
 }
 
 // For answers the agent a board names, "" being the default.

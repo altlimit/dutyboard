@@ -107,7 +107,7 @@ onUnmounted(() => clearInterval(timer));
         <h1>Your machines</h1>
         <p class="muted" style="margin: 0">
           Computers running <code class="mono">dutyboard</code> for you. Each one claims duties from the boards
-          linked to it and works them with the board's agent — Claude Code or Codex — in a git worktree of its own.
+          linked to it and works them with the board's agent — Claude Code, Codex or Cursor — in a git worktree of its own.
         </p>
         <p class="small" style="margin: 0.4rem 0 0">
           API URL, for pairing a machine: <code class="mono">{{ config.api }}</code>
@@ -123,7 +123,7 @@ onUnmounted(() => clearInterval(timer));
 
     <section v-else-if="!machines.length" class="panel stack" aria-labelledby="first-h">
       <h2 id="first-h" style="margin: 0">Add your first machine</h2>
-      <p style="margin: 0">On the computer that should do the work, with Claude Code or Codex installed and signed in:</p>
+      <p style="margin: 0">On the computer that should do the work, with Claude Code, Codex or Cursor installed and signed in:</p>
       <pre class="token" style="white-space: pre-wrap">{{ installCommand }}</pre>
       <div><button type="button" @click="copy(installCommand)">Copy</button></div>
       <p class="small muted" style="margin: 0">

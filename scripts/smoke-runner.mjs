@@ -141,8 +141,9 @@ async function main() {
   const log = join(work, "fake-claude.log");
   // Codex is "not installed" until the test puts the same fake at this path.
   const fakeCodex = join(work, "fake-codex");
+  const fakeCursor = join(work, "fake-cursor");
   const daemon = spawn(bin, ["--no-service"], {
-    env: { ...process.env, DUTYBOARD_HOME: home, DUTYBOARD_NO_KEYRING: "1", DUTYBOARD_CLAUDE: fake, DUTYBOARD_CODEX: fakeCodex, FAKE_CLAUDE_LOG: log, DUTYBOARD_RETRY_SECONDS: "1", DUTYBOARD_ACTIVITY_SECONDS: "1" },
+    env: { ...process.env, DUTYBOARD_HOME: home, DUTYBOARD_NO_KEYRING: "1", DUTYBOARD_CLAUDE: fake, DUTYBOARD_CODEX: fakeCodex, DUTYBOARD_CURSOR: fakeCursor, FAKE_CLAUDE_LOG: log, DUTYBOARD_RETRY_SECONDS: "1", DUTYBOARD_ACTIVITY_SECONDS: "1" },
     stdio: ["ignore", "pipe", "pipe"],
   });
   let daemonOut = "";
@@ -329,6 +330,33 @@ async function main() {
     const codexDone = await until("codex resumed", async () => (await get(codexPark.duty_id)).status === "done", 60_000);
     const codexResumed = events(log).find((e) => e.event === "start" && e.dutyId === codexPark.duty_id && e.resumed);
     check("answered, Codex resumes its own session and finishes", !!codexDone && codexResumed?.session === codexStart?.session, { first: codexStart?.session, resumed: codexResumed?.session });
+
+    // --- and by Cursor ---------------------------------------------------------------
+    await call("/projects/profile", { project_id: boardId, runner: { agent: "cursor" } }, human);
+    const noCursor = await until("cursor missing", async () => {
+      const r = await call("/board/runners", { project_id: boardId }, human);
+      return /Cursor's agent CLI is not installed/.test(r.runners[0]?.problem || "") && r.runners[0];
+    }, 30_000);
+    check("a board worked by Cursor says so on a machine without it", !!noCursor, noCursor);
+    writeFileSync(fakeCursor, `#!/bin/sh\nexec node ${JSON.stringify(join(root, "scripts", "fake-claude.mjs"))} "$@"\n`);
+    chmodSync(fakeCursor, 0o755);
+    const cursorPark = await call("/duty/enqueue", { project_id: boardId, title: "[park] Cursor picks a colour", brief: "Ask, then do it." }, human);
+    const cursorParked = await until("cursor parked", async () => (await get(cursorPark.duty_id)).status === "needs_decision", 60_000);
+    const cursorStart = events(log).find((e) => e.event === "start" && e.dutyId === cursorPark.duty_id);
+    check("once it is installed, Cursor works the board's duties", !!cursorParked && cursorStart?.agent === "cursor", cursorStart?.agent);
+    check(
+      "connected to DutyBoard and the board's MCP server, from the worktree's .cursor/mcp.json with secrets by envFile",
+      !!cursorStart?.mcp?.dutyboard?.env?.DUTYBOARD_RUN_TOKEN && cursorStart.mcp.helper?.env?.HELPER_TOKEN === "s3cret" && cursorStart.mcp.helper.enabledTools?.[0] === "ping",
+      cursorStart?.mcp,
+    );
+    check("and given the instructions at the top of its prompt", /\*\*helper\*\* — A helper for the smoke test/.test(cursorStart?.instructions || ""));
+    await call("/duty/resolve", { duty_id: cursorPark.duty_id, resolution_text: "Blue." }, human);
+    const cursorDone = await until("cursor resumed", async () => (await get(cursorPark.duty_id)).status === "done", 60_000);
+    const cursorResumed = events(log).find((e) => e.event === "start" && e.dutyId === cursorPark.duty_id && e.resumed);
+    check("answered, Cursor resumes its own session, and its work lands without the MCP file in it", !!cursorDone && cursorResumed?.session === cursorStart?.session && !sh("git", ["--git-dir", remote, "ls-tree", "-r", "--name-only", "main"]).includes(".cursor/mcp.json"), {
+      first: cursorStart?.session,
+      resumed: cursorResumed?.session,
+    });
     await call("/projects/profile", { project_id: boardId, runner: { agent: "claude-code" } }, human);
 
     const machines = await call("/machines/list", {}, human);

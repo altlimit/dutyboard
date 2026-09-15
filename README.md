@@ -236,7 +236,7 @@ provisioning, the console and the marketing site.
 | `npm run deploy:site` | Uploads `site/public` to the static instance behind www.dutyboard.com and makes it live. |
 | `npm run demo` | Fills a board with a plausible afternoon's work, and prints the sign-in. |
 | `npm run smoke` | The whole state machine end to end, plus a cross-tenant matrix over every endpoint. |
-| `npm run smoke:runner` | A real `dutyboard` daemon working a board on the emulator, with a stand-in agent (as Claude Code and as Codex). |
+| `npm run smoke:runner` | A real `dutyboard` daemon working a board on the emulator, with a stand-in agent (as Claude Code, Codex and Cursor). |
 | `node scripts/webpush-check.mjs` | Web Push encryption and signing, checked against an independent receiver. Runs in CI. |
 
 Provisioning is HTTP — the emulator's admin API locally, the MCP endpoint hosted — which is why
@@ -318,9 +318,10 @@ sharing, and the reason members are managed only through the owner-only endpoint
 ## Running agents on your machine
 
 `dutyboard` is also the runner. On the computer that should do the work, with the board's agent
-installed and signed in — [Claude Code](https://claude.com/claude-code), or
-[Codex](https://github.com/openai/codex) (`npm i -g @openai/codex`, then `codex login`); each board
-picks one in its settings:
+installed and signed in — [Claude Code](https://claude.com/claude-code),
+[Codex](https://github.com/openai/codex) (`npm i -g @openai/codex`, then `codex login`), or
+[Cursor's agent CLI](https://cursor.com/docs/cli/headless) (`curl https://cursor.com/install -fsS | bash`,
+then `cursor-agent login`); each board picks one in its settings:
 
 ```bash
 dutyboard --root D:\dutyboard      # or any folder; ~/dutyboard by default
@@ -350,7 +351,7 @@ The loop is the program's, not the agent's. For each duty it:
 1. **claims** it — within seconds of it being filed, from the board's live channel;
 2. **prepares a git worktree** for it at `~/.dutyboard/worktrees/<board>/<duty>` on branch
    `duty/<id>`, so your own checkout is never touched and several duties can run at once;
-3. **starts the board's agent** (Claude Code or Codex) there with that one duty, the board's rules
+3. **starts the board's agent** (Claude Code, Codex or Cursor) there with that one duty, the board's rules
    and the project's profile, and a local MCP server that only lets the session change its own duty;
 4. **checks the board** when the session ends: done means the work was integrated — rebased,
    tested and pushed (as it is, or squashed), or opened as a pull request — and the worktree is
@@ -421,7 +422,7 @@ A board's **git mode** says what `duty_integrate` does with a finished duty's co
 
 A repository with no remote leaves the work on the duty's branch.
 
-### Claude Code or Codex
+### Claude Code, Codex or Cursor
 
 Each board says which agent works it (**Settings → How agents run on it**). A machine without that
 agent installed and signed in says so on the Machines page and takes none of the board's duties. The
@@ -435,6 +436,14 @@ is how they are started:
   bypass permissions runs it without the sandbox. Its MCP servers' secrets reach it through its
   environment, never its command line. It resumes the session it started when a parked duty comes
   back.
+- **Cursor** runs as `cursor-agent -p --output-format stream-json`, trusting the worktree and running
+  commands unattended (`--force`); a board set to bypass permissions also turns its sandbox off. Its
+  CLI has no flag for MCP config or extra instructions, so the runner writes the board's servers into
+  the worktree's `.cursor/mcp.json` for the session — hidden from git and put back afterwards, a
+  command server's secrets kept in an `envFile` outside the worktree — and puts the instructions at
+  the top of the prompt. A URL server that needs a secret is left out of Cursor sessions, since its
+  header would have to be written into the worktree. Cursor also loads the servers in your own
+  `~/.cursor/mcp.json`; it has no switch to use only the board's.
 
 ### MCP servers for a board's sessions
 

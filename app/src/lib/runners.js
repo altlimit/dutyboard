@@ -37,10 +37,16 @@ export const EFFORTS = ["", "low", "medium", "high", "xhigh", "max"];
 export const AGENTS = [
   { key: "claude-code", label: "Claude Code", install: "Claude Code installed and signed in" },
   { key: "codex", label: "Codex", install: "Codex installed (npm i -g @openai/codex) and signed in with codex login" },
+  { key: "cursor", label: "Cursor", install: "Cursor's agent CLI installed (curl https://cursor.com/install -fsS | bash) and signed in with cursor-agent login" },
 ];
 /** Codex has a sandbox rather than Claude Code's modes: the board keeps one value, read per agent. */
 export const CODEX_PERMISSION_MODES = [
   { key: "acceptEdits", label: "Sandboxed to its worktree (recommended)" },
+  { key: "bypassPermissions", label: "No sandbox (sandboxed machines only)" },
+];
+/** Cursor runs every command unattended either way; the choice is whether its sandbox stays on. */
+export const CURSOR_PERMISSION_MODES = [
+  { key: "acceptEdits", label: "Runs commands, with its sandbox as configured (recommended)" },
   { key: "bypassPermissions", label: "No sandbox (sandboxed machines only)" },
 ];
 export const agentLabel = (key) => (AGENTS.find((a) => a.key === key) || AGENTS[0]).label;

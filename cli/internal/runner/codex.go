@@ -68,6 +68,7 @@ func ForgetChecks() {
 	codexLogin.Lock()
 	codexLogin.at = time.Time{}
 	codexLogin.Unlock()
+	forgetCursorCheck()
 }
 
 // Check finds Codex and asks it whether it is signed in, remembering the answer for a few minutes: a

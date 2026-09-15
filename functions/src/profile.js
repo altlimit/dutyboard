@@ -26,7 +26,7 @@ export const PROJECT_TYPES = ["game", "website", "webapp", "mobile", "desktop", 
 export const DEPLOY_METHODS = ["ci", "ci-dispatch", "altengine", "command", "none"];
 export const GIT_MODES = ["push", "squash", "pr"];
 export const ALTENGINE_KINDS = ["static", "functions"];
-export const RUNNER_AGENTS = ["claude-code", "codex"];
+export const RUNNER_AGENTS = ["claude-code", "codex", "cursor"];
 export const PERMISSION_MODES = ["default", "acceptEdits", "plan", "bypassPermissions"];
 export const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
 

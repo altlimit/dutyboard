@@ -378,7 +378,7 @@ func createBoard(ctx context.Context, u *ui.UI, api *board.Client, repo, url str
 		return "", err
 	}
 	profile["git"] = map[string]any{"mode": []string{"push", "squash", "pr"}[mode]}
-	agents := []string{"Claude Code", "Codex"}
+	agents := []string{"Claude Code", "Codex", "Cursor"}
 	agent, err := u.Choose("Which agent works its duties on this machine?", agents, 0)
 	if err != nil {
 		return "", err
@@ -393,7 +393,7 @@ func createBoard(ctx context.Context, u *ui.UI, api *board.Client, repo, url str
 	}
 	id, err := api.CreateBoard(ctx, map[string]any{
 		"name": name, "project_id": name, "profile": profile,
-		"runner": map[string]any{"agent": []string{"claude-code", "codex"}[agent], "parallel": parallel},
+		"runner": map[string]any{"agent": []string{"claude-code", "codex", "cursor"}[agent], "parallel": parallel},
 	})
 	if err != nil {
 		return "", err

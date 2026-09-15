@@ -21,6 +21,13 @@ const opt = (name) => {
   return i === -1 ? null : args[i + 1];
 };
 const codex = args[0] === "exec";
+// Cursor: `-p --output-format stream-json --trust --workspace <dir> … <prompt>`, MCP servers read from the
+// workspace's .cursor/mcp.json, the instructions at the top of the prompt.
+const cursor = !codex && args.includes("--trust") && args.includes("--workspace");
+if (args[0] === "status" && args.includes("--format")) {
+  console.log(JSON.stringify({ status: "authenticated", isAuthenticated: true }));
+  process.exit(0);
+}
 if (args[0] === "login" && args[1] === "status") {
   console.log("Logged in using ChatGPT");
   process.exit(0);
@@ -38,16 +45,22 @@ if (codex) {
   }
 }
 const codexResume = codex && args[1] === "resume";
-const prompt = codex ? args[args.length - 1] : opt("-p") || "";
-const session = codex ? (codexResume ? args[args.length - 2] : randomUUID()) : opt("--resume") || opt("--session-id");
+const cursorPrompt = cursor ? args[args.length - 1] : "";
+const cursorSplit = cursorPrompt.lastIndexOf("\n\n---\n\n");
+const prompt = codex ? args[args.length - 1] : cursor ? (cursorSplit >= 0 ? cursorPrompt.slice(cursorSplit + 7) : cursorPrompt) : opt("-p") || "";
+const session = codex ? (codexResume ? args[args.length - 2] : randomUUID()) : cursor ? opt("--resume") || randomUUID() : opt("--resume") || opt("--session-id");
 const resumed = codex ? codexResume : !!opt("--resume");
-const record = (entry) => appendFileSync(process.env.FAKE_CLAUDE_LOG, JSON.stringify({ ...entry, agent: codex ? "codex" : "claude", at: Date.now() }) + "\n");
+const record = (entry) =>
+  appendFileSync(process.env.FAKE_CLAUDE_LOG, JSON.stringify({ ...entry, agent: codex ? "codex" : cursor ? "cursor" : "claude", at: Date.now() }) + "\n");
 const say = (event) => {
   if (codex) {
     // The same moments, as Codex reports them.
     if (event.type === "system") event = { type: "thread.started", thread_id: session };
     else if (event.type === "assistant") event = { type: "item.started", item: { type: "command_execution", command: `bash -lc '${event.message.content[0].input.command}'`, status: "in_progress" } };
     else if (event.type === "result") event = event.is_error ? { type: "turn.failed", error: { message: event.result } } : { type: "turn.completed", usage: {} };
+  }
+  if (cursor && event.type === "assistant") {
+    event = { type: "tool_call", subtype: "started", call_id: "c1", tool_call: { shellToolCall: { args: { command: event.message.content[0].input.command } } }, session_id: session };
   }
   process.stdout.write(JSON.stringify(event) + "\n");
 };
@@ -69,7 +82,19 @@ function codexServers() {
   }
   return servers;
 }
-const mcpServers = codex ? codexServers() : JSON.parse(readFileSync(opt("--mcp-config"), "utf8")).mcpServers;
+function cursorServers() {
+  const servers = JSON.parse(readFileSync(".cursor/mcp.json", "utf8")).mcpServers;
+  for (const s of Object.values(servers)) {
+    if (!s.envFile) continue;
+    s.env = { ...(s.env || {}) };
+    for (const line of readFileSync(s.envFile, "utf8").split("\n")) {
+      const i = line.indexOf("=");
+      if (i > 0) s.env[line.slice(0, i)] = line.slice(i + 1);
+    }
+  }
+  return servers;
+}
+const mcpServers = codex ? codexServers() : cursor ? cursorServers() : JSON.parse(readFileSync(opt("--mcp-config"), "utf8")).mcpServers;
 const server = mcpServers.dutyboard;
 const mcp = spawn(server.command, server.args, { env: { ...process.env, ...server.env }, stdio: ["pipe", "pipe", "inherit"] });
 let buffer = "";
@@ -112,7 +137,7 @@ const title = (prompt.match(/^# (?!The project|Working|Tools|From)(.+)$/m) || []
 record({
   event: "start", dutyId, title, resumed, session, tools, cwd: process.cwd(), branch: git("rev-parse", "--abbrev-ref", "HEAD"), path: process.env.PATH.split(":")[0],
   mcp: mcpServers, strictMCP: args.includes("--strict-mcp-config"), allowedTools: (opt("--allowedTools") || "").split(","),
-  instructions: (codex ? config.developer_instructions : opt("--append-system-prompt")) || "",
+  instructions: (codex ? config.developer_instructions : cursor ? cursorPrompt.slice(0, Math.max(cursorSplit, 0)) : opt("--append-system-prompt")) || "",
   sandbox: codex ? { mode: config.sandbox_mode, writable: config["sandbox_workspace_write.writable_roots"] } : null,
 });
 
