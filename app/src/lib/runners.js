@@ -77,10 +77,45 @@ export function runnerSummary(runners) {
 }
 
 /** A profile as the form edits it, from what the function stores. */
+/** One MCP server as the form edits it: lists as one entry per line, env as KEY=value lines. */
+export function mcpServerDraft(s = {}) {
+  return {
+    name: s.name || "",
+    kind: s.url ? "url" : "command",
+    command: s.command || "",
+    args: (s.args || []).join("\n"),
+    url: s.url || "",
+    env: Object.entries(s.env || {})
+      .map(([k, v]) => `${k}=${v}`)
+      .join("\n"),
+    secrets: (s.secrets || []).join("\n"),
+    tools: (s.tools || []).join("\n"),
+    note: s.note || "",
+  };
+}
+
+const lines = (text) =>
+  String(text || "")
+    .split("\n")
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+function mcpServerPayload(d) {
+  const out = { name: d.name.trim(), secrets: lines(d.secrets), tools: lines(d.tools), note: d.note.trim() };
+  if (d.kind === "url") return { ...out, url: d.url.trim() };
+  const env = {};
+  for (const line of lines(d.env)) {
+    const i = line.indexOf("=");
+    if (i > 0) env[line.slice(0, i).trim()] = line.slice(i + 1).trim();
+  }
+  return { ...out, command: d.command.trim(), args: lines(d.args), env };
+}
+
 export function profileDraft(profile, runner) {
   const p = profile || {};
   const r = runner || {};
   return {
+    mcp_servers: (p.mcp_servers || []).map(mcpServerDraft),
     type: p.type || "webapp",
     type_other: p.type_other || "",
     description: p.description || "",
@@ -129,6 +164,8 @@ export function profilePayload(d) {
         .filter(Boolean),
       test_command: d.test_command.trim(),
       deploy,
+      // Replaced whole on the function, so always the complete list.
+      mcp_servers: (d.mcp_servers || []).map(mcpServerPayload),
       git: {
         mode: d.git_mode,
         author_name: d.git_author_name.trim(),

@@ -26,7 +26,8 @@ const say = (event) => process.stdout.write(JSON.stringify(event) + "\n");
 
 say({ type: "system", subtype: "init", session_id: session, cwd: process.cwd() });
 
-const server = JSON.parse(readFileSync(opt("--mcp-config"), "utf8")).mcpServers.dutyboard;
+const mcpServers = JSON.parse(readFileSync(opt("--mcp-config"), "utf8")).mcpServers;
+const server = mcpServers.dutyboard;
 const mcp = spawn(server.command, server.args, { env: { ...process.env, ...server.env }, stdio: ["pipe", "pipe", "inherit"] });
 let buffer = "";
 const waiting = new Map();
@@ -65,7 +66,10 @@ mcp.stdin.write(JSON.stringify({ jsonrpc: "2.0", method: "notifications/initiali
 const tools = (await rpc("tools/list", {})).result.tools.map((t) => t.name);
 const dutyId = (prompt.match(/`(duty_[0-9A-Z]+)`/) || [])[1];
 const title = (prompt.match(/^# (?!The project|Working|Tools|From)(.+)$/m) || [])[1] || "";
-record({ event: "start", dutyId, title, resumed, session, tools, cwd: process.cwd(), branch: git("rev-parse", "--abbrev-ref", "HEAD"), path: process.env.PATH.split(":")[0] });
+record({
+  event: "start", dutyId, title, resumed, session, tools, cwd: process.cwd(), branch: git("rev-parse", "--abbrev-ref", "HEAD"), path: process.env.PATH.split(":")[0],
+  mcp: mcpServers, strictMCP: args.includes("--strict-mcp-config"), allowedTools: (opt("--allowedTools") || "").split(","), instructions: opt("--append-system-prompt") || "",
+});
 
 if (/make this machine ready/.test(prompt)) {
   const proposed = await tool("board_profile_propose", { duty_id: dutyId, toolchain: [{ name: "node", version: process.versions.node }], test_command: "test -f README.md" });

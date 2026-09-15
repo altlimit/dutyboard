@@ -93,7 +93,16 @@ async function main() {
     {
       name: "Runner",
       project_id: boardId,
-      profile: { type: "webapp", default_branch: "main", repo_url: `file://${remote}`, git: { author_name: "Runner Bot", author_email: "runner-bot@example.com" } },
+      profile: {
+        type: "webapp",
+        default_branch: "main",
+        repo_url: `file://${remote}`,
+        git: { author_name: "Runner Bot", author_email: "runner-bot@example.com" },
+        mcp_servers: [
+          { name: "helper", command: "node", args: ["-e", "0"], env: { HELPER_MODE: "smoke" }, secrets: ["HELPER_TOKEN"], tools: ["ping"], note: "A helper for the smoke test" },
+          { name: "absent", url: "https://mcp.example.com/mcp", secrets: ["Authorization"], note: "Nobody set its secret here" },
+        ],
+      },
       runner: { parallel: 1 },
     },
     human,
@@ -106,7 +115,11 @@ async function main() {
   execFileSync("mkdir", ["-p", home]);
   writeFileSync(join(home, "config.json"), JSON.stringify({ server: API, altengine: BASE, machine_id: paired.machine_id, machine_name: paired.name, agent_prefix: paired.agent_prefix, projects_root: join(work, "projects") }));
   // The emulator takes any altengine key; a stored one is what lets a session deploy through the daemon.
-  writeFileSync(join(home, "credentials.json"), JSON.stringify({ "machine-key": paired.machine_key, "altengine-key": "dev" }));
+  // So is a secret for one of the board's MCP servers — set here as `dutyboard --mcp-secrets` would.
+  writeFileSync(
+    join(home, "credentials.json"),
+    JSON.stringify({ "machine-key": paired.machine_key, "altengine-key": "dev", [`mcp:${boardId}:helper:HELPER_TOKEN`]: "s3cret" }),
+  );
 
   // A repository with a remote. `linked` stands for the person's own checkout: the daemon must never
   // work in it or add branches to it — it clones the board's repository for itself.
@@ -168,6 +181,23 @@ async function main() {
     check("on its own branch, in its own folder", startEvent?.branch === `duty/${hello.duty_id}` && startEvent.cwd.includes(join("worktrees", boardId, hello.duty_id)), startEvent);
     check("with the machine's tools first on its PATH", startEvent?.path === dirname(process.execPath), startEvent?.path);
     check("the session is not offered duty_claim, and is offered duty_integrate", startEvent && !startEvent.tools.includes("duty_claim") && startEvent.tools.includes("duty_integrate"), startEvent?.tools);
+    check(
+      "it is connected to the board's MCP server, with this machine's secret and the board's settings",
+      startEvent?.mcp?.helper?.command === "node" && startEvent.mcp.helper.env?.HELPER_TOKEN === "s3cret" && startEvent.mcp.helper.env?.HELPER_MODE === "smoke",
+      startEvent?.mcp,
+    );
+    check("and only to the servers the board names", startEvent?.strictMCP === true && !startEvent.mcp.absent, Object.keys(startEvent?.mcp || {}));
+    check(
+      "may use only the tools the board allows on it",
+      startEvent?.allowedTools.includes("mcp__helper__ping") && !startEvent.allowedTools.includes("mcp__helper") && startEvent.allowedTools.includes("Bash"),
+      startEvent?.allowedTools,
+    );
+    check("and is told what the server is for", /\*\*helper\*\* — A helper for the smoke test/.test(startEvent?.instructions || ""));
+    const absentNoted = await until("mcp notice", async () => {
+      const r = await call("/board/runners", { project_id: boardId }, human);
+      return /"absent" needs Authorization/.test(r.runners[0]?.problem || "") && r.runners[0];
+    }, 20_000);
+    check("a server whose secret this machine lacks is left out, and the Machines page says why", !!absentNoted, absentNoted);
     check(
       "and the bridge refused claiming, another duty, and completing before integrating",
       doneEvent && doneEvent.guards.claim && doneEvent.guards.notMine && doneEvent.guards.early,

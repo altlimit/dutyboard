@@ -865,6 +865,32 @@ async function main() {
   await call("/projects/profile", { project_id: mBoard, profile: { git: { mode: "push" } } }, human);
   const gitKept = (await call("/board/profile", { project_id: mBoard }, human)).profile.git;
   check("saving the git mode keeps the commit author already set", gitKept.author_email === "bot@example.com" && gitKept.mode === "push", gitKept);
+
+  // MCP servers: a command or a URL, secrets named but never valued.
+  const serverRefused = async (server) =>
+    (await call("/projects/profile", { project_id: mBoard, profile: { mcp_servers: [server] } }, human, { expectStatus: true })).status;
+  check(
+    "an MCP server needs a command or a URL, and not both",
+    (await serverRefused({ name: "x" })) === 400 && (await serverRefused({ name: "x", command: "npx", url: "https://a.example/mcp" })) === 400,
+  );
+  check("an MCP server cannot take the runner's own name", (await serverRefused({ name: "dutyboard", command: "npx" })) === 400);
+  check(
+    "a credential pasted into an MCP server's settings is refused",
+    (await serverRefused({ name: "gh", command: "npx", env: { GITHUB_TOKEN: "ghp_abc" } })) === 400 && (await serverRefused({ name: "gh", command: "npx", env: { OWNER: "ghp_abc" } })) === 400,
+  );
+  check("an MCP URL must be https", (await serverRefused({ name: "docs", url: "http://docs.example/mcp" })) === 400);
+  await call(
+    "/projects/profile",
+    { project_id: mBoard, profile: { mcp_servers: [{ name: "playwright", command: "npx", args: ["@playwright/mcp"], secrets: ["BROWSER_TOKEN"], tools: ["browser_take_screenshot"], note: "screenshots" }] } },
+    human,
+  );
+  const mcpSaved = (await call("/board/profile", { project_id: mBoard }, human)).profile.mcp_servers;
+  check(
+    "a valid MCP server is kept, with its secrets named and no values",
+    mcpSaved?.length === 1 && mcpSaved[0].name === "playwright" && mcpSaved[0].secrets[0] === "BROWSER_TOKEN" && !("url" in mcpSaved[0]),
+    mcpSaved,
+  );
+  await call("/projects/profile", { project_id: mBoard, profile: { mcp_servers: [] } }, human);
   const badEmail = await call("/projects/profile", { project_id: mBoard, profile: { git: { author_email: "not an email" } } }, human, { expectStatus: true });
   check("and a commit author email has to be one", badEmail.status === 400, badEmail.json);
   check("a profile path that leaves the project is refused", escape.status === 400, escape.json);

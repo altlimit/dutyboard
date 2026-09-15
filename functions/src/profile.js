@@ -95,6 +95,70 @@ function repoUrl(v, field) {
 
 const EMAIL = /^[^\s@]+@[^\s@]+$/;
 
+/** MCP servers a board's sessions are connected to, beyond DutyBoard's own. */
+export const MAX_MCP_SERVERS = 8;
+const MCP_NAME = /^[a-z0-9][a-z0-9-]{0,31}$/;
+const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/;
+const HEADER_NAME = /^[A-Za-z0-9-]{1,64}$/;
+const TOOL_NAME = /^[A-Za-z0-9_.-]{1,64}$/;
+
+/**
+ * One MCP server: a command each machine starts, or a URL it connects to — never both.
+ *
+ * NOTHING HERE IS SECRET, and nothing here may be. Every member reads the profile, so a token
+ * pasted into `env` would be handed to all of them. A server's credentials are named in `secrets`
+ * — environment variables for a command, headers for a URL — and each machine keeps their values
+ * itself (`dutyboard --mcp-secrets`). A value that looks like a credential in `env` is refused.
+ */
+function mcpServer(v, f) {
+  const o = obj(v, f);
+  const name = str(o.name, `${f}.name`, { required: true, max: 32 });
+  if (!MCP_NAME.test(name)) throw badRequest(`'${f}.name' must be lowercase letters, digits and dashes`);
+  if (name === "dutyboard") throw badRequest(`'${f}.name' cannot be 'dutyboard' — that server is the runner's own`);
+  const command = str(o.command, `${f}.command`, { max: 200 });
+  const url = str(o.url, `${f}.url`, { max: 500 });
+  if (!!command === !!url) throw badRequest(`'${f}' needs a 'command' to start or a 'url' to connect to, not both`);
+  if (command && /[\0\n\r]/.test(command)) throw badRequest(`'${f}.command' must be one line`);
+  if (url && !/^(https:\/\/[^\s]+|http:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/[^\s]*)?)$/.test(url)) {
+    throw badRequest(`'${f}.url' must be https://, or http:// on localhost`);
+  }
+  const env = {};
+  for (const [k, val] of Object.entries(obj(o.env, `${f}.env`))) {
+    if (!ENV_NAME.test(k)) throw badRequest(`'${f}.env' has a name that is not an environment variable: '${k}'`);
+    const s = str(val, `${f}.env.${k}`, { max: 500 });
+    if (/(token|secret|password|passwd|api[_-]?key|private[_-]?key)/i.test(k) || /^(sk-|ghp_|github_pat_|xox[bp]-|ak_|db_|dbm_)/.test(s)) {
+      throw badRequest(`'${f}.env.${k}' looks like a credential — list it in '${f}.secrets' and set it on each machine instead`);
+    }
+    env[k] = s;
+  }
+  if (Object.keys(env).length > 20) throw badRequest(`'${f}.env' may have at most 20 entries`);
+  const secrets = list(o.secrets, `${f}.secrets`, {
+    max: 10,
+    item: (x, g) => {
+      const s = str(x, g, { required: true, max: 64 });
+      if (!(url ? HEADER_NAME : ENV_NAME).test(s)) {
+        throw badRequest(`'${g}' must be ${url ? "a header name, like 'Authorization'" : "an environment variable name, like 'GITHUB_TOKEN'"}`);
+      }
+      return s;
+    },
+  });
+  return {
+    name,
+    ...(command ? { command, args: list(o.args, `${f}.args`, { max: 30, item: plain(500) }) } : { url }),
+    env: command ? env : {},
+    secrets,
+    tools: list(o.tools, `${f}.tools`, {
+      max: 50,
+      item: (x, g) => {
+        const t = str(x, g, { required: true, max: 64 });
+        if (!TOOL_NAME.test(t)) throw badRequest(`'${g}' is not a tool name`);
+        return t;
+      },
+    }),
+    note: str(o.note, `${f}.note`, { max: 300 }),
+  };
+}
+
 const has = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
 const obj = (v, field) => {
   if (v == null) return {};
@@ -157,6 +221,16 @@ export function mergeProfile(stored, input) {
     // why the profile is the owner's to edit.
     if (has(g, "ssh_command")) git.ssh_command = str(g.ssh_command, "profile.git.ssh_command", { max: 300 });
     next.git = git;
+  }
+  if (has(p, "mcp_servers")) {
+    // Replaced whole: a list edited in one form, where a merge could not tell removed from unsent.
+    const servers = list(p.mcp_servers, "profile.mcp_servers", { max: MAX_MCP_SERVERS, item: mcpServer });
+    const names = new Set();
+    for (const s of servers) {
+      if (names.has(s.name)) throw badRequest(`two MCP servers are named '${s.name}'`);
+      names.add(s.name);
+    }
+    next.mcp_servers = servers;
   }
   if (has(p, "worktree")) {
     const w = obj(p.worktree, "profile.worktree");

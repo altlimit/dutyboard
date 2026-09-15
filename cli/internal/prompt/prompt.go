@@ -39,6 +39,7 @@ type Input struct {
 	Hints       string // what this kind of project usually needs, for setup and rules
 	Detected    string // the daemon's reading of the repository's CI, for setup
 	PrepFailed  string // the board's prep command failed in this worktree: what ran and what it said
+	MCPServers  []MCPServer
 }
 
 // System is the part appended to the agent's own system prompt.
@@ -62,4 +63,11 @@ func render(name string, in Input) (string, error) {
 		return "", err
 	}
 	return strings.TrimSpace(b.String()), nil
+}
+
+// MCPServer is one of the board's MCP servers a session is connected to, as its instructions name it.
+type MCPServer struct {
+	Name  string
+	Tools []string // the tools it may use; empty for all of them
+	Note  string   // what the board's owner says it is for
 }

@@ -208,6 +208,10 @@ func (d *Daemon) execute(dctx, rctx context.Context, run *Run, duty *board.Duty,
 			Mode: string(modeFor(dctx, v, spec)), Resuming: resume, Attempt: rec.Attempts,
 			ProjectRoot: spec.Repo, LocalDir: spec.CopyFrom, Tools: d.tools.Describe(), PrepFailed: prepFailed,
 		}
+		servers, _ := d.boardMCPServers(v)
+		for _, s := range servers {
+			in.MCPServers = append(in.MCPServers, prompt.MCPServer{Name: s.Name, Tools: s.Tools, Note: noteOf(v, s.Name)})
+		}
 		if run.Kind == "setup" || run.Kind == "rules" {
 			kind := ""
 			if v.Profile != nil {
@@ -371,6 +375,15 @@ func clip(s string, n int) string {
 	return s[:n] + "…"
 }
 
+func noteOf(v board.BoardView, server string) string {
+	for _, s := range v.Profile.MCPServers {
+		if s.Name == server {
+			return s.Note
+		}
+	}
+	return ""
+}
+
 // agentName is the agent a board's duties are worked by, "" for the default.
 func agentName(v board.BoardView) string {
 	if v.Runner != nil {
@@ -381,6 +394,7 @@ func agentName(v board.BoardView) string {
 
 // job is one session, in terms that are no one agent's: the agent turns it into its command line.
 func (d *Daemon) job(run *Run, v board.BoardView, path, system, task string, rec state.RunRecord, resume bool) runner.Job {
+	servers, _ := d.boardMCPServers(v)
 	j := runner.Job{
 		Dir: path, Prompt: task, Instructions: system, SessionID: rec.Session, Resume: resume,
 		Name:       clip(run.Title, 80),
@@ -388,10 +402,10 @@ func (d *Daemon) job(run *Run, v board.BoardView, path, system, task string, rec
 		SessionDir: state.Path("run", "sessions", run.Token),
 		// The local bridge is the session's DutyBoard server. The run token in its environment is how
 		// the daemon knows which session a message came from.
-		MCPServers: []runner.MCPServer{{
+		MCPServers: append([]runner.MCPServer{{
 			Name: "dutyboard", Command: d.exe, Args: []string{"mcp"},
 			Env: map[string]string{"DUTYBOARD_RUN_TOKEN": run.Token, "DUTYBOARD_HOME": state.Home()},
-		}},
+		}}, servers...),
 		Env: append(d.tools.SessionEnv(), "DUTYBOARD_RUN_TOKEN="+run.Token, "DUTYBOARD_HOME="+state.Home()),
 	}
 	if r := v.Runner; r != nil {

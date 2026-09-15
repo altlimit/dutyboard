@@ -27,6 +27,11 @@ func TestEveryKindRenders(t *testing.T) {
 			t.Errorf("system prompt is missing %q:\n%s", want, sys)
 		}
 	}
+	in.MCPServers = []MCPServer{{Name: "playwright", Note: "screenshots of UI changes", Tools: []string{"browser_take_screenshot"}}}
+	if sys, _ := System(in); !strings.Contains(sys, "**playwright** — screenshots of UI changes (tools you may use: browser_take_screenshot)") {
+		t.Errorf("the board's MCP servers are not named to the session:\n%s", sys)
+	}
+	in.MCPServers = nil
 	in.PrepFailed = "Command: npm ci\nError: exit status 1"
 	if sys, _ := System(in); !strings.Contains(sys, "not prepared yet") || !strings.Contains(sys, "npm ci") {
 		t.Errorf("a failed prep is not handed to the session:\n%s", sys)

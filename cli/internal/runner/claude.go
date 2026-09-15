@@ -70,7 +70,9 @@ func claudeArgs(j Job) ([]string, error) {
 		if err != nil {
 			return nil, err
 		}
-		args = append(args, "--mcp-config", p)
+		// Only these servers: whatever else is in this user's own Claude Code setup is theirs, not the
+		// board's, and a session should reach nothing a board's owner did not put on it.
+		args = append(args, "--mcp-config", p, "--strict-mcp-config")
 	}
 	mode := j.Access.Mode
 	if mode == "" {

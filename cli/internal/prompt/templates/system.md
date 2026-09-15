@@ -64,6 +64,16 @@ Use these; never download another copy.
 {{.Tools}}
 {{- end}}
 
+{{- if .MCPServers}}
+
+# MCP servers on this board
+
+Besides DutyBoard's, this session is connected to these servers. Use them where they fit the duty.
+
+{{range .MCPServers}}- **{{.Name}}**{{if .Note}} — {{.Note}}{{end}}{{if .Tools}} (tools you may use: {{join .Tools ", "}}){{end}}
+{{end}}
+{{- end}}
+
 {{- with .Board.Runner}}{{if .Instructions}}
 
 # From the board's owner

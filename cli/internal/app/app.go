@@ -37,6 +37,7 @@ type Flags struct {
 	Root          string
 	NoService     bool
 	DeployKey     bool
+	MCPSecrets    bool
 }
 
 // Main runs the program and returns its exit code.
@@ -66,6 +67,7 @@ func Main(args []string) int {
 	fs.StringVar(&f.Root, "root", "", "the folder setups requested from the console clone into (default ~/dutyboard)")
 	fs.BoolVar(&f.NoService, "no-service", false, "do not offer to start dutyboard at login; run in this terminal")
 	fs.BoolVar(&f.DeployKey, "deploy-key", false, "set the altengine key this machine deploys projects with, then exit")
+	fs.BoolVar(&f.MCPSecrets, "mcp-secrets", false, "set the secrets your boards' MCP servers need on this machine, then exit")
 	fs.Usage = func() {
 		fmt.Fprintln(fs.Output(), "dutyboard — runs your DutyBoard's work on this machine.")
 		fmt.Fprintln(fs.Output(), "\nRun with no flags to connect this machine and start working. Flags:")
@@ -92,6 +94,8 @@ func Main(args []string) int {
 		_, err = Provision(ctx, u, f)
 	case f.DeployKey:
 		err = SetDeployKey(ctx, u, f)
+	case f.MCPSecrets:
+		err = SetMCPSecrets(ctx, u)
 	default:
 		err = Start(ctx, u, f)
 	}
@@ -300,4 +304,72 @@ func reloadDaemon(u *ui.UI) error {
 		u.OK("the running dutyboard has picked it up")
 	}
 	return nil
+}
+
+// SetMCPSecrets asks for each secret the MCP servers on this machine's boards name, and keeps the
+// values here — in the OS keyring where there is one. They never go to the board: every member can
+// read a board's profile.
+func SetMCPSecrets(ctx context.Context, u *ui.UI) error {
+	if !u.Interactive {
+		return errors.New("--mcp-secrets asks for the values: run it in a terminal")
+	}
+	cfg, err := state.LoadConfig()
+	if err != nil {
+		return err
+	}
+	mk, _ := state.Credential(state.MachineKey)
+	if cfg.Server == "" || mk == "" {
+		return errors.New("this machine is not paired with a DutyBoard yet — run `dutyboard` first")
+	}
+	boards, err := board.New(cfg.Server, mk).Boards(ctx)
+	if err != nil {
+		return err
+	}
+	asked := 0
+	for _, b := range boards {
+		if !b.Linked || b.Profile == nil {
+			continue
+		}
+		for _, s := range b.Profile.MCPServers {
+			if len(s.Secrets) == 0 {
+				continue
+			}
+			u.Step("%s — MCP server %s", b.ProjectID, s.Name)
+			if s.Note != "" {
+				u.Say("%s", s.Note)
+			}
+			kind := "environment variable"
+			if s.URL != "" {
+				kind = "header (the whole value, e.g. \"Bearer …\")"
+			}
+			for _, name := range s.Secrets {
+				asked++
+				key := state.MCPSecret(b.ProjectID, s.Name, name)
+				have, _ := state.Credential(key)
+				status := "not set"
+				if have != "" {
+					status = "set — Enter keeps it, - removes it"
+				}
+				val, err := u.Secret(fmt.Sprintf("%s, %s (%s)", name, kind, status))
+				if err != nil {
+					return err
+				}
+				switch {
+				case val == "-":
+					_ = state.DeleteCredential(key)
+					u.OK("removed %s", name)
+				case val != "":
+					if err := state.SetCredential(key, val); err != nil {
+						return fmt.Errorf("storing %s: %w", name, err)
+					}
+					u.OK("stored %s", name)
+				}
+			}
+		}
+	}
+	if asked == 0 {
+		u.OK("no MCP server on the boards this machine works needs a secret")
+		return nil
+	}
+	return reloadDaemon(u)
 }

@@ -66,7 +66,13 @@ func (d *Daemon) ensureWorkspaces(ctx context.Context) {
 			problem = "this board opens pull requests, and the GitHub CLI (gh) is not installed or signed in on this machine — run `gh auth login`"
 		}
 		d.setProblem(ctx, v.ProjectID, problem)
-		d.setNotice(ctx, v.ProjectID, d.deployNotice(ctx, v))
+		notices := []string{}
+		if n := d.deployNotice(ctx, v); n != "" {
+			notices = append(notices, n)
+		}
+		_, missing := d.boardMCPServers(v)
+		notices = append(notices, missing...)
+		d.setNotice(ctx, v.ProjectID, strings.Join(notices, "; "))
 	}
 }
 

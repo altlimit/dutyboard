@@ -1,5 +1,5 @@
 <script setup>
-import { DEPLOY_METHODS, EFFORTS, GIT_MODES, PERMISSION_MODES, PROJECT_TYPES } from "../lib/runners.js";
+import { DEPLOY_METHODS, EFFORTS, GIT_MODES, PERMISSION_MODES, PROJECT_TYPES, mcpServerDraft } from "../lib/runners.js";
 
 // The questions a board is created with, and edited with later: what the project is, how its work
 // lands, and how agents run on it. The model is a draft from lib/runners.js `profileDraft`; the
@@ -9,6 +9,13 @@ import { DEPLOY_METHODS, EFFORTS, GIT_MODES, PERMISSION_MODES, PROJECT_TYPES } f
 
 const draft = defineModel({ type: Object, required: true });
 defineProps({ idPrefix: { type: String, default: "pf" }, disabled: { type: Boolean, default: false } });
+
+const addServer = () => {
+  draft.value.mcp_servers = [...(draft.value.mcp_servers || []), mcpServerDraft()];
+};
+const removeServer = (i) => {
+  draft.value.mcp_servers = draft.value.mcp_servers.filter((_, j) => j !== i);
+};
 </script>
 
 <template>
@@ -141,6 +148,70 @@ defineProps({ idPrefix: { type: String, default: "pf" }, disabled: { type: Boole
     <div class="field">
       <label :for="`${idPrefix}-instr`">Anything else agents should always know <span class="muted">(optional)</span></label>
       <textarea :id="`${idPrefix}-instr`" v-model="draft.instructions" maxlength="4000" placeholder="Deploy only after the owner says so. Screens must fit a 320px phone." />
+    </div>
+  </fieldset>
+
+  <fieldset class="stack" :disabled="disabled">
+    <legend class="label">MCP servers <span class="muted">(optional)</span></legend>
+    <p class="hint">
+      More tools for this board's sessions — a browser to take screenshots with, an issue tracker, docs. Each machine
+      starts or connects to them for every duty it works here. Only what you list is connected, and only the tools
+      you name, if you name any.
+    </p>
+    <p class="hint">
+      <strong>Nothing here is private:</strong> everyone on the board can read it. Name a server's credentials under
+      secrets, and set their values on each machine with <code class="mono">dutyboard --mcp-secrets</code>.
+    </p>
+    <div v-for="(s, i) in draft.mcp_servers" :key="i" class="stack mcp-server">
+      <div class="field">
+        <label :for="`${idPrefix}-mcp-${i}-name`">Name</label>
+        <input :id="`${idPrefix}-mcp-${i}-name`" v-model="s.name" required maxlength="32" class="mono" placeholder="playwright" pattern="[a-z0-9][a-z0-9\-]*" />
+      </div>
+      <div class="choices" role="radiogroup" :aria-label="`How ${s.name || 'this server'} runs`">
+        <label class="choice"><input v-model="s.kind" type="radio" :name="`${idPrefix}-mcp-${i}-kind`" value="command" /> A command each machine starts</label>
+        <label class="choice"><input v-model="s.kind" type="radio" :name="`${idPrefix}-mcp-${i}-kind`" value="url" /> A URL to connect to</label>
+      </div>
+      <template v-if="s.kind === 'command'">
+        <div class="field">
+          <label :for="`${idPrefix}-mcp-${i}-cmd`">Command</label>
+          <input :id="`${idPrefix}-mcp-${i}-cmd`" v-model="s.command" required maxlength="200" class="mono" placeholder="npx" />
+        </div>
+        <div class="field">
+          <label :for="`${idPrefix}-mcp-${i}-args`">Arguments <span class="muted">(one per line)</span></label>
+          <textarea :id="`${idPrefix}-mcp-${i}-args`" v-model="s.args" class="mono" rows="2" placeholder="@playwright/mcp@latest" />
+        </div>
+        <div class="field">
+          <label :for="`${idPrefix}-mcp-${i}-env`">Settings <span class="muted">(KEY=value per line, not secrets)</span></label>
+          <textarea :id="`${idPrefix}-mcp-${i}-env`" v-model="s.env" class="mono" rows="2" placeholder="BROWSER=chromium" />
+        </div>
+      </template>
+      <div v-else class="field">
+        <label :for="`${idPrefix}-mcp-${i}-url`">URL</label>
+        <input :id="`${idPrefix}-mcp-${i}-url`" v-model="s.url" required maxlength="500" class="mono" placeholder="https://mcp.example.com/mcp" />
+      </div>
+      <div class="field">
+        <label :for="`${idPrefix}-mcp-${i}-secrets`">Secrets <span class="muted">(names only, one per line)</span></label>
+        <textarea :id="`${idPrefix}-mcp-${i}-secrets`" v-model="s.secrets" class="mono" rows="2" :placeholder="s.kind === 'url' ? 'Authorization' : 'GITHUB_TOKEN'" />
+        <p class="hint">
+          {{ s.kind === "url" ? "Headers sent to the server." : "Environment variables the command gets." }}
+          A machine without their values leaves the server out and says so on the Machines page.
+        </p>
+      </div>
+      <div class="field">
+        <label :for="`${idPrefix}-mcp-${i}-tools`">Tools agents may use <span class="muted">(one per line; empty for all)</span></label>
+        <textarea :id="`${idPrefix}-mcp-${i}-tools`" v-model="s.tools" class="mono" rows="2" placeholder="browser_navigate&#10;browser_take_screenshot" />
+      </div>
+      <div class="field">
+        <label :for="`${idPrefix}-mcp-${i}-note`">What it is for</label>
+        <input :id="`${idPrefix}-mcp-${i}-note`" v-model="s.note" maxlength="300" placeholder="Screenshots of every visual change, attached to the duty" />
+        <p class="hint">Agents read this to know when to reach for it.</p>
+      </div>
+      <div class="row">
+        <button type="button" @click="removeServer(i)">Remove {{ s.name || "this server" }}</button>
+      </div>
+    </div>
+    <div class="row">
+      <button type="button" :disabled="(draft.mcp_servers || []).length >= 8" @click="addServer">Add an MCP server</button>
     </div>
   </fieldset>
 </template>

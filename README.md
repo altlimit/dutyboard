@@ -353,6 +353,31 @@ records the toolchain it installed, and a **rules** duty, which drafts the proje
 accept. How many duties run at once is set per board (`runner.parallel`) and per machine
 (`max_sessions`).
 
+### MCP servers for a board's sessions
+
+A board can give its sessions more tools than DutyBoard's own: a browser to take screenshots with,
+an issue tracker, a docs server. In the board's **Settings**, under **MCP servers**, each one is
+either a command every machine starts (`npx @playwright/mcp`) or a URL it connects to, with:
+
+- **settings** — plain environment variables for a command (`BROWSER=chromium`);
+- **secrets** — only the *names* of the environment variables (for a command) or headers (for a
+  URL) that carry credentials, like `GITHUB_TOKEN` or `Authorization`;
+- **tools** — the ones sessions may use, or none listed for all of them;
+- **what it is for** — a line every session is given, so the agent knows when to reach for it.
+
+Everyone on a board can read its profile, so no value there is private, and anything that looks like
+a credential in the settings is refused. Each machine keeps the secrets' values itself:
+
+```bash
+dutyboard --mcp-secrets     # asks for each secret the boards this machine works need; OS keyring
+```
+
+A session is connected to exactly the board's servers and DutyBoard's — nothing else from your own
+Claude Code setup (`--strict-mcp-config`) — and may call only the tools the board allows. A server
+a machine cannot start, because a secret is not set there or its command is not installed, is left
+out of that machine's sessions and named on the Machines page. Editing the list is the owner's, like
+every other part of the profile that makes a machine run something.
+
 ## Connecting an agent
 
 Mint a token on the board's **Settings** page — tokens are the owner's to mint. Then, as an MCP server:

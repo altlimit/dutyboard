@@ -217,6 +217,21 @@ type Profile struct {
 		Cache      []string `json:"cache"`
 		Copy       []string `json:"copy"`
 	} `json:"worktree"`
+	MCPServers []MCPServer `json:"mcp_servers"`
+}
+
+// MCPServer is an MCP server a board's sessions are connected to. Nothing in it is secret: Secrets
+// only names the environment variables (for a command) or headers (for a URL) whose values each
+// machine keeps.
+type MCPServer struct {
+	Name    string            `json:"name"`
+	Command string            `json:"command"`
+	Args    []string          `json:"args"`
+	URL     string            `json:"url"`
+	Env     map[string]string `json:"env"`
+	Secrets []string          `json:"secrets"`
+	Tools   []string          `json:"tools"`
+	Note    string            `json:"note"`
 }
 
 // Runner is a board's runner settings.

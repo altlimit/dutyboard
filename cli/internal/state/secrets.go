@@ -94,3 +94,8 @@ func deleteFileCredential(name string) error {
 	delete(creds, name)
 	return WriteJSON(Path("credentials.json"), creds, 0o600)
 }
+
+// MCPSecret is the credential name a board's MCP server's secret is kept under on this machine.
+func MCPSecret(board, server, name string) string {
+	return "mcp:" + board + ":" + server + ":" + name
+}
