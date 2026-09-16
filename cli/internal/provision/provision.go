@@ -506,7 +506,7 @@ func deployFunction(ctx context.Context, c *altengine.Client, u *ui.UI, a *asset
 	if err != nil {
 		return "", err
 	}
-	d, err := c.DeployFunction(ctx, n.Functions, FunctionName, string(code), n.grants())
+	d, err := c.DeployFunction(ctx, n.Functions, FunctionName, string(code), n.grants(), schedules())
 	if err != nil {
 		return "", fmt.Errorf("deploying the function: %w", err)
 	}
@@ -522,6 +522,15 @@ func deployFunction(ctx context.Context, c *altengine.Client, u *ui.UI, a *asset
 	}
 	return "", fmt.Errorf("deployed, but the functions listing does not say where %q answers", FunctionName)
 }
+
+// schedules is the function's own clock: the one thing on a board that has to happen when nobody
+// is at a keyboard and no machine is awake. Recurring duties are filed by whichever tick reaches
+// an occurrence first — this, or a machine's poll — and the occurrence can only be filed once, so
+// having both is belt and braces rather than a duplicate.
+//
+// Every minute, because a person who asks for 9am means 9am. The run costs one indexed query that
+// usually finds nothing.
+func schedules() []string { return []string{"* * * * *"} }
 
 var errConsoleSkipped = errors.New("console not published")
 

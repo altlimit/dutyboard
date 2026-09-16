@@ -1,7 +1,7 @@
 {
   "_comment": [
     "Composite indexes, in the order the planner needs them: equality-filtered fields first,",
-    "then the field the query sorts on. Field order is not interchangeable \u2014 an index built",
+    "then the field the query sorts on. Field order is not interchangeable — an index built",
     "the other way round will not serve the query it was built for.",
     "",
     "Auto-indexing is left ON, so a query we did not anticipate still runs (and says so in",
@@ -10,11 +10,11 @@
     "record of what this app actually asks the datastore for.",
     "",
     "Every console query carries an extra `owner_uid = $auth.uid` filter that the row rules",
-    "AND in server-side \u2014 which is why the console indexes lead with owner_uid and the",
+    "AND in server-side — which is why the console indexes lead with owner_uid and the",
     "function's own (organization-level, no rules) do not.",
     "",
-    "The `member:` entries serve the second branch of a shared board's read rule \u2014 `project_id in",
-    "$auth.claims.boards` \u2014 which the platform plans as a separate query with its own index. Declare",
+    "The `member:` entries serve the second branch of a shared board's read rule — `project_id in",
+    "$auth.claims.boards` — which the platform plans as a separate query with its own index. Declare",
     "them: auto-indexing on hosted altengine builds only ONE missing index per call, so a read whose",
     "two branches both lack one fails the first time it is asked (fixed in the platform at",
     "altengineapp 9ac661a, not yet deployed at the time of writing)."
@@ -53,7 +53,7 @@
         "prio_rank",
         "created_at"
       ],
-      "for": "console: the Queued column, in the order the scheduler will take them \u2014 the same order as the index above it, so the top of that column is the duty an agent claims next"
+      "for": "console: the Queued column, in the order the scheduler will take them — the same order as the index above it, so the top of that column is the duty an agent claims next"
     },
     {
       "fields": [
@@ -110,6 +110,20 @@
         "status"
       ],
       "for": "the function: whether a board has a setup unfinished, which holds every other claim"
+    },
+    {
+      "fields": [
+        "fire_key"
+      ],
+      "unique": true,
+      "for": "THE MUTEX FOR RECURRING DUTIES. A duty filed by a schedule carries '<schedule>@<due>'; every other duty carries nothing, and nulls do not collide. Two ticks racing over one occurrence — the function's own cron and a polling machine — write two different duty rows with the same value, so the second transaction is refused whole and the occurrence files exactly one duty."
+    },
+    {
+      "fields": [
+        "schedule_id",
+        "created_at"
+      ],
+      "for": "the function: what one schedule has filed, newest first"
     }
   ],
   "threads": [
@@ -192,7 +206,7 @@
         "active_duty_id"
       ],
       "unique": true,
-      "for": "THE MUTEX, not a query. Two agents cannot both hold one duty because the datastore refuses the second write of the same active_duty_id, which fails that whole claim transaction and leaves the duty untouched. Nulls do not collide, so any number of agents may be idle. The function creates this on demand too (see store.ensureUniqueIndex) \u2014 auto-indexing would never make it, because what a query needs is never unique."
+      "for": "THE MUTEX, not a query. Two agents cannot both hold one duty because the datastore refuses the second write of the same active_duty_id, which fails that whole claim transaction and leaves the duty untouched. Nulls do not collide, so any number of agents may be idle. The function creates this on demand too (see store.ensureUniqueIndex) — auto-indexing would never make it, because what a query needs is never unique."
     }
   ],
   "machines": [
@@ -273,7 +287,7 @@
       "fields": [
         "uid"
       ],
-      "for": "the function: the boards one person is a member of \u2014 their claim, and their board list"
+      "for": "the function: the boards one person is a member of — their claim, and their board list"
     },
     {
       "fields": [
@@ -289,6 +303,35 @@
         "uid"
       ],
       "for": "the function: the devices one person gets notifications on"
+    }
+  ],
+  "schedules": [
+    {
+      "fields": [
+        "enabled",
+        "next_due_at"
+      ],
+      "for": "the tick: every board's recurring duties that are due, soonest first. The one query a cron run makes when there is nothing to do, so it must be served by an index rather than scanned."
+    },
+    {
+      "fields": [
+        "project_id",
+        "enabled",
+        "next_due_at"
+      ],
+      "for": "the same, for one board — what a polling machine runs for the boards it works, when the function's own cron was never set"
+    },
+    {
+      "fields": [
+        "project_id"
+      ],
+      "for": "the function: a board's schedules, for the console and for deleting a board"
+    },
+    {
+      "fields": [
+        "last_duty_id"
+      ],
+      "for": "the function: which schedule filed a duty that just finished, so the next run can be told how it went"
     }
   ]
 }

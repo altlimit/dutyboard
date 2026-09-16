@@ -39,6 +39,7 @@ jobs:
       # Web Push encryption and VAPID signing, checked against an independent receiver. Nothing else
       # can prove them without a real browser and push service.
       - run: node scripts/webpush-check.mjs
+      - run: node scripts/cron-check.mjs
 
       # Every script parses. They are not imported by either build, so a syntax error in one
       # would otherwise surface the first time someone ran a release step.

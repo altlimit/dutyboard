@@ -178,12 +178,16 @@ type Deploy struct {
 	SizeBytes int `json:"size_bytes"`
 }
 
-// DeployFunction deploys and activates one function.
-func (c *Client) DeployFunction(ctx context.Context, instance, name, code string, grants map[string]string) (*Deploy, error) {
+// DeployFunction deploys and activates one function. `schedules` are five-field UTC cron
+// expressions the platform calls it on; nil leaves whatever it already has, and an empty slice
+// clears them.
+func (c *Client) DeployFunction(ctx context.Context, instance, name, code string, grants map[string]string, schedules []string) (*Deploy, error) {
 	var out Deploy
-	err := c.Do(ctx, http.MethodPost, "/v1/functions/"+Esc(instance)+"/deploy", map[string]any{
-		"name": name, "code": code, "grants": grants, "activate": true,
-	}, &out)
+	body := map[string]any{"name": name, "code": code, "grants": grants, "activate": true}
+	if schedules != nil {
+		body["schedules"] = schedules
+	}
+	err := c.Do(ctx, http.MethodPost, "/v1/functions/"+Esc(instance)+"/deploy", body, &out)
 	return &out, err
 }
 

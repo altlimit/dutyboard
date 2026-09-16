@@ -18,6 +18,7 @@
     "deploy:site": "node scripts/deploy-site.mjs",
     "demo": "node scripts/demo.mjs",
     "smoke": "node scripts/smoke.mjs",
+    "check:cron": "node scripts/cron-check.mjs",
     "smoke:runner": "node scripts/smoke-runner.mjs"
   },
   "devDependencies": {

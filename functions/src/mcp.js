@@ -20,6 +20,7 @@ import { HttpError, json, readBoundedText } from "./http.js";
 import { pollDuties, claimDuty, enqueueDuty, checkpointDuty, completeDuty, failDuty, listThread, PRIORITIES, THREAD_KINDS } from "./duties.js";
 import { attachToDuty, listAttachments, MAX_BYTES, MAX_INLINE_BYTES } from "./attachments.js";
 import { searchDuties } from "./searching.js";
+import { createSchedule, deleteSchedule, listSchedules, updateSchedule } from "./schedules.js";
 import { getProfile, proposeProfile, getRules, submitRules, DEPLOY_METHODS } from "./profile.js";
 import { VERSION } from "./version.js";
 
@@ -63,7 +64,10 @@ SHOWING RATHER THAN DESCRIBING
 duty_attach puts a file on a duty — a screenshot of what you built, a recording of the failure, the log that explains it. duty_attachments reads what is there, including what a person attached for you; if a duty has attachments, look at them before asking about it.
 
 THE PROJECT ITSELF
-board_profile says what this project is — its type, repository, toolchain, test command, how it deploys — and board_rules gives the rules a person has put in force for it. Follow those rules in every duty. A duty of kind 'setup' is how a machine gets ready for the project: record what you found with board_profile_propose. A duty of kind 'rules' asks you to write the rules: hand them in with board_rules_submit, and a person decides whether they take effect.`;
+board_profile says what this project is — its type, repository, toolchain, test command, how it deploys — and board_rules gives the rules a person has put in force for it. Follow those rules in every duty. A duty of kind 'setup' is how a machine gets ready for the project: record what you found with board_profile_propose. A duty of kind 'rules' asks you to write the rules: hand them in with board_rules_submit, and a person decides whether they take effect.
+
+WORK THAT COMES ROUND AGAIN
+Some work is never finished, only due again — a weekly post, a monthly check of something that drifts. duty_schedule_list shows what this board already repeats; duty_schedule_create makes a duty recur on a cron expression, and each one it files tells the next how the last went. Only while you hold an active duty, and only for work you have just done and know will be wanted again; anything that commits the board indefinitely is better proposed to a person in a checkpoint than decided by you.`;
 
 const s = (description, extra = {}) => ({ type: "string", description, ...extra });
 
@@ -338,6 +342,68 @@ const TOOLS = [
       required: ["duty_id", "body"],
     },
     handler: submitRules,
+  },
+  {
+    name: "duty_schedule_list",
+    title: "Recurring duties on this board",
+    description:
+      "The recurring duties set up on this board: what each one files, how often, and when it next comes round. Check this before setting one up, so the board does not grow two schedules doing the same thing.",
+    inputSchema: { type: "object", properties: {} },
+    handler: listSchedules,
+  },
+  {
+    name: "duty_schedule_create",
+    title: "Make a duty recur",
+    description:
+      "Set up work that should happen again and again on a clock — a weekly post, a monthly check of something that drifts — so it arrives as a fresh duty each time rather than being remembered by nobody. Only while you are holding an active duty: a schedule should come out of work you are actually doing, and the board records which agent asked for it. The repeat is a five-field cron expression read in the board's timezone, and two runs must be at least 15 minutes apart. Each duty it files carries a note of how the previous one turned out, so a recurring writing duty does not repeat itself. Prefer proposing one to a person in a checkpoint when it commits the board to work indefinitely.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        title: s("One line naming the work, used as each filed duty's title."),
+        brief: s("What needs doing, every time it comes round. Written for an agent with no other context."),
+        cron: s("Five fields — minute, hour, day of the month, month, day of the week. '0 9 * * 1' is 9am every Monday."),
+        priority: s("How each filed duty schedules.", { enum: PRIORITIES, default: "next" }),
+        reserved_for: s("A machine's agent prefix, if the work can only be done on that machine."),
+        agent_id: s("Which agent you are. Defaults to the id configured on this connection."),
+      },
+      required: ["title", "brief", "cron"],
+    },
+    handler: createSchedule,
+  },
+  {
+    name: "duty_schedule_update",
+    title: "Change or pause a recurring duty",
+    description:
+      "Change what a recurring duty says or how often it comes round, or turn it off with enabled false without deleting it. Only while you are holding an active duty. Changing the repeat re-aims it: the next run is worked out from now.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        schedule_id: s("The schedule, from duty_schedule_list."),
+        title: s("A new title for the duties it files."),
+        brief: s("A new brief."),
+        cron: s("A new five-field repeat."),
+        priority: s("How each filed duty schedules.", { enum: PRIORITIES }),
+        enabled: { type: "boolean", description: "False pauses it; true starts it again." },
+        agent_id: s("Which agent you are. Defaults to the id configured on this connection."),
+      },
+      required: ["schedule_id"],
+    },
+    handler: updateSchedule,
+  },
+  {
+    name: "duty_schedule_delete",
+    title: "Stop a recurring duty",
+    description:
+      "Remove a schedule for good. Duties it has already filed stay on the board. Only while you are holding an active duty — and if the schedule is one a person set up, ask them in a checkpoint first rather than deleting it.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        schedule_id: s("The schedule, from duty_schedule_list."),
+        agent_id: s("Which agent you are. Defaults to the id configured on this connection."),
+      },
+      required: ["schedule_id"],
+    },
+    handler: deleteSchedule,
   },
 ];
 

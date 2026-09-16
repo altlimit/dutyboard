@@ -68,6 +68,7 @@ import {
   reportRequest,
   noteMachineUse,
 } from "./machines.js";
+import { createSchedule, deleteSchedule, listSchedules, syncScheduleZones, tickAllSchedules, updateSchedule } from "./schedules.js";
 import { VERSION } from "./version.js";
 
 
@@ -122,6 +123,11 @@ const ROUTES = {
   "/board/rules/set": setRules,
   "/board/rules/accept": acceptRules,
   "/board/rules/submit": submitRules,
+  "/schedules/list": listSchedules,
+  "/schedules/create": createSchedule,
+  "/schedules/update": updateSchedule,
+  "/schedules/delete": deleteSchedule,
+  "/schedules/sync": syncScheduleZones,
   "/me/access": syncAccess,
   "/projects/create": createProject,
   "/projects/list": listProjects,
@@ -290,6 +296,17 @@ export default {
     try {
       const cfg = configure(env);
       const store = makeStore(env, cfg.datastoreInstance, cfg.datastoreNamespace);
+
+      // The platform's own clock, and the only caller that arrives with no credential and is
+      // believed: `x-ae-trigger` is stripped from every ordinary request before a function sees
+      // it, so it cannot be forged from outside. This is what makes recurring duties appear
+      // without anybody's machine being awake.
+      if (request.headers.get("x-ae-trigger") === "cron") {
+        const at = Date.now();
+        const ran = await tickAllSchedules({ env, cfg, store, publish: makePublisher(env, cfg, "cron") }, at);
+        if (ran.filed || ran.skipped) console.log(`schedules: filed ${ran.filed}, skipped ${ran.skipped}`);
+        return json({ ok: true, ...ran, at });
+      }
 
       const open = PUBLIC_ROUTES[path];
       if (open) {

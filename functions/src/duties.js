@@ -48,6 +48,7 @@ import { resolveProject, projectOfDuty, requireHuman, authorOf, checkAgentId } f
 import { sweepAttachments } from "./attachments.js";
 import { indexFinished, unindexDuties } from "./searching.js";
 import { machinesPresent } from "./live.js";
+import { noteScheduleOutcome } from "./schedules.js";
 
 export const STATUSES = ["queued", "active", "needs_decision", "blocked", "done", "failed"];
 export const PRIORITIES = ["immediate_blocker", "next", "backlog"];
@@ -77,7 +78,7 @@ const MAX_ACTIVE_READ = 50;
 
 /** Priority is an enum to people and a sort key to the scheduler. Alphabetical order of
  *  the names is wrong (`backlog` < `immediate_blocker`), so the rank is stored alongside. */
-const RANK = { immediate_blocker: 0, next: 1, backlog: 2 };
+export const RANK = { immediate_blocker: 0, next: 1, backlog: 2 };
 
 /**
  * The three fields the console's agent strip shows, carried on the event that changed them.
@@ -101,12 +102,12 @@ const agentEvent = (id, activeDutyId, at) => ({ id, active: activeDutyId || null
  * Each refusal names the number and what to do about it, because the caller is usually an
  * agent and "quota exceeded" is not something it can act on.
  */
-const MAX_OPEN_DUTIES = 500;
+export const MAX_OPEN_DUTIES = 500;
 const MAX_THREAD_ENTRIES = 200;
 
 /** Statuses that still need someone. A finished board may hold any number of duties; it is
  *  the UNFINISHED pile that means work is being created faster than it is being done. */
-const UNFINISHED = ["queued", "active", "needs_decision", "blocked"];
+export const UNFINISHED = ["queued", "active", "needs_decision", "blocked"];
 
 /**
  * Who is holding this duty, as a value the datastore can refuse a duplicate of.
@@ -680,7 +681,7 @@ function reservation(ctx, body) {
  * transaction. Not counted against MAX_OPEN_DUTIES: each is bounded by what triggers it (one per
  * board, one per link).
  */
-export function seedDuty(project, { title, brief, kind, priority = "next", reservedFor = null, now = Date.now() }) {
+export function seedDuty(project, { title, brief, kind, priority = "next", reservedFor = null, now = Date.now(), fields = {} }) {
   const id = dutyId();
   const op = putOp("duties", id, {
     project_id: project.key,
@@ -706,6 +707,9 @@ export function seedDuty(project, { title, brief, kind, priority = "next", reser
     lane: null,
     created_at: now,
     updated_at: now,
+    // What filed it, where the caller needs that recorded on the row itself — a recurring duty
+    // carries the occurrence it belongs to, under a unique index, so one occurrence files one duty.
+    ...fields,
   });
   return { id, op };
 }
@@ -886,6 +890,9 @@ async function finishDuty(ctx, body, terminal) {
   // finishing one. This is the moment the outcome summary exists, which is the whole reason
   // a finished duty is worth finding.
   await indexFinished(ctx, duty, project, terminal, summary);
+  // And, if a schedule filed this duty, what it should tell the next run. Same reasoning as the
+  // line above: after the transaction, and unable to fail the finish.
+  await noteScheduleOutcome(ctx, duty, summary);
 
   return { ok: true, status: terminal, duty_id: duty.key, unblocked_duty_id: parent };
 }

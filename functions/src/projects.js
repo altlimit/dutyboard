@@ -202,6 +202,7 @@ export async function deleteProject(ctx, body) {
     duties: await sweep(ctx, "duties", project.key),
     agents: await sweep(ctx, "agents", project.key),
     tokens: await sweep(ctx, "tokens", project.key),
+    schedules: await sweep(ctx, "schedules", project.key),
     // And everyone who was on it, with the board taken back out of their claims.
     members: await sweepMembers(ctx, project.key),
     // And every machine working it, each told so its daemon stops.

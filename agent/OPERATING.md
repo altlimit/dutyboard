@@ -137,6 +137,24 @@ Two kinds of duty are about the project rather than a piece of work in it:
 
 Both have the board to themselves while they run.
 
+## Work that comes round again
+
+Some work is never finished, only due again: a post every Monday, a check of something that
+drifts every month. **`duty_schedule_list`** shows what this board already repeats, and
+**`duty_schedule_create`** makes work recur — a title and brief, plus a five-field cron
+expression read in the board's timezone (`0 9 * * 1` is 9am every Monday). Each duty it files
+carries how the last one turned out, so a recurring writing duty does not write the same thing
+twice.
+
+- Only while you are holding an active duty. A schedule should come out of work you have just
+  done and know will be wanted again; the board records which agent asked for it.
+- Two runs must be at least 15 minutes apart, and a board holds ten schedules.
+- A run that comes round while its last duty is still open files nothing and leaves a note on
+  the open one.
+- Anything that commits the board to work indefinitely is better proposed to a person in a
+  `duty_checkpoint` than decided by you. **`duty_schedule_update`** pauses one with
+  `enabled: false`; **`duty_schedule_delete`** removes it — ask first if a person set it up.
+
 ## Rules the board enforces
 
 - One active duty at a time. Claiming a second returns a `409` naming the one to finish.
@@ -144,6 +162,8 @@ Both have the board to themselves while they run.
 - `duty_complete` needs a non-empty `outcome_summary`.
 - Use `duty_fail` only for work that genuinely cannot be done. Anything a person could
   unblock is a `needs_decision`, not a failure.
+- A schedule can only be written while you hold an active duty, and one occurrence of it files
+  exactly one duty however many things are watching the clock.
 
 ## Reading history
 

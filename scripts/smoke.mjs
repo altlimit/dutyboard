@@ -1194,8 +1194,112 @@ async function main() {
   await call("/machines/revoke", { machine_id: theirMachine.machine_id }, bystanderToken);
   await call("/projects/delete", { project_id: theirBoard, confirm: theirBoard }, bystanderToken);
 
+
+  // --- work that comes round again -----------------------------------------
+  //
+  // A schedule is the one thing here that writes duties with nobody watching, so what is
+  // checked is the whole path: a due schedule files exactly one duty, a second tick over the
+  // same occurrence files nothing, and what the last run learned reaches the next one. The
+  // tick is driven by a machine's poll, which is how a deployment whose function cron was
+  // never set still files its duties.
+  await call("/machines/update", { machine_id: paired.machine_id, paused: false }, human);
+  const weekly = await call(
+    "/schedules/create",
+    { project_id: mBoard, title: "Weekly post", brief: "Write this week's post.", cron: "0 9 * * 1", tz: "America/Chicago", offset_min: -300 },
+    human,
+  );
+  check("a recurring duty can be set up", weekly.schedule.schedule_id.startsWith("sch_"), weekly);
+  check(
+    "and it says when it next comes round, in its own timezone",
+    new Date(weekly.schedule.next_due_at).toISOString().endsWith("T14:00:00.000Z") && weekly.schedule.upcoming.length === 3,
+    weekly.schedule,
+  );
+  const tooOften = await call("/schedules/create", { project_id: mBoard, title: "no", brief: "no", cron: "*/5 * * * *" }, human, { expectStatus: true });
+  check("a repeat faster than a board can work is refused", tooOften.status === 400 && /15/.test(JSON.stringify(tooOften.json)), tooOften.json);
+  const notCron = await call("/schedules/create", { project_id: mBoard, title: "no", brief: "no", cron: "every monday" }, human, { expectStatus: true });
+  check("and so is something that is not a repeat at all", notCron.status === 400 && /five fields/.test(JSON.stringify(notCron.json)), notCron.json);
+  const idleAgent = await call("/schedules/create", { project_id: mBoard, title: "no", brief: "no", cron: "0 9 * * 1" }, rawAgent, { expectStatus: true });
+  check("an agent holding no duty cannot make work recur", idleAgent.status === 403, idleAgent.json);
+
+  // Due a second ago. A person moving the next run is also how the console files one now.
+  const due = () => call("/schedules/update", { schedule_id: weekly.schedule.schedule_id, next_due_at: Date.now() - 1000 }, human);
+  await due();
+  const beforeTick = (await call("/duty/poll", { limit: 10 }, rawAgent)).runnable_duties.length;
+  await call("/machine/poll", {}, mkey);
+  const afterTick = await call("/duty/poll", { limit: 10 }, rawAgent);
+  const filed = afterTick.runnable_duties.find((d) => d.title === "Weekly post");
+  check("a due schedule files its duty on the next tick", !!filed && afterTick.runnable_duties.length === beforeTick + 1, afterTick.runnable_duties);
+  const filedDuty = await call("/duty/get", { duty_id: filed.id }, human);
+  check(
+    "the duty says it recurs, so an agent knows it is not a one-off",
+    /recurring duty \(run 1\)/.test(filedDuty.duty.brief) && /America\/Chicago/.test(filedDuty.duty.brief),
+    filedDuty.duty.brief,
+  );
+
+  // Two ticks over the same occurrence at the same time — the case the unique fire key exists
+  // for. A machine polling while the function's own cron fires is not rare, it is the normal
+  // arrangement, and a duty filed twice a week for a year is a board nobody trusts.
+  await call("/duty/delete", { duty_id: filed.id, confirm: filed.id }, human);
+  await due();
+  await Promise.all([call("/machine/poll", {}, mkey), call("/machine/poll", {}, mkey)]);
+  const raced = await call("/duty/poll", { limit: 10 }, rawAgent);
+  const racedDuties = raced.runnable_duties.filter((d) => d.title === "Weekly post");
+  check("two ticks racing over one occurrence file it once", racedDuties.length === 1, raced.runnable_duties);
+  const refiled = racedDuties[0];
+
+  // The same occurrence, ticked again — and the occurrence after it while the first is open.
+  await call("/machine/poll", {}, mkey);
+  await due();
+  await call("/machine/poll", {}, mkey);
+  const afterSkip = await call("/duty/poll", { limit: 10 }, rawAgent);
+  check(
+    "a run that comes round while the last one is open files nothing",
+    afterSkip.runnable_duties.filter((d) => d.title === "Weekly post").length === 1,
+    afterSkip.runnable_duties,
+  );
+  const skipNote = await call("/duty/thread", { duty_id: refiled.id }, human);
+  check(
+    "and says so on the duty that was still open",
+    skipNote.entries.some((t) => /scheduled run of "Weekly post" came round/.test(t.message)),
+    skipNote.entries.map((t) => t.message),
+  );
+
+  // What this run learned is what the next one starts from.
+  await call("/duty/claim", { duty_id: refiled.id }, rawAgent);
+  await call("/duty/complete", { duty_id: refiled.id, outcome_summary: "Posted 'Rhythm for beginners'; next week is dynamics." }, rawAgent);
+  await due();
+  await call("/machine/poll", {}, mkey);
+  const secondRun = (await call("/duty/poll", { limit: 10 }, rawAgent)).runnable_duties.find((d) => d.title === "Weekly post");
+  const secondDuty = await call("/duty/get", { duty_id: secondRun.id }, human);
+  check(
+    "the next run is told how the last one went",
+    /Rhythm for beginners/.test(secondDuty.duty.brief) && /run 3/.test(secondDuty.duty.brief),
+    secondDuty.duty.brief,
+  );
+  const listed = (await call("/schedules/list", { project_id: mBoard }, human)).schedules.find((x) => x.schedule_id === weekly.schedule.schedule_id);
+  check("the board keeps the count of what it filed and what it skipped", listed.runs === 3 && listed.skipped === 1, listed);
+
+  // The clocks change: whoever has a timezone database says so, and the schedule re-aims.
+  const zonesTold = await call("/schedules/sync", { project_id: mBoard, offsets: { "America/Chicago": -360 } }, mkey, { board: mBoard });
+  const reaimed = (await call("/schedules/list", { project_id: mBoard }, human)).schedules.find((x) => x.schedule_id === weekly.schedule.schedule_id);
+  check(
+    "a clock change moves the run, not the hour it was asked for",
+    zonesTold.updated === 1 && new Date(reaimed.next_due_at).toISOString().endsWith("T15:00:00.000Z"),
+    reaimed,
+  );
+
+  // The cap, driven for real: unattended writers need a wall, not a comment.
+  for (let i = 0; i < 9; i++) {
+    await call("/schedules/create", { project_id: mBoard, title: `filler ${i}`, brief: "filler", cron: "0 4 * * 1" }, human);
+  }
+  const overSchedules = await call("/schedules/create", { project_id: mBoard, title: "one too many", brief: "no", cron: "0 5 * * 1" }, human, { expectStatus: true });
+  check("a board stops taking recurring duties at its limit", overSchedules.status === 400 && /10/.test(JSON.stringify(overSchedules.json)), overSchedules.json);
+  const stopped = await call("/schedules/delete", { schedule_id: weekly.schedule.schedule_id }, human);
+  check("and one can be stopped for good", stopped.ok === true, stopped);
+
   const mRemoved = await call("/projects/delete", { project_id: mBoard, confirm: mBoard }, human);
   check("deleting a board unlinks every machine on it", mRemoved.removed.machine_links === 1, mRemoved.removed);
+  check("and takes its recurring duties with it", mRemoved.removed.schedules === 9, mRemoved.removed);
   const afterBoardGone = await call("/duty/poll", {}, mkey, { expectStatus: true, board: mBoard });
   check("and the machine can no longer act there", afterBoardGone.status === 403, afterBoardGone.json);
 
@@ -1387,6 +1491,11 @@ async function main() {
     "/board/rules/accept": () => ({ project_id: projectId }),
     "/board/rules/submit": (d) => ({ duty_id: d, body: "no" }),
     "/projects/profile": () => ({ project_id: projectId, runner: { parallel: 3 } }),
+    "/schedules/list": () => ({ project_id: projectId }),
+    "/schedules/create": () => ({ project_id: projectId, title: "no", brief: "no", cron: "0 9 * * 1" }),
+    "/schedules/update": () => ({ schedule_id: "sch_nope", project_id: projectId, enabled: false }),
+    "/schedules/delete": () => ({ schedule_id: "sch_nope", project_id: projectId }),
+    "/schedules/sync": () => ({ project_id: projectId, offsets: { UTC: 0 } }),
     "/connect/lookup": () => ({ user_code: "ZZZZ-ZZZZ" }),
     "/connect/approve": () => ({ user_code: "ZZZZ-ZZZZ" }),
     "/connect/deny": () => ({ user_code: "ZZZZ-ZZZZ" }),

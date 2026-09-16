@@ -28,6 +28,7 @@ import { liveConfigured, mintMachineLive, machinesPresent, publishMachine } from
 import { runnableDuties, activeDuties, seedDuty, stripMeta, blockBehindSetup } from "./duties.js";
 import { mergeRunner, profileView } from "./profile.js";
 import { createProjectFor } from "./projects.js";
+import { runDueSchedules } from "./schedules.js";
 
 const PAIRING_TTL_MS = 10 * 60 * 1000;
 const PAIRING_POLL_SECONDS = 3;
@@ -626,6 +627,16 @@ export async function pollMachine(ctx, body) {
   const limit = intIn(body.limit, "limit", 1, 10, 5);
   const links = await myLinks(ctx);
   const projects = await ctx.store.getMany("projects", links.map((l) => l.project_id));
+
+  // Recurring duties, in case nothing else is watching the clock. The function's own cron is what
+  // normally files these, and a deployment provisioned before recurring duties existed has none
+  // until it is provisioned again — so a polling machine files what is due on the boards it works.
+  // Firing twice is not a risk: the occurrence is written under a unique key, so whichever tick
+  // gets there second writes nothing.
+  for (const l of links) {
+    if (!projects.has(l.project_id)) continue;
+    await runDueSchedules(ctx, { projectKey: l.project_id }).catch(() => ({}));
+  }
 
   const boards = await Promise.all(
     links.map(async (l) => {

@@ -75,6 +75,7 @@ export function ulid(now = Date.now()) {
 /** Ids carry a prefix so it is obvious in an agent's transcript what kind of id it is. */
 export const dutyId = () => "duty_" + ulid();
 export const threadId = () => "th_" + ulid();
+export const scheduleId = () => "sch_" + ulid();
 
 /** A URL-safe slug for a project key. */
 export function slugify(s, fallback = "project") {
