@@ -19,6 +19,7 @@
     "demo": "node scripts/demo.mjs",
     "smoke": "node scripts/smoke.mjs",
     "check:cron": "node scripts/cron-check.mjs",
+    "check:session": "node scripts/session-check.mjs",
     "smoke:runner": "node scripts/smoke-runner.mjs"
   },
   "devDependencies": {

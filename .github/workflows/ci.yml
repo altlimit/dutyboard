@@ -39,7 +39,10 @@ jobs:
       # Web Push encryption and VAPID signing, checked against an independent receiver. Nothing else
       # can prove them without a real browser and push service.
       - run: node scripts/webpush-check.mjs
+      # The clock behind recurring duties: cron and timezone arithmetic, on its own.
       - run: node scripts/cron-check.mjs
+      # The console's session: a single-use refresh token, spent by several calls at once.
+      - run: node scripts/session-check.mjs
 
       # Every script parses. They are not imported by either build, so a syntax error in one
       # would otherwise surface the first time someone ran a release step.

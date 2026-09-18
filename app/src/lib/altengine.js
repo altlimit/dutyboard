@@ -17,7 +17,7 @@ import { config } from "../config.js";
 
 const seg = (s) => encodeURIComponent(String(s));
 
-const LS = { id: "dutyboard.id_token", refresh: "dutyboard.refresh_token", user: "dutyboard.user" };
+const LS = { id: "dutyboard.id_token", refresh: "dutyboard.refresh_token", user: "dutyboard.user", exp: "dutyboard.expires_at" };
 
 function loadSession() {
   try {
@@ -25,10 +25,11 @@ function loadSession() {
     return {
       idToken: localStorage.getItem(LS.id) || null,
       refreshToken: localStorage.getItem(LS.refresh) || null,
+      expiresAt: Number(localStorage.getItem(LS.exp)) || 0,
       user: user ? JSON.parse(user) : null,
     };
   } catch {
-    return { idToken: null, refreshToken: null, user: null };
+    return { idToken: null, refreshToken: null, expiresAt: 0, user: null };
   }
 }
 
@@ -38,6 +39,7 @@ function saveSession(s) {
       [LS.id, s.idToken],
       [LS.refresh, s.refreshToken],
       [LS.user, s.user ? JSON.stringify(s.user) : null],
+      [LS.exp, s.expiresAt ? String(s.expiresAt) : null],
     ]) {
       if (v) localStorage.setItem(k, v);
       else localStorage.removeItem(k);
@@ -48,6 +50,21 @@ function saveSession(s) {
 }
 
 let session = loadSession();
+
+// Another tab signed in, signed out, or refreshed. A refresh token is SINGLE USE: the tab that
+// spends it gets a new one and this tab's copy is dead the moment it does. Without this, two open
+// tabs sign each other out an hour in — one refreshes, the other tries its stale token, is refused,
+// and clears the session. localStorage tells every other tab what the new tokens are.
+if (typeof window !== "undefined" && window.addEventListener) {
+  window.addEventListener("storage", (e) => {
+    if (!e || (e.key !== LS.id && e.key !== LS.refresh && e.key !== null)) return;
+    const stored = loadSession();
+    if (stored.idToken === session.idToken && stored.refreshToken === session.refreshToken) return;
+    session = stored;
+    accessChecked = null;
+    notify();
+  });
+}
 
 // Anyone who needs to re-render when the session changes. This file stays free of any
 // framework — `src/lib/session.js` is the thin Vue layer over this — but a module-level
@@ -112,19 +129,34 @@ async function raw(method, url, { body, bearer, headers } = {}) {
  */
 async function authed(method, url, opts = {}) {
   if (!session.idToken) throw new ApiError({ code: "UNAUTHENTICATED", message: "sign in first", status: 401 });
+  // Ask for a new token before the old one dies rather than after. A page opening a board fires
+  // several calls at once; letting them all discover the expiry themselves means several
+  // refreshes of a single-use token, and all but one of them fail.
+  if (expiringSoon() && session.refreshToken) await refresh().catch(() => {});
   try {
     return await raw(method, url, { ...opts, bearer: session.idToken });
   } catch (err) {
     if (err instanceof ApiError && err.status === 401 && session.refreshToken) {
+      const had = session.idToken;
       try {
         await refresh();
-      } catch {
-        clearSession();
-        throw new ApiError({
-          code: "UNAUTHENTICATED",
-          message: "Your session expired. Sign in again.",
-          status: 401,
-        });
+      } catch (refreshErr) {
+        const refused = refreshErr instanceof ApiError && (refreshErr.status === 401 || refreshErr.status === 403);
+        // A refresh that could not be sent at all — offline, the auth instance down — says nothing
+        // about whether the session is still good. Signing someone out for a dropped connection
+        // loses whatever they were in the middle of, so the original failure is what they see.
+        if (!refused) throw err;
+        // Refused. Someone else may still have spent the token first and left a working one
+        // behind — another tab, or a call that raced this one — so what matters is whether the
+        // session moved while we waited, not whose refresh won.
+        if (session.idToken === had) {
+          clearSession();
+          throw new ApiError({
+            code: "UNAUTHENTICATED",
+            message: "Your session expired. Sign in again.",
+            status: 401,
+          });
+        }
       }
       return raw(method, url, { ...opts, bearer: session.idToken });
     }
@@ -132,10 +164,16 @@ async function authed(method, url, opts = {}) {
   }
 }
 
+/** Within a minute of expiry — or already past it. An unknown expiry is not "soon": a session
+ *  stored before this was recorded keeps working on the 401 path below. */
+function expiringSoon() {
+  return !!session.expiresAt && Date.now() > session.expiresAt * 1000 - 60_000;
+}
+
 /** Forget the session locally. No network call: this is used when the credential is
  *  already known to be dead, and telling the server to revoke it would only fail. */
 function clearSession() {
-  session = { idToken: null, refreshToken: null, user: null };
+  session = { idToken: null, refreshToken: null, expiresAt: 0, user: null };
   accessChecked = null;
   saveSession(session);
   notify();
@@ -149,7 +187,7 @@ const authBase = () => `${config.baseUrl}/v1/auth/${seg(config.auth)}`;
 export const authConfig = () => raw("GET", `${authBase()}/config`);
 
 function applyTokens(t) {
-  session = { idToken: t.id_token, refreshToken: t.refresh_token, user: t.user || session.user };
+  session = { idToken: t.id_token, refreshToken: t.refresh_token, expiresAt: Number(t.expires_at) || 0, user: t.user || session.user };
   accessChecked = null; // a new person, or the same one freshly signed in: check again
   saveSession(session);
   notify();
@@ -180,13 +218,31 @@ export async function passwordlessVerify(identifier, code) {
   return { user: applyTokens(t) };
 }
 
-export async function refresh() {
-  if (!session.refreshToken) throw new ApiError({ code: "UNAUTHENTICATED", message: "no refresh token", status: 401 });
-  const t = await raw("POST", `${authBase()}/token/refresh`, { body: { refresh_token: session.refreshToken } });
-  session = { ...session, idToken: t.id_token, refreshToken: t.refresh_token };
-  saveSession(session);
-  notify();
-  return session.idToken;
+/**
+ * Trade the refresh token for a new pair — once at a time.
+ *
+ * The refresh token is SINGLE USE and rotates: spending it returns a new one and kills the old.
+ * So two refreshes with the same token cannot both succeed, and the loser used to clear the
+ * session — which is what an hour-old page full of parallel calls does every time. Everyone who
+ * asks while one is in flight waits for that one instead of starting another.
+ */
+let refreshing = null;
+
+export function refresh() {
+  if (refreshing) return refreshing;
+  if (!session.refreshToken) return Promise.reject(new ApiError({ code: "UNAUTHENTICATED", message: "no refresh token", status: 401 }));
+  refreshing = (async () => {
+    try {
+      const t = await raw("POST", `${authBase()}/token/refresh`, { body: { refresh_token: session.refreshToken } });
+      session = { ...session, idToken: t.id_token, refreshToken: t.refresh_token, expiresAt: Number(t.expires_at) || 0 };
+      saveSession(session);
+      notify();
+      return session.idToken;
+    } finally {
+      refreshing = null;
+    }
+  })();
+  return refreshing;
 }
 
 export async function signOut() {
