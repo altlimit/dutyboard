@@ -407,6 +407,28 @@ func (c *Client) Poll(ctx context.Context) (*Poll, error) {
 	return &p, c.Call(ctx, "/machine/poll", "", map[string]any{"limit": 5}, &p)
 }
 
+// ScheduleZones is the answer to /schedules/sync: what a board believes each of its recurring
+// duties' timezones is worth, so a caller that HAS a timezone database can correct it.
+type ScheduleZones struct {
+	Updated int `json:"updated"`
+	Zones   []struct {
+		TZ        string `json:"tz"`
+		OffsetMin int    `json:"offset_min"`
+		CheckedAt int64  `json:"checked_at"`
+	} `json:"zones"`
+}
+
+// SyncSchedules tells a board what its schedules' zones are worth right now, in minutes from UTC.
+// Sent empty, it only asks.
+func (c *Client) SyncSchedules(ctx context.Context, board string, offsets map[string]int) (*ScheduleZones, error) {
+	var z ScheduleZones
+	body := map[string]any{"project_id": board}
+	if len(offsets) > 0 {
+		body["offsets"] = offsets
+	}
+	return &z, c.Call(ctx, "/schedules/sync", board, body, &z)
+}
+
 // LiveToken is a channel subscribe token.
 type LiveToken struct {
 	Token     string   `json:"token"`

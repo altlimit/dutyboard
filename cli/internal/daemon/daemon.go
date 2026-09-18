@@ -76,6 +76,7 @@ type Daemon struct {
 	access       map[string]accessCheck
 	ghOK         bool
 	ghCheckedAt  time.Time
+	zoneChecked  map[string]time.Time
 	limitedUntil time.Time
 	paused       bool
 
@@ -109,28 +110,29 @@ func New(opt Options) (*Daemon, error) {
 	api.Origin = opt.Config.MachineID
 	logger := log.New(opt.Out, "", log.LstdFlags)
 	return &Daemon{
-		opt:        opt,
-		api:        api,
-		wt:         &worktree.Manager{Root: state.Path("worktrees"), Log: logWriter{logger}, Env: reg.SessionEnv},
-		tools:      reg,
-		log:        logger,
-		exe:        exe,
-		workspaces: map[string]string{},
-		views:      map[string]board.BoardView{},
-		runs:       map[string]*Run{},
-		tokens:     map[string]*Run{},
-		locks:      map[string]*worktree.Lock{},
-		rules:      map[string]rulesEntry{},
-		polled:     map[string]board.PollBoard{},
-		reported:   map[string]string{},
-		reportedAt: map[string]time.Time{},
-		reportDue:  map[string]bool{},
-		requests:   map[string]bool{},
-		problems:   map[string]string{},
-		notices:    map[string]string{},
-		access:     map[string]accessCheck{},
-		wakeCh:     make(chan struct{}, 1),
-		relink:     make(chan struct{}, 1),
+		opt:         opt,
+		api:         api,
+		wt:          &worktree.Manager{Root: state.Path("worktrees"), Log: logWriter{logger}, Env: reg.SessionEnv},
+		tools:       reg,
+		log:         logger,
+		exe:         exe,
+		workspaces:  map[string]string{},
+		views:       map[string]board.BoardView{},
+		runs:        map[string]*Run{},
+		tokens:      map[string]*Run{},
+		locks:       map[string]*worktree.Lock{},
+		rules:       map[string]rulesEntry{},
+		polled:      map[string]board.PollBoard{},
+		reported:    map[string]string{},
+		reportedAt:  map[string]time.Time{},
+		reportDue:   map[string]bool{},
+		zoneChecked: map[string]time.Time{},
+		requests:    map[string]bool{},
+		problems:    map[string]string{},
+		notices:     map[string]string{},
+		access:      map[string]accessCheck{},
+		wakeCh:      make(chan struct{}, 1),
+		relink:      make(chan struct{}, 1),
 	}, nil
 }
 
@@ -385,6 +387,11 @@ func (d *Daemon) onEvent(ev live.Event) {
 		board := strings.TrimPrefix(ev.Channel, "board.")
 		d.mu.Lock()
 		delete(d.rules, board)
+		// A recurring duty that was just written or re-timed has its zone confirmed on the next
+		// pass rather than at the top of the next hour.
+		if ev.Str("what") == "schedules" {
+			delete(d.zoneChecked, board)
+		}
 		d.mu.Unlock()
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -427,6 +434,9 @@ func (d *Daemon) tick(ctx context.Context) error {
 	// Every linked board gets its clone here, before anything is claimed on it — a board linked from
 	// the console, or whose repository just changed, is ready by the time its duties are.
 	d.ensureWorkspaces(ctx)
+	// And its recurring duties keep the hour they were set for: this machine has a timezone
+	// database and the board does not.
+	d.syncZones(ctx, p.Boards)
 	if p.Paused || limited {
 		return nil
 	}

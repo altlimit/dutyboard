@@ -467,6 +467,12 @@ input[aria-invalid="true"], textarea[aria-invalid="true"] { border-color: var(--
 .draft-files { list-style: none; margin: 0.5rem 0 0; padding: 0; display: grid; gap: 0.3rem; }
 .draft-files li { display: flex; gap: 0.6rem; align-items: baseline; flex-wrap: wrap; }
 .draft-files .mono { overflow-wrap: anywhere; }
+/* Recurring duties: one block each, so a schedule's repeat, its next run and what it has filed
+   read as one thing rather than as a row of columns that wrap badly on a phone. */
+.schedules { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.9rem; }
+.schedules li { padding-bottom: 0.9rem; border-bottom: 1px solid var(--border); }
+.schedules li:last-child { padding-bottom: 0; border-bottom: 0; }
+
 .members { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.45rem; }
 .members li { display: flex; gap: 0.6rem; align-items: baseline; flex-wrap: wrap; }
 .members li > span:first-child { flex: 1 1 14rem; overflow-wrap: anywhere; }

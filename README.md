@@ -486,6 +486,33 @@ a machine cannot start, because a secret is not set there or its command is not 
 out of that machine's sessions and named on the Machines page. Editing the list is the owner's, like
 every other part of the profile that makes a machine run something.
 
+## Work that comes round again
+
+Some work is never finished, only due again: a post every Monday, a check of something that drifts
+every month. A board's **Settings** page has them under **Recurring duties** — a title, a brief, and
+a repeat (every weekday, every week on a day, every month on a date, or a cron expression) in your
+own timezone. An agent can set one up too, while it is holding a duty, with `duty_schedule_create`.
+
+When one comes round a fresh duty is filed, carrying how the last one went, so a recurring writing
+duty does not write the same thing twice. A run that comes round while its last duty is still open
+files nothing and leaves a note on the open one — a stuck duty cannot become a pile of twelve. Ten
+schedules to a board, and two runs at least fifteen minutes apart.
+
+Two things watch the clock, and either is enough: the function has a cron of its own, set when the
+deployment is provisioned, and a machine's poll ticks the same code — so a deployment made before
+this existed keeps working, and gains the cron the next time you provision. Both can fire at once
+without filing anything twice: the duty carries the occurrence that filed it under a unique index,
+so one occurrence files one duty.
+
+The timezone is the interesting part. A cron expression is written in local time, and the board's
+function cannot convert a zone to an offset at all — the emulator's JavaScript runtime has no
+timezone support, and a schedule that behaves differently there than hosted is worse than no
+emulator. So the board stores the offset as a number, and the two things that *do* carry a timezone
+database keep it honest: every machine working the board (Go's tzdata, checked hourly and whenever
+a schedule changes) and the console while it is open. That is what keeps 9am at 9am through a clock
+change. A board nobody has opened and no machine has polled since the clocks moved runs an hour out
+once, and is put right on the next check.
+
 ## Notifications
 
 When a duty lands in **Needs you**, everyone on its board is told — except whoever parked it. The
@@ -595,6 +622,9 @@ only when you first try it hosted.
 | `/board/profile/propose` | agent | While holding a `setup` duty: record the toolchain, test command, deploy method and worktree prep — and each other repository's, under `repos`. |
 | `/board/rules/submit` | agent | While holding a `rules` duty: hand in proposed rules, as a draft. |
 | `/board/rules/set` · `/board/rules/accept` | owner | Write the rules by hand, or put the draft in force. |
+| `/schedules/list` | any | The board's recurring duties, what each repeats and when it next comes round. |
+| `/schedules/create` · `/schedules/update` · `/schedules/delete` | human, or an agent holding a duty | Make work recur, change or pause it, stop it. `next_due_at` on an update moves the next run, which is how the console files one now. |
+| `/schedules/sync` | any | Tell the board what its schedules' timezones are worth in minutes from UTC, and read back what it believes. |
 | `/me/access` | human | Repair this person's `boards` claim; says whether their token is behind. |
 | `/projects/*` | human | `create` (optionally with a `profile` and `runner`), `list` (owned and shared), `rename`, `profile` and `delete` (owner only). |
 | `/tokens/*` | owner | `mint`, `list`, `revoke`. |
@@ -746,6 +776,5 @@ checked, not assumed.
 
 ## What this is not
 
-No sub-boards, no scheduled duties, and no notifications beyond "a duty needs you" — no email, no
-digest. Deliberately: the point is the loop, and each of those is a real feature rather than a
-corner to cut.
+No sub-boards, and no notifications beyond "a duty needs you" — no email, no digest. Deliberately:
+the point is the loop, and each of those is a real feature rather than a corner to cut.

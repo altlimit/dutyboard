@@ -1280,6 +1280,12 @@ async function main() {
   check("the board keeps the count of what it filed and what it skipped", listed.runs === 3 && listed.skipped === 1, listed);
 
   // The clocks change: whoever has a timezone database says so, and the schedule re-aims.
+  const asking = await call("/schedules/sync", { project_id: mBoard }, mkey, { board: mBoard });
+  check(
+    "a machine can ask what zones a board keeps time in, and what it believes they are worth",
+    asking.updated === 0 && asking.zones.some((z) => z.tz === "America/Chicago" && z.offset_min === -300),
+    asking.zones,
+  );
   const zonesTold = await call("/schedules/sync", { project_id: mBoard, offsets: { "America/Chicago": -360 } }, mkey, { board: mBoard });
   const reaimed = (await call("/schedules/list", { project_id: mBoard }, human)).schedules.find((x) => x.schedule_id === weekly.schedule.schedule_id);
   check(

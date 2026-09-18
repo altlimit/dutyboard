@@ -369,10 +369,15 @@ export async function syncScheduleZones(ctx, body) {
   });
   const now = Date.now();
   const ops = [];
-  const zones = new Set();
+  // What the board believes each zone is worth, so a caller with a real timezone database can
+  // send corrections only when it disagrees — and can ask, by sending no offsets at all.
+  const zones = new Map();
   for (const row of rows) {
     const zone = row.tz || "UTC";
-    zones.add(zone);
+    const believed = zones.get(zone);
+    if (!believed || (row.offset_checked_at || 0) > (believed.checked_at || 0)) {
+      zones.set(zone, { tz: zone, offset_min: row.offset_min || 0, checked_at: row.offset_checked_at || null });
+    }
     if (!has(offsets, zone)) continue;
     const offset = offsetOf(offsets[zone]);
     const changed = offset !== (row.offset_min || 0);
@@ -387,9 +392,10 @@ export async function syncScheduleZones(ctx, body) {
       }
     }
     if (changed || !row.offset_checked_at) ops.push(putOp("schedules", row.key, next));
+    zones.set(zone, { tz: zone, offset_min: offset, checked_at: now });
   }
   if (ops.length) await ctx.store.transaction(ops);
-  return { ok: true, project_id: project.key, updated: ops.length, zones: [...zones] };
+  return { ok: true, project_id: project.key, updated: ops.length, zones: [...zones.values()] };
 }
 
 /** The fields a create and an update both work out, so the two cannot drift apart. */

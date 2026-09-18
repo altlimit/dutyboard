@@ -55,6 +55,18 @@ async function call(path, body, token, { board } = {}) {
 const sh = (cmd, args, cwd) => execFileSync(cmd, args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+/** What a zone is worth right now, in minutes from UTC — the same number the daemon works out
+ *  from Go's timezone database, arrived at independently here so the test is not the code. */
+function tzOffsetMinutes(tz, when = new Date()) {
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat("en-US", { timeZone: tz, hour12: false, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" })
+      .formatToParts(when)
+      .map((p) => [p.type, p.value]),
+  );
+  const local = Date.UTC(+parts.year, +parts.month - 1, +parts.day, +parts.hour % 24, +parts.minute, +parts.second);
+  return Math.round((local - Math.floor(when.getTime() / 1000) * 1000) / 60000);
+}
+
 async function until(label, probe, ms = 90_000) {
   const deadline = Date.now() + ms;
   for (;;) {
@@ -248,6 +260,34 @@ async function main() {
     check("the daemon worked from its own clone, in its projects folder", clones.length === 1 && existsSync(join(boardFolder, "local")), readdirSync(boardFolder));
     check("and never touched the person's checkout", !sh("git", ["branch", "--list", "duty/*"], linked), sh("git", ["branch", "--list"], linked));
     check("commits are made as the board's author", sh("git", ["--git-dir", remote, "log", "-1", "--format=%ae", "main"]) === "runner-bot@example.com");
+
+    // --- the clocks a board keeps time by ---------------------------------------
+    //
+    // A board's function cannot convert a timezone to an offset — the runtime under it has no
+    // timezone support — so it stores a number and trusts a machine to keep it right. This
+    // machine can: Go carries the timezone database. Set one deliberately wrong and watch the
+    // daemon put it back, which is what keeps "9am every Monday" at 9am through a clock change.
+    // Adelaide is +9:30 or +10:30, so a wrong answer cannot pass by rounding to the hour.
+    const zone = "Australia/Adelaide";
+    const right = tzOffsetMinutes(zone);
+    const recurring = await call(
+      "/schedules/create",
+      { project_id: boardId, title: "Weekly sweep", brief: "Look over the board.", cron: "0 9 * * 1", tz: zone, offset_min: 0 },
+      human,
+    );
+    const corrected = await until("zone corrected", async () => {
+      const list = await call("/schedules/list", { project_id: boardId }, human);
+      const row = list.schedules.find((x) => x.schedule_id === recurring.schedule.schedule_id);
+      return row && row.offset_min !== 0 ? row : null;
+    }, 30_000);
+    check("the daemon corrects the offset a board keeps a recurring duty on", corrected?.offset_min === right, { got: corrected?.offset_min, want: right });
+    const due = corrected && new Date(corrected.next_due_at);
+    const wantMinute = (9 * 60 - right + 1440) % 1440;
+    check(
+      "and the run moves, so the hour asked for is the hour it happens",
+      due && due.getUTCHours() * 60 + due.getUTCMinutes() === wantMinute,
+      { at: due && due.toISOString(), want: `${String(Math.floor(wantMinute / 60)).padStart(2, "0")}:${String(wantMinute % 60).padStart(2, "0")} UTC` },
+    );
 
     // --- parked, answered, resumed ----------------------------------------------
     const parked = await until("parked", async () => {

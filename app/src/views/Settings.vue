@@ -7,6 +7,7 @@ import { config } from "../config.js";
 import { ago } from "../lib/duties.js";
 import { agentLabel, profileDraft, profilePayload, runStateLabel } from "../lib/runners.js";
 import ProfileForm from "../components/ProfileForm.vue";
+import { DAYS, REPEATS, browserZone, repeatText, runText, scheduleDraft, schedulePayload, zoneOffsets } from "../lib/schedules.js";
 
 const props = defineProps({ projectId: { type: String, required: true } });
 const router = useRouter();
@@ -27,6 +28,106 @@ async function saveProfile() {
     await api("/projects/profile", { project_id: props.projectId, ...profilePayload(profile.value) });
     hasProfile.value = true;
     profileNotice.value = "Saved. Machines working this board use it from their next duty.";
+  } catch (err) {
+    error.value = err.message;
+  } finally {
+    busy.value = false;
+  }
+}
+
+// Recurring duties: work that comes round again rather than being remembered by nobody.
+//
+// The board's function cannot convert a timezone to an offset, so this page — which can — tells it
+// what the zones are worth whenever it loads. A machine's daemon does the same; they agree, and a
+// correction that changes nothing writes nothing.
+const schedules = ref([]);
+const scheduleLimit = ref(0);
+const scheduleForm = ref(null); // a draft while adding or editing, null when neither
+const scheduleNotice = ref("");
+const myZone = browserZone();
+
+async function loadSchedules() {
+  const res = await api("/schedules/list", { project_id: props.projectId });
+  schedules.value = res.schedules || [];
+  scheduleLimit.value = res.limit || 0;
+  // Only the owner's call is accepted, and only a zone this browser knows is worth sending.
+  if (isOwner.value && schedules.value.length) {
+    const told = await api("/schedules/sync", { project_id: props.projectId, offsets: zoneOffsets(schedules.value) }).catch(() => null);
+    if (told && told.updated) {
+      const res2 = await api("/schedules/list", { project_id: props.projectId }).catch(() => null);
+      if (res2) schedules.value = res2.schedules || [];
+    }
+  }
+}
+
+function newSchedule() {
+  scheduleForm.value = scheduleDraft();
+  scheduleNotice.value = "";
+}
+
+function editSchedule(row) {
+  scheduleForm.value = scheduleDraft(row);
+  scheduleNotice.value = "";
+}
+
+async function saveSchedule() {
+  const draft = scheduleForm.value;
+  busy.value = true;
+  error.value = "";
+  scheduleNotice.value = "";
+  try {
+    const payload = schedulePayload(draft);
+    if (draft.schedule_id) {
+      await api("/schedules/update", { project_id: props.projectId, schedule_id: draft.schedule_id, ...payload });
+    } else {
+      await api("/schedules/create", { project_id: props.projectId, ...payload });
+    }
+    scheduleForm.value = null;
+    await loadSchedules();
+  } catch (err) {
+    error.value = err.message;
+  } finally {
+    busy.value = false;
+  }
+}
+
+async function toggleSchedule(row) {
+  busy.value = true;
+  error.value = "";
+  try {
+    await api("/schedules/update", { project_id: props.projectId, schedule_id: row.schedule_id, enabled: !row.enabled });
+    await loadSchedules();
+  } catch (err) {
+    error.value = err.message;
+  } finally {
+    busy.value = false;
+  }
+}
+
+/** File this one's duty now, by moving its next run to this moment. The next tick picks it up —
+ *  within a minute, or on the next poll of a machine working the board. */
+async function runScheduleNow(row) {
+  busy.value = true;
+  error.value = "";
+  scheduleNotice.value = "";
+  try {
+    await api("/schedules/update", { project_id: props.projectId, schedule_id: row.schedule_id, next_due_at: Date.now() });
+    scheduleNotice.value = `"${row.title}" is due now — its duty appears on the board within a minute.`;
+    await loadSchedules();
+  } catch (err) {
+    error.value = err.message;
+  } finally {
+    busy.value = false;
+  }
+}
+
+async function deleteSchedule(row) {
+  if (!confirm(`Stop "${row.title}" repeating? Duties it has already filed stay on the board.`)) return;
+  busy.value = true;
+  error.value = "";
+  try {
+    await api("/schedules/delete", { project_id: props.projectId, schedule_id: row.schedule_id });
+    await loadSchedules();
   } catch (err) {
     error.value = err.message;
   } finally {
@@ -282,6 +383,7 @@ async function load() {
       loadMembers(),
       loadRules(),
       loadMachines(),
+      loadSchedules(),
       // Tokens are the owner's. A member is refused them, so they are not asked for.
       isOwner.value ? api("/tokens/list", { project_id: props.projectId }).then((l) => (tokens.value = l.tokens)) : null,
     ]);
@@ -482,6 +584,113 @@ onUnmounted(() => {
       <ProfileForm v-model="profile" id-prefix="set" :disabled="!isOwner || busy" />
       <div v-if="isOwner"><button class="primary" type="submit" :disabled="busy">Save</button></div>
     </form>
+
+
+    <section v-if="role" aria-labelledby="repeat-h" class="panel stack">
+      <h2 id="repeat-h" style="margin: 0">Recurring duties</h2>
+      <p class="muted small" style="margin: 0">
+        Work that is never finished, only due again — a post every Monday, a check of something that
+        drifts every month. Each one files a fresh duty when it comes round, carrying how the last
+        one went. A run that comes round while its last duty is still open is skipped, so a stuck
+        duty cannot become a pile.
+      </p>
+
+      <p v-if="scheduleNotice" class="notice" role="status" style="margin: 0">{{ scheduleNotice }}</p>
+
+      <ul v-if="schedules.length" class="schedules">
+        <li v-for="s in schedules" :key="s.schedule_id" class="stack" style="gap: 0.35rem">
+          <div class="row" style="justify-content: space-between; align-items: baseline">
+            <strong>{{ s.title }}</strong>
+            <span v-if="!s.enabled" class="badge">paused</span>
+          </div>
+          <span class="muted small">
+            {{ repeatText(s) }}<template v-if="s.tz && s.tz !== 'UTC'">, {{ s.tz }}</template>
+            <template v-if="s.enabled && s.next_due_at"> — next {{ runText(s.next_due_at, s.tz) }}</template>
+            <template v-if="s.origin === 'agent'"> · set up by {{ s.created_by_name || "an agent" }}</template>
+          </span>
+          <span v-if="s.runs || s.skipped" class="hint" style="margin: 0">
+            Filed {{ s.runs }}<template v-if="s.runs === 1"> duty</template><template v-else> duties</template>
+            <template v-if="s.last_fired_at">, last {{ ago(s.last_fired_at) }}</template>
+            <template v-if="s.skipped">; {{ s.skipped }} run<template v-if="s.skipped !== 1">s</template> skipped while the one before was still open</template>.
+          </span>
+          <div v-if="isOwner" class="row">
+            <button type="button" class="link small" :disabled="busy" @click="editSchedule(s)">Edit</button>
+            <button type="button" class="link small" :disabled="busy" @click="toggleSchedule(s)">{{ s.enabled ? "Pause" : "Start again" }}</button>
+            <button v-if="s.enabled" type="button" class="link small" :disabled="busy" @click="runScheduleNow(s)">File one now</button>
+            <button type="button" class="link small" :disabled="busy" @click="deleteSchedule(s)">Stop<span class="sr-only"> {{ s.title }}</span></button>
+          </div>
+        </li>
+      </ul>
+      <p v-else class="muted small" style="margin: 0">Nothing repeats on this board yet.</p>
+
+      <form v-if="scheduleForm" class="stack" @submit.prevent="saveSchedule">
+        <div class="field">
+          <label for="sch-title">Title</label>
+          <input id="sch-title" v-model="scheduleForm.title" required maxlength="200" placeholder="This week's post" />
+        </div>
+        <div class="field">
+          <label for="sch-brief">What needs doing, every time</label>
+          <textarea id="sch-brief" v-model="scheduleForm.brief" required rows="4" maxlength="4000" placeholder="Written for an agent with no other context — what to write, where it goes, what done looks like." />
+        </div>
+        <div class="field">
+          <label for="sch-repeat">Repeat</label>
+          <select id="sch-repeat" v-model="scheduleForm.repeat">
+            <option v-for="r in REPEATS" :key="r.key" :value="r.key">{{ r.label }} — {{ r.hint }}</option>
+          </select>
+        </div>
+        <div v-if="scheduleForm.repeat === 'weekly'" class="field">
+          <label for="sch-day">On</label>
+          <select id="sch-day" v-model.number="scheduleForm.day">
+            <option v-for="d in DAYS" :key="d.value" :value="d.value">{{ d.label }}</option>
+          </select>
+        </div>
+        <div v-if="scheduleForm.repeat === 'monthly'" class="field">
+          <label for="sch-date">On the</label>
+          <input id="sch-date" v-model.number="scheduleForm.date" type="number" min="1" max="28" />
+          <p class="hint" style="margin: 0">1 to 28, so it comes round in every month.</p>
+        </div>
+        <div v-if="scheduleForm.repeat !== 'custom'" class="field">
+          <label for="sch-time">At</label>
+          <input id="sch-time" v-model="scheduleForm.time" type="time" required />
+        </div>
+        <div v-else class="field">
+          <label for="sch-cron">Cron expression</label>
+          <input id="sch-cron" v-model="scheduleForm.cron" class="mono" required maxlength="120" placeholder="0 9 * * 1" />
+          <p class="hint" style="margin: 0">
+            Minute, hour, day of the month, month, day of the week — read in the timezone below, not in UTC.
+            Two runs must be at least 15 minutes apart.
+          </p>
+        </div>
+        <div class="field">
+          <label for="sch-tz">Timezone</label>
+          <input id="sch-tz" v-model="scheduleForm.tz" maxlength="64" :placeholder="myZone" />
+          <p class="hint" style="margin: 0">
+            This browser's is <strong>{{ myZone }}</strong>. The hour you ask for is kept through a clock
+            change: this page and every machine working the board tell it what the zone is worth.
+          </p>
+        </div>
+        <div class="field">
+          <label for="sch-priority">Each duty arrives as</label>
+          <select id="sch-priority" v-model="scheduleForm.priority">
+            <option value="next">Next — real work, in the queue</option>
+            <option value="backlog">Backlog — worth doing eventually</option>
+            <option value="immediate_blocker">Immediate blocker — ahead of everything</option>
+          </select>
+        </div>
+        <div class="row">
+          <button class="primary" type="submit" :disabled="busy || !scheduleForm.title.trim() || !scheduleForm.brief.trim()">
+            {{ scheduleForm.schedule_id ? "Save" : "Make it recur" }}
+          </button>
+          <button type="button" :disabled="busy" @click="scheduleForm = null">Cancel</button>
+        </div>
+      </form>
+      <div v-else-if="isOwner">
+        <button type="button" :disabled="busy || schedules.length >= scheduleLimit" @click="newSchedule">Add a recurring duty</button>
+        <p v-if="scheduleLimit && schedules.length >= scheduleLimit" class="hint" style="margin: 0.4rem 0 0">
+          A board holds {{ scheduleLimit }}. Stop one you no longer want first.
+        </p>
+      </div>
+    </section>
 
     <section v-if="role" aria-labelledby="members-h" class="panel stack">
       <h2 id="members-h" style="margin: 0">Members</h2>
