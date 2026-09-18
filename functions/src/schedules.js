@@ -26,11 +26,12 @@
 // through /schedules/sync. Until one of them does, a clock change makes a schedule an hour early
 // or late, once — which is why the console shows when the offset was last confirmed.
 
-import { badRequest, forbidden, notFound, str, oneOf, clip } from "./http.js";
+import { badRequest, forbidden, notFound, str, oneOf, intIn, clip } from "./http.js";
 import { scheduleId } from "./ids.js";
 import { putOp } from "./store.js";
 import { requireHuman, resolveProject } from "./identity.js";
-import { PRIORITIES, RANK, UNFINISHED, MAX_OPEN_DUTIES, seedDuty } from "./duties.js";
+import { PRIORITIES, RANK, UNFINISHED, MAX_OPEN_DUTIES, seedDuty, stripMeta } from "./duties.js";
+import { notifyNeedsYou } from "./notify.js";
 
 /**
  * Bounds, in the spirit of the ones in duties.js: they exist to protect the bill from software
@@ -45,6 +46,14 @@ const MAX_PER_TICK = 25;
 /** How far back a schedule catches up. A board that was down for a week files today's duty, not
  *  last Tuesday's — a missed occurrence is missed, not queued. */
 const CATCH_UP_MS = 60 * 60 * 1000;
+/**
+ * Skipped runs in a row before the board asks about it.
+ *
+ * A schedule whose duty never gets finished skips for ever, quietly: the counter climbs and the
+ * only sign is a note on a duty nobody is reading. Three is one that could be a busy week and two
+ * that could not.
+ */
+const SKIPS_BEFORE_ASKING = 3;
 /** Offsets outside this are not a timezone; UTC-12 to UTC+14 is the real range. */
 const MIN_OFFSET = -12 * 60;
 const MAX_OFFSET = 14 * 60;
@@ -231,6 +240,9 @@ export function scheduleView(row, now = Date.now()) {
     offset_min: row.offset_min || 0,
     offset_checked_at: row.offset_checked_at || null,
     enabled: !!row.enabled,
+    // Why it is off, when the board turned it off itself rather than a person pausing it.
+    disabled_reason: row.disabled_reason || null,
+    skips_in_a_row: row.skips_in_a_row || 0,
     next_due_at: row.enabled ? row.next_due_at : null,
     upcoming,
     moved_at: row.moved_at || null,
@@ -359,11 +371,14 @@ export async function listSchedules(ctx, body) {
  */
 export async function scheduleHistory(ctx, body) {
   const { row } = await loadSchedule(ctx, body.schedule_id);
-  const limit = Math.min(Math.max(Number(body.limit) || 10, 1), 50);
-  const { rows } = await ctx.store.query("duties", {
+  // A page at a time, always. A schedule that has run every weekday for two years has five hundred
+  // duties behind it, and "read them all" is not a request this answers however it is asked.
+  const limit = intIn(body.limit, "limit", 1, 50, 10);
+  const { rows, cursor } = await ctx.store.query("duties", {
     where: [{ field: "schedule_id", op: "=", value: row.key }],
     order: [{ field: "created_at", dir: "desc" }],
     limit,
+    ...(body.cursor ? { cursor: str(body.cursor, "cursor", { max: 2000 }) } : {}),
   });
   return {
     schedule_id: row.key,
@@ -374,6 +389,8 @@ export async function scheduleHistory(ctx, body) {
       created_at: d.created_at,
       outcome_summary: d.outcome_summary ? clip(d.outcome_summary, 400) : null,
     })),
+    // Present only when there is another page; a caller that ignores it has read a bounded amount.
+    next_cursor: rows.length === limit ? cursor || null : null,
   };
 }
 
@@ -553,7 +570,15 @@ async function fireSchedule(ctx, row, now) {
   try {
     cron = parseCron(row.cron);
   } catch (err) {
-    await ctx.store.putOne("schedules", row.key, { ...strip(row), enabled: false, updated_at: now });
+    // Off, and on the record. A schedule that stops with no reason on screen is the same problem
+    // as one that never stops: nobody can tell what happened by looking.
+    await ctx.store.putOne("schedules", row.key, {
+      ...strip(row),
+      enabled: false,
+      disabled_reason: `its repeat could not be read: ${clip(String((err && err.message) || "unreadable"), 300)}`,
+      disabled_at: now,
+      updated_at: now,
+    });
     console.log(`schedules: ${row.key} turned off, its repeat is unreadable:`, err && err.message);
     return "off";
   }
@@ -568,12 +593,21 @@ async function fireSchedule(ctx, row, now) {
   if (open) {
     // The last one it filed is still going. Nothing new — and a note on the open duty, so the
     // person looking at it knows a run went by rather than wondering why it never came.
+    const inARow = (row.skips_in_a_row || 0) + 1;
+    // After a few in a row, the board stops taking it quietly. A schedule skipping for ever is
+    // indistinguishable, from the outside, from one that never fired at all.
+    const ask = inARow >= SKIPS_BEFORE_ASKING && (open.status === "queued" || open.status === "blocked");
+    const question =
+      `"${clip(row.title, 120)}" has skipped ${inARow} runs in a row, because this duty — the one it ` +
+      `filed last — is still open. Finish it, delete it, or pause the schedule; until one of those, ` +
+      `nothing new is filed.`;
     const ops = [
       putOp("schedules", row.key, {
         ...strip(row),
         next_due_at: nextDue,
         last_occurrence: fireKey(row.key, due),
         skipped: (row.skipped || 0) + 1,
+        skips_in_a_row: inARow,
         updated_at: now,
       }),
       // A deterministic key, so two ticks racing over one skipped occurrence leave one note
@@ -584,16 +618,37 @@ async function fireSchedule(ctx, row, now) {
         owner_uid: row.owner_uid,
         author_type: "agent",
         author_id: "DutyBoard",
-        kind: "note",
-        message:
-          `A scheduled run of "${clip(row.title, 120)}" came round while this duty was still ` +
-          `${open.status === "queued" ? "waiting" : open.status.replace("_", " ")}, so no new duty was filed. ` +
-          `The next run is ${nextDue ? new Date(nextDue).toISOString() : "not scheduled"}.`,
-        metadata: { schedule_id: row.key, skipped_at: due },
+        kind: ask ? "question" : "note",
+        message: ask
+          ? question
+          : `A scheduled run of "${clip(row.title, 120)}" came round while this duty was still ` +
+            `${open.status === "queued" ? "waiting" : open.status.replace("_", " ")}, so no new duty was filed. ` +
+            `The next run is ${nextDue ? new Date(nextDue).toISOString() : "not scheduled"}.`,
+        metadata: { schedule_id: row.key, skipped_at: due, skips_in_a_row: inARow },
         created_at: now,
       }),
     ];
+    if (ask) {
+      // Only a duty nobody is working is parked: interrupting a session that is mid-duty to say
+      // "this duty is taking a while" would be the board making the problem it is reporting.
+      ops.push(
+        putOp("duties", open.key, {
+          ...stripMeta(open),
+          status: "needs_decision",
+          last_question: question,
+          last_resolution: null,
+          holder: null,
+          lane: null,
+          updated_at: now,
+        }),
+      );
+    }
     await ctx.store.transaction(ops);
+    if (ask) {
+      const project = { key: row.project_id, owner_uid: row.owner_uid };
+      await ctx.publish(row.project_id, open.key, { t: "duty", id: open.key, status: "needs_decision" });
+      await notifyNeedsYou(ctx, project, { ...open, status: "needs_decision" }, question);
+    }
     return "skipped";
   }
 
@@ -640,6 +695,7 @@ async function fireSchedule(ctx, row, now) {
       next_due_at: nextDue,
       last_occurrence: fireKey(row.key, due),
       last_fired_at: now,
+      skips_in_a_row: 0,
       last_duty_id: id,
       runs,
       updated_at: now,

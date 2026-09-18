@@ -151,6 +151,9 @@ twice.
 - Two runs must be at least 15 minutes apart, and a board holds ten schedules.
 - A run that comes round while its last duty is still open files nothing and leaves a note on
   the open one.
+- **`duty_schedule_history`** shows what one has actually filed, newest first, with how each run
+  went — a page at a time, so pass `cursor` from `next_cursor` for older ones rather than asking
+  for everything.
 - Anything that commits the board to work indefinitely is better proposed to a person in a
   `duty_checkpoint` than decided by you. **`duty_schedule_update`** pauses one with
   `enabled: false`; **`duty_schedule_delete`** removes it — ask first if a person set it up.

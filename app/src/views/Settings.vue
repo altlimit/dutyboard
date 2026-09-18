@@ -51,13 +51,22 @@ const zoneKnown = computed(() => !scheduleForm.value || knownZone(scheduleForm.v
 /** What one schedule has filed, once someone asks. Keyed by schedule id. */
 const history = ref({});
 
-async function showHistory(row) {
-  if (history.value[row.schedule_id]) {
+/** A page of what a schedule filed. `more` pages on from the cursor rather than asking for
+ *  everything a schedule has ever done — a daily one has hundreds behind it. */
+async function showHistory(row, { more = false } = {}) {
+  const had = history.value[row.schedule_id];
+  if (had && !more) {
     history.value = { ...history.value, [row.schedule_id]: null };
     return;
   }
-  const res = await api("/schedules/history", { project_id: props.projectId, schedule_id: row.schedule_id, limit: 10 }).catch(() => ({ duties: [] }));
-  history.value = { ...history.value, [row.schedule_id]: res.duties || [] };
+  const res = await api("/schedules/history", {
+    project_id: props.projectId,
+    schedule_id: row.schedule_id,
+    limit: 10,
+    ...(more && had ? { cursor: had.cursor } : {}),
+  }).catch(() => ({ duties: [] }));
+  const duties = [...(more && had ? had.duties : []), ...(res.duties || [])];
+  history.value = { ...history.value, [row.schedule_id]: { duties, cursor: res.next_cursor || null } };
 }
 
 async function loadSchedules() {
@@ -632,8 +641,15 @@ onUnmounted(() => {
             No machine or browser has confirmed what {{ s.tz }} is worth yet, so this is running on UTC
             until one does.
           </p>
-          <ul v-if="history[s.schedule_id] && history[s.schedule_id].length" class="members">
-            <li v-for="d in history[s.schedule_id]" :key="d.duty_id">
+          <p v-if="s.disabled_reason" class="hint" style="margin: 0; color: var(--danger)">
+            The board stopped this one: {{ s.disabled_reason }} Fix the repeat and start it again.
+          </p>
+          <p v-else-if="s.skips_in_a_row >= 2" class="hint" style="margin: 0">
+            {{ s.skips_in_a_row }} runs in a row skipped — the duty it filed last is still open.
+            Finish it, delete it, or pause this schedule.
+          </p>
+          <ul v-if="history[s.schedule_id] && history[s.schedule_id].duties.length" class="members">
+            <li v-for="d in history[s.schedule_id].duties" :key="d.duty_id">
               <span>
                 <router-link :to="{ name: 'duty', params: { projectId, dutyId: d.duty_id } }">{{ d.title }}</router-link>
                 <span class="muted small members__id">{{ statusLabel(d.status) }}, {{ ago(d.created_at) }}</span>
@@ -644,6 +660,15 @@ onUnmounted(() => {
           <div class="row">
             <button v-if="s.runs" type="button" class="link small" :disabled="busy" @click="showHistory(s)">
               {{ history[s.schedule_id] ? "Hide what it filed" : "What it filed" }}
+            </button>
+            <button
+              v-if="history[s.schedule_id] && history[s.schedule_id].cursor"
+              type="button"
+              class="link small"
+              :disabled="busy"
+              @click="showHistory(s, { more: true })"
+            >
+              Older
             </button>
           </div>
           <div v-if="isOwner" class="row">

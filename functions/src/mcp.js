@@ -20,7 +20,7 @@ import { HttpError, json, readBoundedText } from "./http.js";
 import { pollDuties, claimDuty, enqueueDuty, checkpointDuty, completeDuty, failDuty, listThread, PRIORITIES, THREAD_KINDS } from "./duties.js";
 import { attachToDuty, listAttachments, MAX_BYTES, MAX_INLINE_BYTES } from "./attachments.js";
 import { searchDuties } from "./searching.js";
-import { createSchedule, deleteSchedule, listSchedules, updateSchedule } from "./schedules.js";
+import { createSchedule, deleteSchedule, listSchedules, scheduleHistory, updateSchedule } from "./schedules.js";
 import { getProfile, proposeProfile, getRules, submitRules, DEPLOY_METHODS } from "./profile.js";
 import { VERSION } from "./version.js";
 
@@ -369,6 +369,22 @@ const TOOLS = [
       required: ["title", "brief", "cron"],
     },
     handler: createSchedule,
+  },
+  {
+    name: "duty_schedule_history",
+    title: "What a recurring duty has filed",
+    description:
+      "The duties one schedule has already filed, newest first, with how each one went — so a recurring duty can see what the last few runs actually did rather than only the summary in its own brief. A page at a time: pass `cursor` from `next_cursor` for older ones, and stop when there is no cursor.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        schedule_id: s("The schedule, from duty_schedule_list."),
+        limit: { type: "integer", description: "How many to return (1-50, default 10).", minimum: 1, maximum: 50 },
+        cursor: s("From a previous answer's next_cursor, for the page after it."),
+      },
+      required: ["schedule_id"],
+    },
+    handler: scheduleHistory,
   },
   {
     name: "duty_schedule_update",

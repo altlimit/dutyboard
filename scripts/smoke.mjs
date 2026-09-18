@@ -1291,6 +1291,28 @@ async function main() {
     /Rhythm for beginners/.test(secondDuty.duty.brief) && /run 3/.test(secondDuty.duty.brief),
     secondDuty.duty.brief,
   );
+  // Skipping for ever, quietly, is the failure mode a recurring duty has: the counter climbs and
+  // nobody is reading the duty it is stuck behind. After a few in a row the board asks.
+  const stuck = await call("/schedules/create", { project_id: mBoard, title: "Stuck weekly", brief: "Never finished.", cron: "0 7 * * 1" }, human);
+  const dueStuck = () => call("/schedules/update", { schedule_id: stuck.schedule.schedule_id, next_due_at: Date.now() - 1000 }, human);
+  await dueStuck();
+  await call("/machine/poll", {}, mkey);
+  const stuckDuty = (await call("/duty/poll", { limit: 10 }, rawAgent)).runnable_duties.find((d) => d.title === "Stuck weekly");
+  for (let i = 0; i < 3; i++) {
+    await dueStuck();
+    await call("/machine/poll", {}, mkey);
+  }
+  const asked = await call("/duty/get", { duty_id: stuckDuty.id }, human);
+  check(
+    "a schedule skipping run after run asks on the board instead of going quiet",
+    asked.duty.status === "needs_decision" && /skipped 3 runs in a row/.test(asked.duty.last_question || ""),
+    { status: asked.duty.status, question: asked.duty.last_question },
+  );
+  const skipSeen = (await call("/schedules/list", { project_id: mBoard }, human)).schedules.find((x) => x.schedule_id === stuck.schedule.schedule_id);
+  check("and the board counts the run of skips", skipSeen.skips_in_a_row === 3, skipSeen.skips_in_a_row);
+  await call("/duty/delete", { duty_id: stuckDuty.id, confirm: stuckDuty.id }, human);
+  await call("/schedules/delete", { schedule_id: stuck.schedule.schedule_id }, human);
+
   const filedSoFar = await call("/schedules/history", { project_id: mBoard, schedule_id: weekly.schedule.schedule_id }, human);
   check(
     // Two of the three runs, because the first was deleted above to set the race up — which is the
@@ -1300,6 +1322,19 @@ async function main() {
     filedSoFar.duties,
   );
   check("with how each one went", /Rhythm for beginners/.test(filedSoFar.duties.find((d) => d.status === "done")?.outcome_summary || ""), filedSoFar.duties.map((d) => d.status));
+  // Bounded, and a page at a time — a schedule that has run daily for a year has hundreds behind it.
+  const firstPage = await call("/schedules/history", { project_id: mBoard, schedule_id: weekly.schedule.schedule_id, limit: 1 }, human);
+  check("history comes a page at a time, with a cursor for the rest", firstPage.duties.length === 1 && !!firstPage.next_cursor, firstPage);
+  const secondPage = await call("/schedules/history", { project_id: mBoard, schedule_id: weekly.schedule.schedule_id, limit: 1, cursor: firstPage.next_cursor }, human);
+  check(
+    "and the next page carries on where it left off",
+    secondPage.duties.length === 1 && secondPage.duties[0].duty_id !== firstPage.duties[0].duty_id,
+    secondPage.duties,
+  );
+  // "Give me all of it" is not a request this answers: the limit is clamped rather than honoured,
+  // the same way every other listing here treats one.
+  const overAsked = await call("/schedules/history", { project_id: mBoard, schedule_id: weekly.schedule.schedule_id, limit: 5000 }, human);
+  check("asking for everything at once gets a page, not everything", overAsked.duties.length <= 50, overAsked.duties.length);
   const listed = (await call("/schedules/list", { project_id: mBoard }, human)).schedules.find((x) => x.schedule_id === weekly.schedule.schedule_id);
   check("the board keeps the count of what it filed and what it skipped", listed.runs === 3 && listed.skipped === 1, listed);
 
