@@ -4,10 +4,10 @@ import { useRoute, useRouter } from "vue-router";
 import { api, subscribeLive } from "../lib/altengine.js";
 import { user as me } from "../lib/session.js";
 import { config } from "../config.js";
-import { ago } from "../lib/duties.js";
+import { ago, statusLabel } from "../lib/duties.js";
 import { agentLabel, profileDraft, profilePayload, runStateLabel } from "../lib/runners.js";
 import ProfileForm from "../components/ProfileForm.vue";
-import { DAYS, REPEATS, browserZone, repeatText, runText, scheduleDraft, schedulePayload, zoneOffsets } from "../lib/schedules.js";
+import { DAYS, REPEATS, allZones, browserZone, knownZone, repeatText, runText, scheduleDraft, schedulePayload, zoneOffsets } from "../lib/schedules.js";
 
 const props = defineProps({ projectId: { type: String, required: true } });
 const router = useRouter();
@@ -45,6 +45,20 @@ const scheduleLimit = ref(0);
 const scheduleForm = ref(null); // a draft while adding or editing, null when neither
 const scheduleNotice = ref("");
 const myZone = browserZone();
+const zoneList = allZones();
+/** A zone nobody can resolve is a schedule that runs at the wrong hour and says nothing. */
+const zoneKnown = computed(() => !scheduleForm.value || knownZone(scheduleForm.value.tz));
+/** What one schedule has filed, once someone asks. Keyed by schedule id. */
+const history = ref({});
+
+async function showHistory(row) {
+  if (history.value[row.schedule_id]) {
+    history.value = { ...history.value, [row.schedule_id]: null };
+    return;
+  }
+  const res = await api("/schedules/history", { project_id: props.projectId, schedule_id: row.schedule_id, limit: 10 }).catch(() => ({ duties: [] }));
+  history.value = { ...history.value, [row.schedule_id]: res.duties || [] };
+}
 
 async function loadSchedules() {
   const res = await api("/schedules/list", { project_id: props.projectId });
@@ -518,6 +532,7 @@ onUnmounted(() => {
               {{ r.online === null ? "presence unknown" : r.online ? "online" : "offline" }}
             </span>
             <span v-if="me && r.owner_uid === me.uid" class="badge members__you">yours</span>
+            <span v-if="r.cli_version" class="muted small members__id">dutyboard {{ r.cli_version }}</span>
           </span>
           <span class="small muted">
             <template v-if="!r.runs.length">idle</template>
@@ -613,6 +628,24 @@ onUnmounted(() => {
             <template v-if="s.last_fired_at">, last {{ ago(s.last_fired_at) }}</template>
             <template v-if="s.skipped">; {{ s.skipped }} run<template v-if="s.skipped !== 1">s</template> skipped while the one before was still open</template>.
           </span>
+          <p v-if="s.tz && s.tz !== 'UTC' && !s.offset_checked_at" class="hint" style="margin: 0">
+            No machine or browser has confirmed what {{ s.tz }} is worth yet, so this is running on UTC
+            until one does.
+          </p>
+          <ul v-if="history[s.schedule_id] && history[s.schedule_id].length" class="members">
+            <li v-for="d in history[s.schedule_id]" :key="d.duty_id">
+              <span>
+                <router-link :to="{ name: 'duty', params: { projectId, dutyId: d.duty_id } }">{{ d.title }}</router-link>
+                <span class="muted small members__id">{{ statusLabel(d.status) }}, {{ ago(d.created_at) }}</span>
+              </span>
+            </li>
+          </ul>
+          <p v-else-if="history[s.schedule_id]" class="hint" style="margin: 0">It has not filed anything yet.</p>
+          <div class="row">
+            <button v-if="s.runs" type="button" class="link small" :disabled="busy" @click="showHistory(s)">
+              {{ history[s.schedule_id] ? "Hide what it filed" : "What it filed" }}
+            </button>
+          </div>
           <div v-if="isOwner" class="row">
             <button type="button" class="link small" :disabled="busy" @click="editSchedule(s)">Edit</button>
             <button type="button" class="link small" :disabled="busy" @click="toggleSchedule(s)">{{ s.enabled ? "Pause" : "Start again" }}</button>
@@ -663,8 +696,13 @@ onUnmounted(() => {
         </div>
         <div class="field">
           <label for="sch-tz">Timezone</label>
-          <input id="sch-tz" v-model="scheduleForm.tz" maxlength="64" :placeholder="myZone" />
-          <p class="hint" style="margin: 0">
+          <input id="sch-tz" v-model="scheduleForm.tz" maxlength="64" :placeholder="myZone" list="sch-zones" :aria-invalid="!zoneKnown" />
+          <datalist id="sch-zones"><option v-for="z in zoneList" :key="z" :value="z" /></datalist>
+          <p v-if="!zoneKnown" class="hint" role="alert" style="margin: 0; color: var(--danger)">
+            This browser does not know a zone called “{{ scheduleForm.tz }}”. Pick one from the list — a name
+            nothing can resolve leaves the schedule running on UTC without saying so.
+          </p>
+          <p v-else class="hint" style="margin: 0">
             This browser's is <strong>{{ myZone }}</strong>. The hour you ask for is kept through a clock
             change: this page and every machine working the board tell it what the zone is worth.
           </p>
@@ -678,7 +716,7 @@ onUnmounted(() => {
           </select>
         </div>
         <div class="row">
-          <button class="primary" type="submit" :disabled="busy || !scheduleForm.title.trim() || !scheduleForm.brief.trim()">
+          <button class="primary" type="submit" :disabled="busy || !zoneKnown || !scheduleForm.title.trim() || !scheduleForm.brief.trim()">
             {{ scheduleForm.schedule_id ? "Save" : "Make it recur" }}
           </button>
           <button type="button" :disabled="busy" @click="scheduleForm = null">Cancel</button>

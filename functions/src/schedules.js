@@ -352,6 +352,32 @@ export async function listSchedules(ctx, body) {
 }
 
 /**
+ * `POST /schedules/history` — the duties one schedule has filed, newest first.
+ *
+ * A recurring duty is only worth trusting if you can see what it has actually been doing, and
+ * `last_duty_id` alone answers that for one run out of however many.
+ */
+export async function scheduleHistory(ctx, body) {
+  const { row } = await loadSchedule(ctx, body.schedule_id);
+  const limit = Math.min(Math.max(Number(body.limit) || 10, 1), 50);
+  const { rows } = await ctx.store.query("duties", {
+    where: [{ field: "schedule_id", op: "=", value: row.key }],
+    order: [{ field: "created_at", dir: "desc" }],
+    limit,
+  });
+  return {
+    schedule_id: row.key,
+    duties: rows.map((d) => ({
+      duty_id: d.key,
+      title: d.title,
+      status: d.status,
+      created_at: d.created_at,
+      outcome_summary: d.outcome_summary ? clip(d.outcome_summary, 400) : null,
+    })),
+  };
+}
+
+/**
  * `POST /schedules/sync` — a caller that HAS a timezone database tells this one what the offsets
  * really are, and gets back what still needs answering.
  *

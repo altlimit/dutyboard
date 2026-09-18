@@ -398,12 +398,25 @@ export async function runnersOf(ctx, projectKey) {
     where: [{ field: "project_id", op: "=", value: projectKey }],
     limit: MAX_LINKS_PER_BOARD,
   });
-  const present = await machinesPresent(ctx, rows.map((l) => l.machine_id));
+  const ids = rows.map((l) => l.machine_id);
+  const [present, machines] = await Promise.all([machinesPresent(ctx, ids), machinesByIds(ctx, ids)]);
   return rows.map((l) => ({
     ...linkView(l),
     owner_uid: l.owner_uid,
     online: present.get(l.machine_id),
+    // What it is actually running. A board where one machine is three versions behind looks like a
+    // board with a mystery, until this says which machine it is.
+    cli_version: (machines.get(l.machine_id) || {}).cli_version || "",
   }));
+}
+
+/** The machine rows behind a set of ids, keyed by id. */
+async function machinesByIds(ctx, ids) {
+  const out = new Map();
+  if (!ids.length) return out;
+  const { rows } = await ctx.store.query("machines", { where: [{ field: "machine_id", op: "in", value: ids }], limit: ids.length });
+  for (const m of rows) out.set(m.machine_id, m);
+  return out;
 }
 
 /** `POST /board/runners` — anyone on the board. */
@@ -788,12 +801,20 @@ export async function reportRequest(ctx, body) {
 // --- bookkeeping -------------------------------------------------------------------------
 
 /** Stamp `last_seen_at`, at most once a minute. `identify` already read the row. */
-export async function noteMachineUse(ctx, caller) {
+export async function noteMachineUse(ctx, caller, version = "") {
   const row = caller.machineRow;
   if (!row) return;
   const now = Date.now();
-  if (row.last_seen_at && now - row.last_seen_at < TOUCH_EVERY_MS) return;
-  await ctx.store.putOne("machines", caller.machineKey, { ...stripMeta(row), last_seen_at: now });
+  // The version it is running NOW, not the one it first paired with. A machine is updated far more
+  // often than it is paired, and "is this machine out of date?" is otherwise unanswerable — which
+  // is exactly the question asked when a board misbehaves on one machine and not another.
+  const moved = version && version !== (row.cli_version || "");
+  if (!moved && row.last_seen_at && now - row.last_seen_at < TOUCH_EVERY_MS) return;
+  await ctx.store.putOne("machines", caller.machineKey, {
+    ...stripMeta(row),
+    ...(moved ? { cli_version: version } : {}),
+    last_seen_at: now,
+  });
 }
 
 /** Delete every row matching `where`, a page at a time. Answers the distinct boards the rows named,

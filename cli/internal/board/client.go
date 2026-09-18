@@ -22,6 +22,10 @@ type Client struct {
 	// Origin is sent as x-dutyboard-origin, so the daemon can tell its own writes' echoes apart from
 	// everyone else's on a board channel.
 	Origin string
+	// Version is this binary's, sent on every call. The board records the version a machine is
+	// running now rather than the one it happened to pair with, which is what makes "that machine
+	// is three releases behind" something a person can see instead of guess.
+	Version string
 }
 
 // New is a client for server with key.
@@ -68,6 +72,9 @@ func (c *Client) Call(ctx context.Context, path, board string, body, out any) er
 	if c.Origin != "" {
 		req.Header.Set("x-dutyboard-origin", c.Origin)
 	}
+	if c.Version != "" {
+		req.Header.Set("x-dutyboard-version", c.Version)
+	}
 	res, err := c.HTTP.Do(req)
 	if err != nil {
 		return err
@@ -107,6 +114,9 @@ func (c *Client) RawMCP(ctx context.Context, board string, msg []byte) ([]byte, 
 	req.Header.Set("x-dutyboard-board", board)
 	if c.Origin != "" {
 		req.Header.Set("x-dutyboard-origin", c.Origin)
+	}
+	if c.Version != "" {
+		req.Header.Set("x-dutyboard-version", c.Version)
 	}
 	res, err := c.HTTP.Do(req)
 	if err != nil {

@@ -368,6 +368,9 @@ export async function getDuty(ctx, body) {
       affinity: duty.affinity || null,
       spawned_by: duty.spawned_by || null,
       blocked_by: duty.blocked_by || null,
+      // Set when a schedule filed this duty: the console says so rather than leaving a duty that
+      // appeared at 9am on Monday looking like one nobody can account for.
+      schedule_id: duty.schedule_id || null,
       updated_at: duty.updated_at,
     },
   };

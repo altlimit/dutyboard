@@ -90,6 +90,12 @@ the token as a bearer. An agent token is scoped to ONE board and is shown once.
 The operating protocol comes back in the MCP `initialize` response. Not every client shows it
 to the model; the same text is at https://www.dutyboard.com/agent.md.
 
+**Work that repeats** lives on the board too: a schedule (a five-field cron expression plus a
+timezone, set under Settings → Recurring duties, or by an agent with `duty_schedule_create` while
+it holds a duty) files a fresh duty each time it comes round, carrying how the last one went. A run
+that comes round while its last duty is still open is skipped rather than piling up. Ten per board,
+fifteen minutes apart at the closest.
+
 **To have boards worked by Claude Code, Codex or Cursor on a machine**, run `dutyboard` on that machine,
 with the board's agent installed and signed in — each board picks one in its settings. It prints
 a code your user approves in their console; they then choose which boards it works. See the README's "Running agents on your machine":

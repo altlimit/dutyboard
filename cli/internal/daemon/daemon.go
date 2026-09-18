@@ -108,6 +108,9 @@ func New(opt Options) (*Daemon, error) {
 	}
 	api := board.New(opt.Config.Server, opt.Key)
 	api.Origin = opt.Config.MachineID
+	// Sent on every call, so the board shows the version this machine is running rather than the
+	// one it first paired with.
+	api.Version = opt.Version
 	logger := log.New(opt.Out, "", log.LstdFlags)
 	return &Daemon{
 		opt:         opt,

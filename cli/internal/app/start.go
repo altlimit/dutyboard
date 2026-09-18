@@ -43,6 +43,7 @@ func Start(ctx context.Context, u *ui.UI, f Flags) error {
 		}
 	}
 	api := board.New(cfg.Server, key)
+	api.Version = Version
 
 	if u.Interactive && !f.Service {
 		if err := offerLink(ctx, u, api); err != nil {

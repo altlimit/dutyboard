@@ -52,7 +52,7 @@ function check(label, cond, detail) {
   }
 }
 
-async function call(path, body, token, { expectStatus, board } = {}) {
+async function call(path, body, token, { expectStatus, board, version } = {}) {
   const res = await fetch(API + path, {
     method: "POST",
     headers: {
@@ -60,6 +60,8 @@ async function call(path, body, token, { expectStatus, board } = {}) {
       ...(token ? { authorization: `Bearer ${token}` } : {}),
       // How a machine key says which of its boards a call is about.
       ...(board ? { "x-dutyboard-board": board } : {}),
+      // What the daemon is running right now, sent on every call.
+      ...(version ? { "x-dutyboard-version": version } : {}),
     },
     body: JSON.stringify(body || {}),
   });
@@ -1195,6 +1197,19 @@ async function main() {
   await call("/projects/delete", { project_id: theirBoard, confirm: theirBoard }, bystanderToken);
 
 
+  // --- what a machine is actually running ----------------------------------
+  //
+  // Recorded at pairing only, this is a number that quietly lies: a machine is updated far more
+  // often than it is paired, and the version shown is then the one it had months ago. That is a bad
+  // half-hour when a board misbehaves on one machine and not another.
+  const pairedAs = (await call("/machines/list", {}, human)).machines.find((m) => m.machine_id === paired.machine_id);
+  check("a machine's version starts as the one it paired with", pairedAs.cli_version === "smoke", pairedAs.cli_version);
+  await call("/machine/poll", {}, mkey, { version: "9.9.9" });
+  const updated = (await call("/machines/list", {}, human)).machines.find((m) => m.machine_id === paired.machine_id);
+  check("and follows it when it is upgraded, on its very next call", updated.cli_version === "9.9.9", updated.cli_version);
+  const onItsBoard = (await call("/board/runners", { project_id: mBoard }, human)).runners[0];
+  check("the board says what each machine working it is running", onItsBoard.cli_version === "9.9.9", onItsBoard);
+
   // --- work that comes round again -----------------------------------------
   //
   // A schedule is the one thing here that writes duties with nobody watching, so what is
@@ -1276,6 +1291,15 @@ async function main() {
     /Rhythm for beginners/.test(secondDuty.duty.brief) && /run 3/.test(secondDuty.duty.brief),
     secondDuty.duty.brief,
   );
+  const filedSoFar = await call("/schedules/history", { project_id: mBoard, schedule_id: weekly.schedule.schedule_id }, human);
+  check(
+    // Two of the three runs, because the first was deleted above to set the race up — which is the
+    // honest answer: this lists the duties that exist, not a tally the schedule keeps.
+    "a schedule can show what it has actually filed, newest first",
+    filedSoFar.duties.length === 2 && filedSoFar.duties.every((d) => d.title === "Weekly post") && filedSoFar.duties[0].created_at >= filedSoFar.duties[1].created_at,
+    filedSoFar.duties,
+  );
+  check("with how each one went", /Rhythm for beginners/.test(filedSoFar.duties.find((d) => d.status === "done")?.outcome_summary || ""), filedSoFar.duties.map((d) => d.status));
   const listed = (await call("/schedules/list", { project_id: mBoard }, human)).schedules.find((x) => x.schedule_id === weekly.schedule.schedule_id);
   check("the board keeps the count of what it filed and what it skipped", listed.runs === 3 && listed.skipped === 1, listed);
 
@@ -1502,6 +1526,7 @@ async function main() {
     "/schedules/update": () => ({ schedule_id: "sch_nope", project_id: projectId, enabled: false }),
     "/schedules/delete": () => ({ schedule_id: "sch_nope", project_id: projectId }),
     "/schedules/sync": () => ({ project_id: projectId, offsets: { UTC: 0 } }),
+    "/schedules/history": () => ({ schedule_id: "sch_nope", project_id: projectId }),
     "/connect/lookup": () => ({ user_code: "ZZZZ-ZZZZ" }),
     "/connect/approve": () => ({ user_code: "ZZZZ-ZZZZ" }),
     "/connect/deny": () => ({ user_code: "ZZZZ-ZZZZ" }),

@@ -68,7 +68,7 @@ import {
   reportRequest,
   noteMachineUse,
 } from "./machines.js";
-import { createSchedule, deleteSchedule, listSchedules, syncScheduleZones, tickAllSchedules, updateSchedule } from "./schedules.js";
+import { createSchedule, deleteSchedule, listSchedules, scheduleHistory, syncScheduleZones, tickAllSchedules, updateSchedule } from "./schedules.js";
 import { VERSION } from "./version.js";
 
 
@@ -128,6 +128,7 @@ const ROUTES = {
   "/schedules/update": updateSchedule,
   "/schedules/delete": deleteSchedule,
   "/schedules/sync": syncScheduleZones,
+  "/schedules/history": scheduleHistory,
   "/me/access": syncAccess,
   "/projects/create": createProject,
   "/projects/list": listProjects,
@@ -327,7 +328,7 @@ export default {
       // Fire-and-forget in spirit; awaited because a function has no waitUntil. It
       // writes at most once a minute per token, so it is not on the hot path.
       await noteTokenUse(ctx, caller);
-      await noteMachineUse(ctx, caller);
+      await noteMachineUse(ctx, caller, str(request.headers.get("x-dutyboard-version") || "", "version", { max: 40 }));
 
       if (path === "/mcp") return await handleMcp(ctx, request, ATTACH_BODY_BYTES);
 

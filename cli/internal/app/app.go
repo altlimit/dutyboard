@@ -263,6 +263,7 @@ func SetDeployKey(ctx context.Context, u *ui.UI, f Flags) error {
 	if cfg.Server != "" && !client.Local() {
 		if mk, _ := state.Credential(state.MachineKey); mk != "" {
 			api := board.New(cfg.Server, mk)
+			api.Version = Version
 			if boards, err := api.Boards(ctx); err == nil {
 				for _, b := range boards {
 					if !b.Linked || b.Profile == nil || b.Profile.Deploy.Method != "altengine" {
@@ -328,7 +329,9 @@ func SetMCPSecrets(ctx context.Context, u *ui.UI) error {
 	if cfg.Server == "" || mk == "" {
 		return errors.New("this machine is not paired with a DutyBoard yet — run `dutyboard` first")
 	}
-	boards, err := board.New(cfg.Server, mk).Boards(ctx)
+	linked := board.New(cfg.Server, mk)
+	linked.Version = Version
+	boards, err := linked.Boards(ctx)
 	if err != nil {
 		return err
 	}

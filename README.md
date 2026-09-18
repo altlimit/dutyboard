@@ -496,7 +496,8 @@ own timezone. An agent can set one up too, while it is holding a duty, with `dut
 When one comes round a fresh duty is filed, carrying how the last one went, so a recurring writing
 duty does not write the same thing twice. A run that comes round while its last duty is still open
 files nothing and leaves a note on the open one — a stuck duty cannot become a pile of twelve. Ten
-schedules to a board, and two runs at least fifteen minutes apart.
+schedules to a board, and two runs at least fifteen minutes apart. A duty a schedule filed says so
+on its own page, and the schedule lists what it has filed.
 
 Two things watch the clock, and either is enough: the function has a cron of its own, set when the
 deployment is provisioned, and a machine's poll ticks the same code — so a deployment made before
@@ -625,6 +626,7 @@ only when you first try it hosted.
 | `/schedules/list` | any | The board's recurring duties, what each repeats and when it next comes round. |
 | `/schedules/create` · `/schedules/update` · `/schedules/delete` | human, or an agent holding a duty | Make work recur, change or pause it, stop it. `next_due_at` on an update moves the next run, which is how the console files one now. |
 | `/schedules/sync` | any | Tell the board what its schedules' timezones are worth in minutes from UTC, and read back what it believes. |
+| `/schedules/history` | any | The duties one schedule has filed, newest first, with how each went. |
 | `/me/access` | human | Repair this person's `boards` claim; says whether their token is behind. |
 | `/projects/*` | human | `create` (optionally with a `profile` and `runner`), `list` (owned and shared), `rename`, `profile` and `delete` (owner only). |
 | `/tokens/*` | owner | `mint`, `list`, `revoke`. |

@@ -72,6 +72,31 @@ export function schedulePayload(draft) {
   };
 }
 
+/**
+ * Whether this browser knows the zone. A typo — "America/Chicagoo" — is otherwise silent: the
+ * offset stays at zero, the schedule runs at the wrong hour, and the only sign is a line in one
+ * machine's log.
+ */
+export function knownZone(tz) {
+  if (!tz) return false;
+  if (tz === "UTC") return true;
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: tz });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Every zone this browser knows, for a list to pick from. Empty where it cannot say. */
+export function allZones() {
+  try {
+    return Intl.supportedValuesOf("timeZone") || [];
+  } catch {
+    return [];
+  }
+}
+
 /** This browser's own zone, e.g. "America/Chicago". Falls back to UTC where it cannot be had. */
 export function browserZone() {
   try {

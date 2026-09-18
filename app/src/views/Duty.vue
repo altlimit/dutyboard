@@ -382,6 +382,10 @@ onUnmounted(() => {
         </div>
       </form>
 
+      <p v-if="duty.schedule_id" class="small muted rel">
+        Filed by a recurring duty on this board — it comes round again on its own.
+        <router-link :to="{ name: 'settings', params: { projectId } }">See what repeats here</router-link>.
+      </p>
       <p v-if="duty.parent_id" class="small muted rel">
         Spawned from
         <router-link :to="{ name: 'duty', params: { projectId, dutyId: duty.parent_id } }">the parent duty</router-link>.
