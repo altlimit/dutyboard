@@ -1,5 +1,11 @@
 import { defineConfig } from "vite";
 import vue from "@vitejs/plugin-vue";
+import { readFileSync } from "node:fs";
+
+// One version for everything — the tag, the binary, what /health reports, and this console. It is
+// read from the repository's package.json at build time, the same file the release workflow checks,
+// so a console cannot claim a version nothing else was built at.
+const VERSION = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version;
 
 // The console — a plain static SPA, no server and no secrets, everything ships to the browser.
 //
@@ -11,6 +17,7 @@ export default defineConfig({
   // preview server — the page never has to know where it was put.
   base: "./",
   plugins: [vue()],
+  define: { __DUTYBOARD_VERSION__: JSON.stringify(VERSION) },
   build: {
     outDir: "dist",
     emptyOutDir: true,

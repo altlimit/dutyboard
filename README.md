@@ -121,6 +121,12 @@ console it deploys: the machine running it needs no Node and no checkout.
 `alt update altlimit/dutyboard && dutyboard --service`. A release that changes only the runner needs
 the second; one that changes the board, the API or the console needs the first too.
 
+**Whether they agree** is on the console's **Machines** page, under *Versions*: this console's own
+build, what the board function reports, and what each machine is running right now — a machine
+reports its version on every call, not the one it happened to pair with. They are released together
+and updated separately, and when one lags the symptom is a feature that is simply missing rather
+than broken, which is slow to work out any other way.
+
 **The key** needs the **MCP / AI agent access** toggles on the key form, which are off by default:
 `Instances & data: Write` and `Functions: Write`. Not Full — nothing here deletes an instance.
 It is only needed to set up and upgrade, so the provisioner does not keep it unless you say so;

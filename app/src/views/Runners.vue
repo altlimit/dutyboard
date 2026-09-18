@@ -4,6 +4,7 @@ import { api } from "../lib/altengine.js";
 import { config } from "../config.js";
 import { ago } from "../lib/duties.js";
 import { runStateLabel } from "../lib/runners.js";
+import { CONSOLE_VERSION, differs, serviceVersion } from "../lib/version.js";
 
 // Your machines: the computers running `dutyboard` for you, what each is working on, and the
 // controls that are the program's settings — there is no settings file to edit on the machine.
@@ -16,6 +17,18 @@ const busy = ref(false);
 const notice = ref("");
 const setupFor = ref({}); // machine_id → { project_id, path }
 
+// The three halves of a DutyBoard — this console, the board function, and each machine — are
+// released together and updated separately. When one lags, the symptom is a feature that is simply
+// missing, which is a slow thing to work out from the outside. So they are put side by side.
+const boardVersion = ref("");
+const behind = computed(() => {
+  const out = [];
+  if (differs(CONSOLE_VERSION, boardVersion.value)) out.push("the board itself");
+  for (const m of machines.value) if (differs(m.cli_version, CONSOLE_VERSION)) out.push(m.name);
+  return out;
+});
+
+const consoleVersion = CONSOLE_VERSION;
 const installCommand = computed(() => `alt install altlimit/dutyboard\ndutyboard --server ${config.api} --root /path/for/projects --service`);
 
 async function load({ quiet = false } = {}) {
@@ -93,6 +106,7 @@ async function copy(text) {
 let timer = null;
 onMounted(() => {
   load();
+  serviceVersion().then((v) => (boardVersion.value = v));
   timer = setInterval(() => {
     if (!document.hidden && !busy.value) load({ quiet: true });
   }, 10_000);
@@ -116,6 +130,23 @@ onUnmounted(() => clearInterval(timer));
       </div>
       <router-link class="btn" :to="{ name: 'pair' }">Pair a machine</router-link>
     </div>
+
+    <section aria-labelledby="versions-h" class="panel stack">
+      <h2 id="versions-h" style="margin: 0">Versions</h2>
+      <p class="small muted" style="margin: 0">
+        Console <strong>{{ consoleVersion }}</strong> ·
+        board <strong>{{ boardVersion || "…" }}</strong>
+        <template v-for="m in machines" :key="m.machine_id">
+          · {{ m.name }} <strong>{{ m.cli_version || "?" }}</strong>
+        </template>
+      </p>
+      <p v-if="behind.length" class="hint" style="margin: 0">
+        Not everything is on {{ consoleVersion }}: {{ behind.join(", ") }}. A feature that is missing
+        rather than broken is usually this. Update a machine where it runs; update the board and this
+        console with <code class="mono">dutyboard --provision-only</code>.
+      </p>
+      <p v-else-if="boardVersion" class="hint" style="margin: 0">Everything here is on {{ consoleVersion }}.</p>
+    </section>
 
     <p v-if="error" class="notice notice--error" role="alert">{{ error }}</p>
     <p v-if="notice" class="notice" role="status">{{ notice }}</p>

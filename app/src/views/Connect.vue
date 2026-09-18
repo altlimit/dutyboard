@@ -12,6 +12,7 @@
 import { onMounted, ref } from "vue";
 import { useRoute } from "vue-router";
 import { config, DEFAULTS, clearOverrides, saveOverrides } from "../config.js";
+import { CONSOLE_VERSION } from "../lib/version.js";
 
 const route = useRoute();
 
@@ -74,6 +75,8 @@ function apiPreview() {
  * the auth instance has to serve its sign-up config to this origin, and the function has
  * to answer /health.
  */
+const consoleVersion = CONSOLE_VERSION;
+
 async function check() {
   checking.value = true;
   result.value = null;
@@ -153,6 +156,7 @@ onMounted(() => {
         duties and agent tokens live in your own instances, and nothing about them reaches
         whoever served you this page.
       </p>
+      <p class="small muted" style="margin: 0.4rem 0 0">This console is version {{ consoleVersion }}.</p>
     </div>
 
     <div v-if="fromLink" class="notice" role="status">
