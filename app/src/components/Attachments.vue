@@ -9,15 +9,18 @@
 // download URL points at a storage origin, and inlining arbitrary content from one is how
 // an attachment stops being an attachment.
 
-import { computed, ref } from "vue";
+import { computed, onUnmounted, ref, watch } from "vue";
 import { api, putSigned } from "../lib/altengine.js";
 import { ago } from "../lib/duties.js";
+import { pastedFiles } from "../lib/paste.js";
 import { user } from "../lib/session.js";
 
 const props = defineProps({
   dutyId: { type: String, required: true },
   items: { type: Array, default: () => [] },
   busy: { type: Boolean, default: false },
+  // While true, a screenshot or file pasted anywhere on the page is uploaded here.
+  acceptPaste: { type: Boolean, default: false },
 });
 const emit = defineEmits(["changed"]);
 
@@ -42,6 +45,20 @@ async function pick(event) {
   for (const file of files) await upload(file);
   if (files.length) emit("changed");
 }
+
+async function onPaste(event) {
+  if (props.busy) return;
+  const files = pastedFiles(event);
+  for (const file of files) await upload(file);
+  if (files.length) emit("changed");
+}
+
+watch(
+  () => props.acceptPaste,
+  (on) => (on ? document.addEventListener("paste", onPaste) : document.removeEventListener("paste", onPaste)),
+  { immediate: true },
+);
+onUnmounted(() => document.removeEventListener("paste", onPaste));
 
 async function upload(file) {
   const entry = { name: file.name, pct: 0, error: "" };

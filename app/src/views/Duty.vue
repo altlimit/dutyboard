@@ -334,7 +334,7 @@ onUnmounted(() => {
         </form>
       </div>
 
-      <Attachments :duty-id="dutyId" :items="attachments" :busy="posting" @changed="load" />
+      <Attachments :duty-id="dutyId" :items="attachments" :busy="posting" :accept-paste="editing" @changed="load" />
 
       <div v-if="duty.outcome_summary" class="panel" style="border-left: 3px solid var(--ok)">
         <div class="panel__head"><h2>Outcome</h2></div>

@@ -4,6 +4,7 @@ import { aggregate, api, putSigned, query, subscribeLive } from "../lib/altengin
 import { STATUS_COLUMNS, PRIORITIES, ago, columnOrder, sortColumn } from "../lib/duties.js";
 import BoardColumn from "../components/BoardColumn.vue";
 import { activityByDuty, runnerSummary } from "../lib/runners.js";
+import { pastedFiles } from "../lib/paste.js";
 
 const props = defineProps({ projectId: { type: String, required: true } });
 
@@ -445,25 +446,11 @@ function pickDraftFiles(event) {
 
 const dropDraftFile = (file) => (draftFiles.value = draftFiles.value.filter((f) => f !== file));
 
-/**
- * While the form is open, a paste that carries files — a screenshot, a file copied from the
- * file manager — becomes an attachment instead of going nowhere. A paste with plain text in it
- * is left alone, so copying from a spreadsheet (which also offers an image) still types the text.
- */
+// While the form is open, a pasted screenshot or file joins the list as if it had been chosen.
 function onPaste(event) {
   if (adding.value) return;
-  const data = event.clipboardData;
-  const files = [...(data?.files || [])];
-  if (!files.length || data.types.includes("text/plain")) return;
-  event.preventDefault();
-  // Every pasted screenshot is called "image.png"; give each its own name so they can be told apart.
-  const stamp = new Date().toISOString().slice(0, 19).replace(/[T:]/g, "-");
-  const named = files.map((f, i) =>
-    /^image\.\w+$/.test(f.name)
-      ? new File([f], `pasted-${stamp}${files.length > 1 ? `-${i + 1}` : ""}.${f.name.split(".").pop()}`, { type: f.type })
-      : f,
-  );
-  draftFiles.value = [...draftFiles.value, ...named];
+  const files = pastedFiles(event);
+  if (files.length) draftFiles.value = [...draftFiles.value, ...files];
 }
 
 watch(showForm, (open) =>
