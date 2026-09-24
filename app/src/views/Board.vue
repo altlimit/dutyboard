@@ -446,6 +446,31 @@ function pickDraftFiles(event) {
 const dropDraftFile = (file) => (draftFiles.value = draftFiles.value.filter((f) => f !== file));
 
 /**
+ * While the form is open, a paste that carries files — a screenshot, a file copied from the
+ * file manager — becomes an attachment instead of going nowhere. A paste with plain text in it
+ * is left alone, so copying from a spreadsheet (which also offers an image) still types the text.
+ */
+function onPaste(event) {
+  if (adding.value) return;
+  const data = event.clipboardData;
+  const files = [...(data?.files || [])];
+  if (!files.length || data.types.includes("text/plain")) return;
+  event.preventDefault();
+  // Every pasted screenshot is called "image.png"; give each its own name so they can be told apart.
+  const stamp = new Date().toISOString().slice(0, 19).replace(/[T:]/g, "-");
+  const named = files.map((f, i) =>
+    /^image\.\w+$/.test(f.name)
+      ? new File([f], `pasted-${stamp}${files.length > 1 ? `-${i + 1}` : ""}.${f.name.split(".").pop()}`, { type: f.type })
+      : f,
+  );
+  draftFiles.value = [...draftFiles.value, ...named];
+}
+
+watch(showForm, (open) =>
+  open ? document.addEventListener("paste", onPaste) : document.removeEventListener("paste", onPaste),
+);
+
+/**
  * Attach files to a duty that has just been created. Returns a line per file that failed.
  *
  * EVERY ROW IS RESERVED BEFORE ANY BYTES MOVE. The duty is claimable the moment it exists,
@@ -543,6 +568,7 @@ watch(
 
 onUnmounted(() => {
   wideQuery.removeEventListener("change", onWidth);
+  document.removeEventListener("paste", onPaste);
   if (socket) socket.close();
   if (refreshTimer) clearTimeout(refreshTimer);
 });
@@ -647,7 +673,7 @@ onUnmounted(() => {
           </li>
         </ul>
         <p class="hint">
-          A screenshot of the bug, a recording, a log. Uploaded when you add the duty, and an
+          A screenshot of the bug, a recording, a log — choose them or paste them in. Uploaded when you add the duty, and an
           agent that picks it up reads them before asking about it.
         </p>
         <ul v-if="uploading.length" class="uploads" aria-live="polite">
