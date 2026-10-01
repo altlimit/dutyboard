@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/altlimit/dutyboard/cli/internal/board"
+	"github.com/altlimit/dutyboard/cli/internal/deploy"
 	"github.com/altlimit/dutyboard/cli/internal/state"
 )
 
@@ -23,8 +24,9 @@ func ProjectsRoot(cfg *state.Config) string {
 	return "dutyboard"
 }
 
-// handleRequest works a board a person asked this machine for from the console: link it, then clone
-// its repository into the board's folder under the projects root, where the daemon keeps it.
+// handleRequest works a board a person asked this machine for from the console: make its repository on
+// GitHub when asked to, link it, then clone its repository into the board's folder under the projects
+// root, where the daemon keeps it.
 func (d *Daemon) handleRequest(ctx context.Context, req board.Request) {
 	d.mu.Lock()
 	if d.requests[req.RequestID] {
@@ -43,16 +45,43 @@ func (d *Daemon) handleRequest(ctx context.Context, req board.Request) {
 		ctx, cancel := context.WithTimeout(ctx, 30*time.Minute)
 		defer cancel()
 		_ = d.api.ReportRequest(ctx, req.RequestID, "running", "")
+		made := ""
+		if req.Kind == "create_repo" {
+			url, err := d.createRepo(ctx, req)
+			if err != nil {
+				d.log.Printf("making the repository for %s: %v", req.ProjectID, err)
+				_ = d.api.ReportRequest(ctx, req.RequestID, "failed", err.Error())
+				return
+			}
+			d.log.Printf("%s: created %s", req.ProjectID, url)
+			made = "created " + url + " and "
+		}
 		path, err := d.setUp(ctx, req)
 		if err != nil {
 			d.log.Printf("setting up %s: %v", req.ProjectID, err)
-			_ = d.api.ReportRequest(ctx, req.RequestID, "failed", err.Error())
+			_ = d.api.ReportRequest(ctx, req.RequestID, "failed", made+"could not set it up: "+err.Error())
 			return
 		}
 		d.log.Printf("%s: cloned into %s", req.ProjectID, path)
-		_ = d.api.ReportRequest(ctx, req.RequestID, "done", "cloned into "+path)
+		_ = d.api.ReportRequest(ctx, req.RequestID, "done", made+"cloned into "+path)
 		d.Reload()
 	}()
+}
+
+// createRepo makes the board's repository on GitHub with this machine's GitHub CLI, and tells the
+// board, which takes it as its repository. It is made empty: the clone puts the first commit in it.
+func (d *Daemon) createRepo(ctx context.Context, req board.Request) (string, error) {
+	if req.Repo == nil || req.Repo.Name == "" {
+		return "", fmt.Errorf("the request names no repository to make")
+	}
+	url, err := deploy.CreateRepo(ctx, req.Repo.Owner, req.Repo.Name, req.Repo.Description, req.Repo.Private)
+	if err != nil {
+		return "", err
+	}
+	if err := d.api.ReportRepo(ctx, req.RequestID, url); err != nil {
+		return "", fmt.Errorf("created %s, but could not tell the board: %w — set it as the board's repository URL in its settings", url, err)
+	}
+	return url, nil
 }
 
 func (d *Daemon) setUp(ctx context.Context, req board.Request) (string, error) {

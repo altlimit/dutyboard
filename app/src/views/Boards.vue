@@ -1,10 +1,11 @@
 <script setup>
-import { nextTick, onMounted, ref } from "vue";
+import { nextTick, onMounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { api, refresh } from "../lib/altengine.js";
 import { ago } from "../lib/duties.js";
-import { profileDraft, profilePayload } from "../lib/runners.js";
+import { newRepoDraft, profileDraft, profilePayload, requestNewRepo } from "../lib/runners.js";
 import ProfileForm from "../components/ProfileForm.vue";
+import NewRepoFields from "../components/NewRepoFields.vue";
 
 const router = useRouter();
 
@@ -21,6 +22,18 @@ const nameInput = ref(null);
 // hand with a token needs none. On by default, because the runner is how most boards are worked.
 const forRunner = ref(true);
 const profile = ref(profileDraft());
+// A board can start from nothing: one of your machines makes its repository on GitHub, and its first
+// duty builds the project's first version there.
+const creatingRepo = ref(false);
+const newRepo = ref(newRepoDraft());
+const machines = ref([]);
+// The repository is named after the board until someone names it otherwise.
+let suggested = "";
+watch([name, slug], () => {
+  const next = (slug.value || name.value).toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
+  if (newRepo.value.name === suggested) newRepo.value.name = next;
+  suggested = next;
+});
 
 async function load() {
   loading.value = true;
@@ -44,6 +57,12 @@ async function load() {
  *  leaving focus on itself, is a form a keyboard user has to go looking for. */
 async function openForm() {
   showForm.value = true;
+  api("/machines/list")
+    .then((res) => {
+      machines.value = res.machines || [];
+      if (!newRepo.value.machine_id) newRepo.value.machine_id = newRepoDraft("", machines.value).machine_id;
+    })
+    .catch(() => {});
   await nextTick();
   if (nameInput.value) nameInput.value.focus();
 }
@@ -52,17 +71,31 @@ async function create() {
   creating.value = true;
   error.value = "";
   try {
+    const makeRepo = forRunner.value && creatingRepo.value;
+    const payload = forRunner.value ? profilePayload(profile.value) : {};
+    if (makeRepo) payload.profile.repo_url = "";
     const res = await api("/projects/create", {
       name: name.value,
       project_id: slug.value || undefined,
-      ...(forRunner.value ? profilePayload(profile.value) : {}),
+      ...payload,
     });
+    // The board exists now whatever happens next. A repository that could not be asked for is offered
+    // again on its settings, so this goes there either way and says why.
+    let repoError = "";
+    if (makeRepo) {
+      await requestNewRepo(api, res.project_id, { ...newRepo.value, name: newRepo.value.name || res.project_id }).catch((err) => {
+        repoError = err.message;
+      });
+    }
     name.value = "";
     slug.value = "";
     profile.value = profileDraft();
+    creatingRepo.value = false;
+    newRepo.value = newRepoDraft("", machines.value);
     showForm.value = false;
     // Straight to where the next step is: putting it on a machine, or minting a token.
-    router.push({ name: "settings", params: { projectId: res.project_id }, query: { created: forRunner.value ? "runner" : "token" } });
+    const query = { created: forRunner.value ? "runner" : "token", ...(repoError ? { repo_error: repoError } : {}) };
+    router.push({ name: "settings", params: { projectId: res.project_id }, query });
   } catch (err) {
     error.value = err.message;
   } finally {
@@ -117,9 +150,13 @@ onMounted(load);
           </span>
         </span>
       </label>
-      <ProfileForm v-if="forRunner" v-model="profile" id-prefix="new" :disabled="creating" />
+      <ProfileForm v-if="forRunner" v-model="profile" v-model:creating="creatingRepo" id-prefix="new" offer-new-repo :disabled="creating">
+        <template #new-repo>
+          <NewRepoFields v-model="newRepo" id-prefix="new-repo" :machines="machines" :disabled="creating" />
+        </template>
+      </ProfileForm>
       <div>
-        <button class="primary" type="submit" :disabled="creating || !name">
+        <button class="primary" type="submit" :disabled="creating || !name || (forRunner && creatingRepo && !(newRepo.machine_id && newRepo.name))">
           {{ creating ? "Creating…" : "Create board" }}
         </button>
       </div>

@@ -26,7 +26,7 @@ import { putOp, deleteOp } from "./store.js";
 import { requireHuman, requireMachine, resolveProject, memberKey, linkKey } from "./identity.js";
 import { liveConfigured, mintMachineLive, machinesPresent, publishMachine } from "./live.js";
 import { runnableDuties, activeDuties, seedDuty, stripMeta, blockBehindSetup } from "./duties.js";
-import { mergeRunner, profileView } from "./profile.js";
+import { mergeRunner, profileView, repoUrl } from "./profile.js";
 import { createProjectFor } from "./projects.js";
 import { runDueSchedules } from "./schedules.js";
 
@@ -88,6 +88,8 @@ const requestView = (r) => ({
   kind: r.kind,
   path: r.path || "",
   repo_url: r.repo_url || "",
+  // For a create_repo request: the GitHub repository to make.
+  repo: r.repo || null,
   status: r.status,
   result: r.result || "",
   created_at: r.created_at,
@@ -423,7 +425,17 @@ async function machinesByIds(ctx, ids) {
 export async function boardRunners(ctx, body) {
   const caller = requireHuman(ctx.caller);
   const project = await resolveProject(caller, body.project_id, ctx.store);
-  return { project_id: project.key, runners: await runnersOf(ctx, project.key) };
+  const [runners, repoRequest] = await Promise.all([
+    runnersOf(ctx, project.key),
+    project.owner_uid === caller.uid ? repoRequestOf(ctx, project.key) : null,
+  ]);
+  return {
+    project_id: project.key,
+    runners,
+    // The repository it is having made, for its owner — and, once made, the board's repository.
+    repo_request: repoRequest,
+    repo_url: (project.profile && project.profile.repo_url) || "",
+  };
 }
 
 // --- the machine's own routes ------------------------------------------------------------
@@ -536,7 +548,8 @@ export async function linkMachine(ctx, body) {
             "Make this machine ready to work on the project: find what the project needs (engine, SDKs, runtimes, test tools), " +
             "install whatever is missing into the dutyboard tools folder and register it, record the toolchain, how a worktree is " +
             "prepared and how the project deploys with board_profile_propose, and ask on the board for anything that needs admin " +
-            "rights or a licence. Done when every tool the project needs runs on this machine.",
+            "rights or a licence. Done when every tool the project needs runs on this machine. A repository with nothing in it yet " +
+            "is a new project: build its first version from the board's description, then do the same.",
           kind: "setup",
           priority: "immediate_blocker",
           reservedFor: caller.agentPrefix,
@@ -735,16 +748,49 @@ export async function createMachineBoard(ctx, body) {
 
 // --- setup requests ----------------------------------------------------------------------
 
+/** A daemon gives up on a request after 30 minutes; one still "running" well after that was dropped —
+ *  its daemon stopped part way — and neither blocks another nor reads as under way. */
+const REQUEST_STALE_MS = 35 * 60 * 1000;
+const underWay = (r, now = Date.now()) => r.status === "pending" || (r.status === "running" && now - (r.updated_at || r.created_at) < REQUEST_STALE_MS);
+
+const GH_OWNER = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/;
+const GH_REPO = /^[A-Za-z0-9._-]{1,100}$/;
+
+/** The GitHub repository a create_repo request makes: `{ name, owner?, private? }`. */
+function newRepo(v, description) {
+  if (v == null || typeof v !== "object" || Array.isArray(v)) throw badRequest("'repo' must be an object with the repository's 'name'");
+  const name = str(v.name, "repo.name", { required: true, max: 100 });
+  if (!GH_REPO.test(name) || name === "." || name === "..") throw badRequest("'repo.name' must be letters, digits, '.', '-' and '_'");
+  // Empty is the account the machine's GitHub CLI is signed in as.
+  const owner = str(v.owner, "repo.owner", { max: 39 });
+  if (owner && !GH_OWNER.test(owner)) throw badRequest("'repo.owner' is not a GitHub user or organization name");
+  return { name, owner, private: v.private !== false, description: (description || "").replace(/\s+/g, " ").trim().slice(0, 300) };
+}
+
 /**
  * `POST /machine/request` — a person asks one of their machines to set a board up.
- * `{ machine_id, project_id, path? }`. `path` is relative to the machine's projects folder; the
- * daemon refuses anything outside it whatever this says, and so does this.
+ * `{ machine_id, project_id, path?, kind?, repo? }`. `path` is relative to the machine's projects
+ * folder; the daemon refuses anything outside it whatever this says, and so does this.
+ *
+ * `kind: "create_repo"` is for a board with no repository yet: the machine makes `repo` on GitHub with
+ * its own GitHub CLI, reports its URL — which becomes the board's — and then sets the board up as
+ * usual. The board's owner's alone: it decides where the board's code lives.
  */
 export async function requestSetup(ctx, body) {
   const machine = await ownMachine(ctx, body);
-  const project = await resolveProject(ctx.caller, body.project_id, ctx.store);
+  const kind = oneOf(body.kind, "kind", ["setup", "create_repo"], "setup");
+  const project = await resolveProject(ctx.caller, body.project_id, ctx.store, { ownerOnly: kind === "create_repo" });
   if (!(await mayRunAgents(ctx, project, ctx.caller.uid))) throw forbidden("the board's owner has not let you run agents on it");
-  if (!(project.profile && project.profile.repo_url)) {
+  const hasRepo = !!(project.profile && project.profile.repo_url);
+  let repo = null;
+  if (kind === "create_repo") {
+    if (hasRepo) throw conflict("this board already has a repository — change it in its settings instead");
+    repo = newRepo(body.repo, project.profile && project.profile.description);
+    const creating = await ctx.store.query("machine_requests", { where: [{ field: "project_id", op: "=", value: project.key }], limit: 50 });
+    if (creating.rows.some((r) => r.kind === "create_repo" && underWay(r))) {
+      throw conflict("a machine is already making this board's repository");
+    }
+  } else if (!hasRepo) {
     throw badRequest("this board has no repository URL — set one in its settings first: the machine clones it");
   }
   const path = str(body.path, "path", { max: 200 });
@@ -767,9 +813,10 @@ export async function requestSetup(ctx, body) {
     machine_id: machine.machine_id,
     project_id: project.key,
     owner_uid: machine.owner_uid,
-    kind: "setup",
+    kind,
     path: path || project.key,
     repo_url: (project.profile && project.profile.repo_url) || "",
+    ...(repo ? { repo } : {}),
     status: "pending",
     result: "",
     requested_by: ctx.caller.uid,
@@ -781,21 +828,53 @@ export async function requestSetup(ctx, body) {
   return { ok: true, request: requestView({ ...row, key: id }) };
 }
 
-/** `POST /machine/request/report` — `{ request_id, status: running|done|failed, result? }`. */
+/**
+ * `POST /machine/request/report` — `{ request_id, status: running|done|failed, result?, repo_url? }`.
+ *
+ * A create_repo request reports the repository it made in `repo_url`, and that becomes the board's —
+ * unless the owner gave the board one meanwhile, which is theirs and stays.
+ */
 export async function reportRequest(ctx, body) {
   const caller = requireMachine(ctx.caller);
   const id = str(body.request_id, "request_id", { required: true, max: 40 });
   const row = await ctx.store.get("machine_requests", id);
   if (!row || row.machine_id !== caller.machineId) throw notFound(`request '${id}' not found`);
+  const now = Date.now();
   const next = {
     ...stripMeta(row),
     status: oneOf(body.status, "status", ["running", "done", "failed"]),
     result: str(body.result, "result", { max: 2000 }),
-    updated_at: Date.now(),
+    updated_at: now,
   };
+  let adopted = false;
+  if (body.repo_url != null) {
+    if (row.kind !== "create_repo") throw badRequest("only a create_repo request reports a repository");
+    if (!underWay(row)) throw conflict(`request '${id}' is ${row.status === "running" ? "too old" : row.status} — it can no longer give the board a repository`);
+    next.repo_url = repoUrl(body.repo_url, "repo_url");
+    const project = next.repo_url && (await ctx.store.get("projects", row.project_id));
+    if (project && !(project.profile && project.profile.repo_url)) {
+      const profile = { ...(project.profile || {}), repo_url: next.repo_url };
+      // The first branch the machine pushes, in a repository that had none.
+      if (!profile.default_branch) profile.default_branch = "main";
+      await ctx.store.putOne("projects", project.key, { ...stripMeta(project), profile, updated_at: now });
+      adopted = true;
+    }
+  }
   await ctx.store.putOne("machine_requests", id, next);
+  if (adopted) await ctx.publish(row.project_id, null, { t: "board", what: "profile" });
   await ctx.publish(row.project_id, null, { t: "runner", machine_id: caller.machineId, request: next.status });
-  return { ok: true, request: requestView({ ...next, key: id }) };
+  return { ok: true, adopted, request: requestView({ ...next, key: id }) };
+}
+
+/** The latest create_repo request on a board, for its settings to say how making it went. */
+async function repoRequestOf(ctx, projectKey) {
+  const { rows } = await ctx.store.query("machine_requests", { where: [{ field: "project_id", op: "=", value: projectKey }], limit: 50 });
+  const latest = rows.filter((r) => r.kind === "create_repo").sort((a, b) => b.created_at - a.created_at)[0];
+  if (!latest) return null;
+  if (latest.status === "running" && !underWay(latest)) {
+    return requestView({ ...latest, status: "failed", result: "the machine stopped part way through — ask again, or give the board a repository URL" });
+  }
+  return requestView(latest);
 }
 
 // --- bookkeeping -------------------------------------------------------------------------

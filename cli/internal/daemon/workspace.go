@@ -120,12 +120,36 @@ func (d *Daemon) ensureClone(ctx context.Context, v board.BoardView) (string, er
 	if err != nil {
 		return "", err
 	}
+	if err := d.seed(ctx, dir, v.Profile.DefaultBranch, v.Name, v.Profile.Description); err != nil {
+		return "", err
+	}
 	for _, r := range v.Profile.Repos {
-		if _, err := d.cloneRepo(ctx, v, workspaceKey(v.ProjectID, r.Name), r.RepoURL); err != nil {
+		rdir, err := d.cloneRepo(ctx, v, workspaceKey(v.ProjectID, r.Name), r.RepoURL)
+		if err == nil {
+			err = d.seed(ctx, rdir, r.DefaultBranch, v.Name+" — "+r.Name, "")
+		}
+		if err != nil {
 			return "", fmt.Errorf("repository %q: %w", r.Name, err)
 		}
 	}
 	return dir, nil
+}
+
+// seed gives an empty repository its first commit, so its duties have a branch to start from. A seed
+// that fails leaves no clone behind: the next check clones again, and finds the remote as it is then.
+func (d *Daemon) seed(ctx context.Context, dir, branch, title, about string) error {
+	if err := commitIdentity(ctx, dir); err != nil {
+		return err
+	}
+	seeded, err := worktree.Seed(ctx, dir, branch, title, about)
+	if err != nil {
+		_ = os.RemoveAll(dir)
+		return fmt.Errorf("the repository is empty, and putting its first commit in it failed: %w", err)
+	}
+	if seeded {
+		d.log.Printf("%s: the repository was empty; pushed its first commit", title)
+	}
+	return nil
 }
 
 // workspaceKey is how a clone is known: the board, or the board and the name of one of its other

@@ -145,13 +145,9 @@ async function main() {
   sh("git", ["add", "."], linked);
   sh("git", ["-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "--quiet", "-m", "start"], linked);
   sh("git", ["push", "--quiet", "origin", "HEAD:main"], linked);
-  const toolsSeed = join(work, "tools-seed");
+  // The tools repository starts empty, as one made on GitHub for a new board does: the daemon puts its
+  // first commit in it.
   sh("git", ["init", "--quiet", "--bare", "-b", "main", toolsRemote], work);
-  sh("git", ["clone", "--quiet", toolsRemote, toolsSeed], work);
-  writeFileSync(join(toolsSeed, "TOOLS.md"), "# tools\n");
-  sh("git", ["add", "."], toolsSeed);
-  sh("git", ["-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "--quiet", "-m", "start"], toolsSeed);
-  sh("git", ["push", "--quiet", "origin", "HEAD:main"], toolsSeed);
   const link = await call("/machine/link", { project_id: boardId }, paired.machine_key);
 
   const hello = await call("/duty/enqueue", { project_id: boardId, title: "Add a hello file", brief: "Anything will do." }, human);
@@ -184,6 +180,11 @@ async function main() {
       "setup records the toolchain and registers a tool, over the bridge",
       setupEvent && !setupEvent.proposeError && !setupEvent.registerError && setupEvent.integrate?.no_op && !setupEvent.completeError,
       setupEvent,
+    );
+    check("a repository holding only a README gets the setup that builds its first version", setupEvent?.fresh === true, setupEvent);
+    check(
+      "and an empty one is given its first commit, on the board's branch",
+      sh("git", ["--git-dir", toolsRemote, "log", "--format=%s", "main"]).trim() === "Start Runner — tools",
     );
     const profile = await call("/board/profile", { project_id: boardId }, human);
     check("and the board now knows the project's test command", profile.profile.test_command === "test -f README.md", profile.profile);

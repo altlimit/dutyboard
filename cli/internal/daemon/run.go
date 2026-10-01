@@ -248,6 +248,13 @@ func (d *Daemon) execute(dctx, rctx context.Context, run *Run, duty *board.Duty,
 				base = worktree.DefaultBranch(dctx, spec.Repo, worktree.Remote(dctx, spec.Repo))
 			}
 			in.Detected = deploy.Detect(path, base).Describe()
+			// Read from what the duty started from, not the worktree: a resumed session that has
+			// already built part of the first version is still building it.
+			ref := base
+			if remote := worktree.Remote(dctx, spec.Repo); remote != "" {
+				ref = remote + "/" + base
+			}
+			in.Fresh = worktree.Fresh(dctx, spec.Repo, ref)
 		}
 		system, err := prompt.System(in)
 		if err != nil {

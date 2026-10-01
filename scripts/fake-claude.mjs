@@ -146,7 +146,7 @@ if (/make this machine ready/.test(prompt)) {
   const registered = await tool("tools_register", { name: "fakenode", version: "1", path: process.execPath.replace(/\/node$/, ""), verify: "node --version" });
   const integrated = await tool("duty_integrate");
   const completed = await tool("duty_complete", { duty_id: dutyId, outcome_summary: "Node is installed; recorded the toolchain." });
-  record({ event: "setup", proposeError: proposed.isError ? proposed.text : null, registerError: registered.isError ? registered.text : null, integrate: integrated.data, completeError: completed.isError ? completed.text : null });
+  record({ event: "setup", fresh: /build its first version/.test(prompt), proposeError: proposed.isError ? proposed.text : null, registerError: registered.isError ? registered.text : null, integrate: integrated.data, completeError: completed.isError ? completed.text : null });
   finish("set up");
 }
 

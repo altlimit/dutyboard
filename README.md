@@ -347,6 +347,13 @@ duty tells you which. Tools a setup duty installs — an engine, an SDK, a brows
 `<root>/_tools/` and are registered, so every later session on the machine finds them on its PATH
 and nothing is downloaded twice.
 
+A board can also **start from nothing**: choose *A new one on GitHub* when you make it (or on its
+settings, while it has no repository). One of your machines makes the repository with its GitHub
+CLI (`gh auth login` on it first — DutyBoard holds no GitHub credential), pushes a first commit, and
+works the board. Its setup duty sees a repository with nothing in it but a README, and builds the
+project's first version from the board's description and stack before setting the machine up. An
+empty repository you point a board at gets the same first commit.
+
 Git runs as the machine's user, with its keys and credentials. A board can set the **commit author**
 and an **SSH command** (another key or account) — written into the machine's clone of that board,
 never your global config. A board that opens **pull requests** needs the GitHub CLI signed in on the

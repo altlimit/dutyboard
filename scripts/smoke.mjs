@@ -1162,6 +1162,42 @@ async function main() {
   check("but never for a folder outside the machine's projects folder", outsidePath.status === 400, outsidePath.json);
   const reportedDone = await call("/machine/request/report", { request_id: setupRequest.request.request_id, status: "done", result: "cloned" }, mkey);
   check("the daemon reports the setup done", reportedDone.request.status === "done", reportedDone);
+
+  // A board started from nothing: no repository yet, and one of the owner's machines makes it.
+  const fresh = `smoke-fresh-${Date.now().toString(36)}`;
+  await call("/projects/create", { name: "Fresh", project_id: fresh, profile: { type: "webapp", description: "A todo app." } }, human);
+  const repoOnRepoBoard = await call("/machine/request", { machine_id: paired.machine_id, project_id: mBoard, kind: "create_repo", repo: { name: "x" } }, human, { expectStatus: true });
+  check("a board that has a repository is not given another", repoOnRepoBoard.status === 409, repoOnRepoBoard.json);
+  const badRepoName = await call("/machine/request", { machine_id: paired.machine_id, project_id: fresh, kind: "create_repo", repo: { name: "no spaces" } }, human, { expectStatus: true });
+  check("a repository name GitHub would refuse is refused here first", badRepoName.status === 400, badRepoName.json);
+  const createRepo = await call("/machine/request", { machine_id: paired.machine_id, project_id: fresh, kind: "create_repo", repo: { name: fresh, owner: "someone" } }, human);
+  const heardCreate = await socket.next((f) => f.data && f.data.t === "setup" && f.data.request_id === createRepo.request.request_id);
+  check(
+    "asking a machine to make the repository reaches it with what to make, private unless asked otherwise",
+    heardCreate && createRepo.request.kind === "create_repo" && createRepo.request.repo.private === true && createRepo.request.repo.description === "A todo app.",
+    createRepo.request,
+  );
+  const createTwice = await call("/machine/request", { machine_id: paired.machine_id, project_id: fresh, kind: "create_repo", repo: { name: fresh } }, human, { expectStatus: true });
+  check("and only one machine makes it at a time", createTwice.status === 409, createTwice.json);
+  const notCreate = await call("/machine/request/report", { request_id: setupRequest.request.request_id, status: "done", repo_url: "git@github.com:a/b.git" }, mkey, { expectStatus: true });
+  check("a plain setup cannot hand a board a repository", notCreate.status === 400, notCreate.json);
+  const made = await call("/machine/request/report", { request_id: createRepo.request.request_id, status: "running", result: "created", repo_url: `git@github.com:someone/${fresh}.git` }, mkey);
+  const freshProfile = await call("/board/profile", { project_id: fresh }, human);
+  check(
+    "the repository the machine made becomes the board's, on main",
+    made.adopted === true && freshProfile.profile.repo_url === `git@github.com:someone/${fresh}.git` && freshProfile.profile.default_branch === "main",
+    freshProfile.profile,
+  );
+  const freshRunners = await call("/board/runners", { project_id: fresh }, human);
+  check(
+    "and its settings show how making it went",
+    freshRunners.repo_request && freshRunners.repo_request.status === "running" && freshRunners.repo_url === `git@github.com:someone/${fresh}.git`,
+    freshRunners,
+  );
+  await call("/machine/request/report", { request_id: createRepo.request.request_id, status: "done", result: "cloned" }, mkey);
+  const late = await call("/machine/request/report", { request_id: createRepo.request.request_id, status: "done", repo_url: "git@github.com:someone/else.git" }, mkey, { expectStatus: true });
+  check("a finished request cannot hand the board a repository later", late.status === 409, late.json);
+  await call("/projects/delete", { project_id: fresh, confirm: fresh }, human);
   await call("/machine/state", { project_id: mBoard, runs: [{ duty_id: pauseMenu.duty_id, state: "parked", detail: "waiting on Esc" }] }, mkey);
   const ownerView = (await call("/machines/list", {}, human)).machines.find((m) => m.machine_id === paired.machine_id) || {};
   check(

@@ -85,7 +85,7 @@ function branch(v, field) {
   return b;
 }
 
-function repoUrl(v, field) {
+export function repoUrl(v, field) {
   const u = str(v, field, { max: 500 });
   // file:// is for a repository on the machine itself — a local bare repo, or a test.
   if (u && !/^(https:\/\/|ssh:\/\/|git@|file:\/\/)[^\s]+$/.test(u)) {

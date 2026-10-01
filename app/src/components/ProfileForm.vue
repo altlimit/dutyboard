@@ -9,7 +9,10 @@ import { AGENTS, CODEX_PERMISSION_MODES, CURSOR_PERMISSION_MODES, DEPLOY_METHODS
 // `idPrefix` keeps label/input ids unique when the form could appear twice on one page.
 
 const draft = defineModel({ type: Object, required: true });
-defineProps({ idPrefix: { type: String, default: "pf" }, disabled: { type: Boolean, default: false } });
+// `offerNewRepo`, on a board being made: its repository can be a new one, made on GitHub by one of your
+// machines, instead of a URL. The parent fills the `new-repo` slot with what to make and binds `creating`.
+const creating = defineModel("creating", { type: Boolean, default: false });
+defineProps({ idPrefix: { type: String, default: "pf" }, disabled: { type: Boolean, default: false }, offerNewRepo: { type: Boolean, default: false } });
 
 const modes = computed(() =>
   draft.value.agent === "codex" ? CODEX_PERMISSION_MODES : draft.value.agent === "cursor" ? CURSOR_PERMISSION_MODES : PERMISSION_MODES,
@@ -61,7 +64,18 @@ const removeServer = (i) => {
 
   <fieldset class="stack" :disabled="disabled">
     <legend class="label">Where the code is</legend>
-    <div class="field">
+    <div v-if="offerNewRepo" class="choices" role="radiogroup" aria-label="Where its repository comes from">
+      <label class="choice">
+        <input v-model="creating" type="radio" :name="`${idPrefix}-origin`" :value="false" />
+        A repository it already has
+      </label>
+      <label class="choice">
+        <input v-model="creating" type="radio" :name="`${idPrefix}-origin`" :value="true" />
+        A new one on GitHub
+      </label>
+    </div>
+    <slot v-if="offerNewRepo && creating" name="new-repo" />
+    <div v-else class="field">
       <label :for="`${idPrefix}-repo`">Repository URL</label>
       <input :id="`${idPrefix}-repo`" v-model="draft.repo_url" required maxlength="500" placeholder="git@github.com:you/project.git" />
       <p class="hint">
@@ -70,13 +84,14 @@ const removeServer = (i) => {
         started.
       </p>
     </div>
-    <div class="field">
+    <div v-if="!(offerNewRepo && creating)" class="field">
       <label :for="`${idPrefix}-branch`">Main branch <span class="muted">(optional)</span></label>
       <input :id="`${idPrefix}-branch`" v-model="draft.default_branch" maxlength="100" placeholder="the repository's default" />
     </div>
     <div class="field">
       <label :for="`${idPrefix}-stack`">Stack <span class="muted">(optional, comma-separated)</span></label>
       <input :id="`${idPrefix}-stack`" v-model="draft.stack" placeholder="Godot 4, GDScript, Playwright" />
+      <p v-if="offerNewRepo && creating" class="hint">The new project is built on this. Left empty, its first duty chooses.</p>
     </div>
     <div class="field">
       <label :for="`${idPrefix}-test`">Test command <span class="muted">(optional)</span></label>

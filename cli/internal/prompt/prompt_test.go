@@ -56,12 +56,25 @@ func TestEveryKindRenders(t *testing.T) {
 		}
 	}
 
+	in.Duty.Kind, in.Fresh = "setup", true
+	out, err := Duty(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "build its first version") || !strings.Contains(out, "tools_register") || !strings.Contains(out, "`duty_01ABC`") {
+		t.Errorf("a setup on a new repository should build the project and then do setup's steps:\n%s", out)
+	}
+	in.Fresh = false
+	if out, _ := Duty(in); strings.Contains(out, "first version") || !strings.Contains(out, "tools_register") || !strings.Contains(out, "\n7. This duty normally") {
+		t.Errorf("a setup on an existing repository reads it, and keeps its steps in order:\n%s", out)
+	}
+
 	in.Duty.Kind, in.Resuming = "work", true
 	in.Duty.UnblockedContext = &struct {
 		LastQuestion    string `json:"last_question"`
 		HumanResolution string `json:"human_resolution"`
 	}{"Esc or P?", "Esc."}
-	out, _ := Duty(in)
+	out, _ = Duty(in)
 	if !strings.Contains(out, "resuming") || !strings.Contains(out, "Answer: Esc.") {
 		t.Errorf("a resumed duty should carry the answer:\n%s", out)
 	}

@@ -312,14 +312,25 @@ type BoardView struct {
 	RulesVersion int      `json:"rules_version"`
 }
 
-// Request is a setup a person asked this machine for.
+// Request is a setup a person asked this machine for: "setup" to work a board, or "create_repo" to
+// make the board's repository on GitHub first.
 type Request struct {
-	RequestID string `json:"request_id"`
-	ProjectID string `json:"project_id"`
-	Kind      string `json:"kind"`
-	Path      string `json:"path"`
-	RepoURL   string `json:"repo_url"`
-	Status    string `json:"status"`
+	RequestID string   `json:"request_id"`
+	ProjectID string   `json:"project_id"`
+	Kind      string   `json:"kind"`
+	Path      string   `json:"path"`
+	RepoURL   string   `json:"repo_url"`
+	Repo      *NewRepo `json:"repo"`
+	Status    string   `json:"status"`
+}
+
+// NewRepo is the GitHub repository a create_repo request makes. An empty Owner is the account the
+// machine's GitHub CLI is signed in as.
+type NewRepo struct {
+	Name        string `json:"name"`
+	Owner       string `json:"owner"`
+	Private     bool   `json:"private"`
+	Description string `json:"description"`
 }
 
 // Machine is this machine's settings.
@@ -472,6 +483,11 @@ func (c *Client) ReportState(ctx context.Context, projectID string, runs []Run, 
 // ReportRequest reports a setup request's progress.
 func (c *Client) ReportRequest(ctx context.Context, requestID, status, result string) error {
 	return c.Call(ctx, "/machine/request/report", "", map[string]any{"request_id": requestID, "status": status, "result": result}, nil)
+}
+
+// ReportRepo reports the repository a create_repo request made, which becomes the board's.
+func (c *Client) ReportRepo(ctx context.Context, requestID, repoURL string) error {
+	return c.Call(ctx, "/machine/request/report", "", map[string]any{"request_id": requestID, "status": "running", "result": "created " + repoURL, "repo_url": repoURL}, nil)
 }
 
 // --- duties ------------------------------------------------------------------------------

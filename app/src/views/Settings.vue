@@ -5,8 +5,9 @@ import { api, subscribeLive } from "../lib/altengine.js";
 import { user as me } from "../lib/session.js";
 import { config } from "../config.js";
 import { ago, statusLabel } from "../lib/duties.js";
-import { agentLabel, profileDraft, profilePayload, runStateLabel } from "../lib/runners.js";
+import { agentLabel, newRepoDraft, profileDraft, profilePayload, requestNewRepo, runStateLabel } from "../lib/runners.js";
 import ProfileForm from "../components/ProfileForm.vue";
+import NewRepoFields from "../components/NewRepoFields.vue";
 import { DAYS, REPEATS, allZones, browserZone, knownZone, repeatText, runText, scheduleDraft, schedulePayload, zoneOffsets } from "../lib/schedules.js";
 
 const props = defineProps({ projectId: { type: String, required: true } });
@@ -198,6 +199,43 @@ async function saveRules() {
 // Machines working this board, whoever's they are.
 const runners = ref([]);
 
+// A board with no repository yet can have one of your machines make it on GitHub. What it is doing
+// about that comes with the runners, and so does the repository once it is made.
+const repoRequest = ref(null);
+const newRepo = ref(newRepoDraft(props.projectId));
+const repoBusy = computed(() => !!repoRequest.value && ["pending", "running"].includes(repoRequest.value.status));
+const repoFailure = computed(() => (repoRequest.value ? (repoRequest.value.status === "failed" ? repoRequest.value.result : "") : route.query.repo_error || ""));
+const repoMaker = computed(() => (repoRequest.value && (myMachines.value.find((m) => m.machine_id === repoRequest.value.machine_id) || {}).name) || "Your machine");
+
+async function loadRunners({ quiet = true } = {}) {
+  let res;
+  try {
+    res = await api("/board/runners", { project_id: props.projectId });
+  } catch (err) {
+    if (!quiet) throw err;
+    return;
+  }
+  runners.value = res.runners;
+  repoRequest.value = res.repo_request || null;
+  // Only the repository: the rest of the form may be mid-edit.
+  if (res.repo_url && !profile.value.repo_url) {
+    profile.value.repo_url = res.repo_url;
+    profile.value.default_branch = profile.value.default_branch || "main";
+  }
+}
+
+async function makeRepo() {
+  busy.value = true;
+  error.value = "";
+  try {
+    repoRequest.value = (await requestNewRepo(api, props.projectId, newRepo.value)).request;
+  } catch (err) {
+    error.value = err.message;
+  } finally {
+    busy.value = false;
+  }
+}
+
 const retried = ref({});
 async function retryRunner(r) {
   busy.value = true;
@@ -207,7 +245,7 @@ async function retryRunner(r) {
     retried.value = { ...retried.value, [r.machine_id]: res.online === false ? "It is offline — it checks again when it is back." : "Asked it to check again…" };
     // Its answer arrives as a new report; give it a moment, then read the runners again.
     setTimeout(async () => {
-      runners.value = (await api("/board/runners", { project_id: props.projectId }).catch(() => ({ runners: runners.value }))).runners;
+      await loadRunners();
       retried.value = { ...retried.value, [r.machine_id]: "" };
     }, 8000);
   } catch (err) {
@@ -223,7 +261,7 @@ async function unlinkRunner(r) {
   error.value = "";
   try {
     await api("/machines/unlink", { machine_id: r.machine_id, project_id: props.projectId });
-    runners.value = (await api("/board/runners", { project_id: props.projectId })).runners;
+    await loadRunners({ quiet: false });
   } catch (err) {
     error.value = err.message;
   } finally {
@@ -255,6 +293,7 @@ const linkCommand = computed(() => `alt install altlimit/dutyboard\ndutyboard --
 const myMachines = ref([]);
 async function loadMachines() {
   myMachines.value = (await api("/machines/list").catch(() => ({ machines: [] }))).machines || [];
+  if (!newRepo.value.machine_id) newRepo.value.machine_id = newRepoDraft("", myMachines.value).machine_id;
 }
 const freeMachines = computed(() => myMachines.value.filter((m) => !runners.value.some((r) => r.machine_id === m.machine_id)));
 
@@ -407,6 +446,8 @@ async function load() {
       loadRules(),
       loadMachines(),
       loadSchedules(),
+      // Whether a machine is making its repository is the owner's to see.
+      isOwner.value ? loadRunners() : null,
       // Tokens are the owner's. A member is refused them, so they are not asked for.
       isOwner.value ? api("/tokens/list", { project_id: props.projectId }).then((l) => (tokens.value = l.tokens)) : null,
     ]);
@@ -482,7 +523,7 @@ onMounted(() => {
     if (!frame || !frame.data || frame.data.t !== "runner" || runnersTimer) return;
     runnersTimer = setTimeout(async () => {
       runnersTimer = null;
-      runners.value = (await api("/board/runners", { project_id: props.projectId }).catch(() => ({ runners: runners.value }))).runners;
+      await loadRunners();
     }, 800);
   });
 });
@@ -509,7 +550,22 @@ onUnmounted(() => {
 
     <section v-if="created === 'runner' || (role && !runners.length && hasProfile)" aria-labelledby="next-h" class="notice stack">
       <h2 id="next-h" style="margin: 0">Put this board on a machine</h2>
-      <p v-if="!profile.repo_url" class="notice notice--warn" style="margin: 0">
+      <p v-if="repoBusy" class="notice" role="status" style="margin: 0">
+        {{ repoMaker }} is {{ profile.repo_url ? "setting the board up in its new repository" : "making the board's repository on GitHub" }}{{ repoRequest.status === "pending" ? " — it starts when it next checks in" : "" }}…
+      </p>
+      <template v-else-if="!profile.repo_url && isOwner">
+        <p v-if="repoFailure" class="notice notice--error" role="alert" style="margin: 0">Making the repository failed: {{ repoFailure }}</p>
+        <p style="margin: 0">
+          Give the board its repository URL below — or start it from nothing, in a new repository one of your machines makes on GitHub:
+        </p>
+        <form class="stack" @submit.prevent="makeRepo">
+          <NewRepoFields v-model="newRepo" id-prefix="s-repo" :machines="myMachines" :disabled="busy" />
+          <div>
+            <button class="primary" type="submit" :disabled="busy || !newRepo.machine_id || !newRepo.name">Create the repository</button>
+          </div>
+        </form>
+      </template>
+      <p v-else-if="!profile.repo_url" class="notice notice--warn" style="margin: 0">
         Give the board its repository URL below first — a machine works a board from its own clone of it.
       </p>
       <div v-if="freeMachines.length" class="row">

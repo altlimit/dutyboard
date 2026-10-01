@@ -38,6 +38,7 @@ type Input struct {
 	Tools       string // what is installed on this machine, one line each
 	Hints       string // what this kind of project usually needs, for setup and rules
 	Detected    string // the daemon's reading of the repository's CI, for setup
+	Fresh       bool   // the repository has nothing in it yet: setup builds the project's first version
 	PrepFailed  string // the board's prep command failed in this worktree: what ran and what it said
 	MCPServers  []MCPServer
 	Repos       []Repo // the board's other repositories, when it has any
@@ -50,6 +51,9 @@ func System(in Input) (string, error) { return render("system.md", in) }
 func Duty(in Input) (string, error) {
 	switch in.Duty.Kind {
 	case "setup":
+		if in.Fresh {
+			return render("scaffold.md", in)
+		}
 		return render("setup.md", in)
 	case "rules":
 		return render("rules.md", in)

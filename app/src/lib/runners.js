@@ -167,6 +167,22 @@ export function profileDraft(profile, runner) {
   };
 }
 
+/** A repository for a machine to make on GitHub — see NewRepoFields.vue. */
+export function newRepoDraft(name = "", machines = []) {
+  const first = machines.find((m) => m.online !== false) || machines[0];
+  return { name, owner: "", private: true, machine_id: first ? first.machine_id : "" };
+}
+
+/** Ask a machine to make a board's repository; the board takes its URL once it is made. */
+export function requestNewRepo(api, projectId, d) {
+  return api("/machine/request", {
+    machine_id: d.machine_id,
+    project_id: projectId,
+    kind: "create_repo",
+    repo: { name: d.name.trim(), owner: d.owner.trim(), private: !!d.private },
+  });
+}
+
 /** What the function takes back. Only fields the form edits — setup's discoveries are left alone. */
 export function profilePayload(d) {
   const deploy = { method: d.deploy_method };
