@@ -328,6 +328,36 @@ async function main() {
     const removed = await until("slow worktree removed", () => !worktrees().includes(slow.duty_id), 20_000);
     check("deleting a duty stops its session and removes its worktree", !!removed && !events(log).some((e) => e.event === "slow-end"), worktrees());
 
+    // --- a board of one-off tasks: files in, files out, no repository ------------
+    const errands = `errands-${Date.now().toString(36)}`;
+    await call("/projects/create", { name: "Errands", project_id: errands, profile: { workspace: "files", description: "Things to print." }, runner: { parallel: 1 } }, human);
+    const putOn = await call("/machine/request", { machine_id: paired.machine_id, project_id: errands }, human);
+    const ready = await until("errands ready", async () => {
+      const m = (await call("/machines/list", {}, human)).machines[0];
+      return m.links.some((l) => l.project_id === errands) && m;
+    }, 30_000);
+    check("a board with no repository is put on a machine from the console", !!ready, putOn);
+    // Filed the way the console files it: the duty first, its file a moment later.
+    const task = await call("/duty/enqueue", { project_id: errands, title: "Make the menu printable", brief: "Black on white.", expect_files: 1 }, human);
+    await sleep(2000);
+    await call("/duty/attach", { duty_id: task.duty_id, name: "menu.txt", content_type: "text/plain", content_base64: Buffer.from("black on white").toString("base64") }, human);
+    const taskDone = await until("task done", async () => {
+      const d = await get(task.duty_id);
+      return d.status === "done" && d;
+    }, 60_000);
+    const worked = await until("files event", () => events(log).find((e) => e.event === "files" && e.dutyId === task.duty_id), 10_000);
+    check("the runner waits for the file still on its way, and hands it to the session in in/", worked && worked.inputs.join() === "menu.txt", worked);
+    check("the session is not offered duty_integrate, and completes without it", worked && !worked.offeredIntegrate && !worked.completeError, worked);
+    const files = (await call("/duty/attachments", { duty_id: task.duty_id }, human)).attachments;
+    const made = files.find((f) => f.name === "menu-printable.txt");
+    const madeBody = made && made.url ? await fetch(made.url).then((r) => r.text()) : null;
+    check("what it put in out/ is on the duty, made by the agent", made && made.author_type === "agent" && madeBody === "BLACK ON WHITE", { files, madeBody });
+    const scan = files.find((f) => f.name === "scan.pdf");
+    check("a file too big to send inline is uploaded too, as a PDF", scan && scan.size === 3 * 1024 * 1024 + 9 && scan.content_type === "application/pdf" && !scan.pending, scan);
+    check("and the outcome names them", taskDone && /Attached: menu-printable\.txt, scan\.pdf/.test(taskDone.outcome_summary), taskDone?.outcome_summary);
+    await until("task folder removed", () => !existsSync(join(home, "worktrees", errands, task.duty_id)), 10_000);
+    check("its folder is gone once it is done", !existsSync(join(home, "worktrees", errands, task.duty_id)));
+
     // --- deploying to altengine through the daemon -------------------------------
     await call("/projects/profile", { project_id: boardId, profile: { deploy: { method: "altengine", altengine_instances: ["runner-fns"] } } }, human);
     await sleep(3000); // the daemon reloads the profile from the board event

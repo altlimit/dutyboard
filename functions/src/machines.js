@@ -26,7 +26,7 @@ import { putOp, deleteOp } from "./store.js";
 import { requireHuman, requireMachine, resolveProject, memberKey, linkKey } from "./identity.js";
 import { liveConfigured, mintMachineLive, machinesPresent, publishMachine } from "./live.js";
 import { runnableDuties, activeDuties, seedDuty, stripMeta, blockBehindSetup } from "./duties.js";
-import { mergeRunner, profileView, repoUrl } from "./profile.js";
+import { isFilesBoard, mergeRunner, profileView, repoUrl } from "./profile.js";
 import { createProjectFor } from "./projects.js";
 import { runDueSchedules } from "./schedules.js";
 
@@ -495,7 +495,8 @@ export async function linkMachine(ctx, body) {
     if (!member) throw notFound(`project '${projectId}' not found`);
     throw forbidden("the board's owner has not let you run agents on it");
   }
-  if (!(project.profile && project.profile.repo_url)) {
+  const files = isFilesBoard(project);
+  if (!files && !(project.profile && project.profile.repo_url)) {
     throw badRequest("this board has no repository URL — set one in its settings first: a machine works a board from its own clone of it");
   }
   const pathHint = str(body.path_hint, "path_hint", { max: 300 });
@@ -539,8 +540,10 @@ export async function linkMachine(ctx, body) {
     runnerSet = true;
   }
 
+  // A board of one-off tasks has no project to set a machine up for, or to write rules about: each
+  // task installs what it needs, and registers it for the next.
   const setup =
-    body.setup === false || (await hasUnfinished(ctx, project.key, [{ field: "reserved_for", op: "=", value: caller.agentPrefix }, { field: "kind", op: "=", value: "setup" }]))
+    body.setup === false || files || (await hasUnfinished(ctx, project.key, [{ field: "reserved_for", op: "=", value: caller.agentPrefix }, { field: "kind", op: "=", value: "setup" }]))
       ? null
       : seedDuty(project, {
           title: `Set up ${caller.machineRow.name} for this project`,
@@ -561,7 +564,7 @@ export async function linkMachine(ctx, body) {
   ops.push(...paused.ops);
 
   const rules =
-    body.setup === false || project.rules_version || (await hasUnfinished(ctx, project.key, [{ field: "kind", op: "=", value: "rules" }]))
+    body.setup === false || files || project.rules_version || (await hasUnfinished(ctx, project.key, [{ field: "kind", op: "=", value: "rules" }]))
       ? null
       : rulesDuty(project, now);
   if (rules) ops.push(rules.op);
@@ -784,13 +787,14 @@ export async function requestSetup(ctx, body) {
   const hasRepo = !!(project.profile && project.profile.repo_url);
   let repo = null;
   if (kind === "create_repo") {
+    if (isFilesBoard(project)) throw conflict("this board works without a repository — change that in its settings first");
     if (hasRepo) throw conflict("this board already has a repository — change it in its settings instead");
     repo = newRepo(body.repo, project.profile && project.profile.description);
     const creating = await ctx.store.query("machine_requests", { where: [{ field: "project_id", op: "=", value: project.key }], limit: 50 });
     if (creating.rows.some((r) => r.kind === "create_repo" && underWay(r))) {
       throw conflict("a machine is already making this board's repository");
     }
-  } else if (!hasRepo) {
+  } else if (!hasRepo && !isFilesBoard(project)) {
     throw badRequest("this board has no repository URL — set one in its settings first: the machine clones it");
   }
   const path = str(body.path, "path", { max: 200 });

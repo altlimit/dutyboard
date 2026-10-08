@@ -62,8 +62,12 @@ func (d *Daemon) handleRequest(ctx context.Context, req board.Request) {
 			_ = d.api.ReportRequest(ctx, req.RequestID, "failed", made+"could not set it up: "+err.Error())
 			return
 		}
-		d.log.Printf("%s: cloned into %s", req.ProjectID, path)
-		_ = d.api.ReportRequest(ctx, req.RequestID, "done", made+"cloned into "+path)
+		done := "cloned into " + path
+		if v := d.view(req.ProjectID); v.Files() {
+			done = "ready: its duties are worked in folders under " + path
+		}
+		d.log.Printf("%s: %s", req.ProjectID, done)
+		_ = d.api.ReportRequest(ctx, req.RequestID, "done", made+done)
 		d.Reload()
 	}()
 }
@@ -96,6 +100,10 @@ func (d *Daemon) setUp(ctx context.Context, req board.Request) (string, error) {
 	d.mu.Unlock()
 	if !ok {
 		return "", fmt.Errorf("board %s did not appear among this machine's links", req.ProjectID)
+	}
+	if v.Files() {
+		// Nothing to clone: each of its duties gets a folder of its own when it starts.
+		return filepath.Join(d.wt.Root, v.ProjectID), nil
 	}
 	return d.ensureClone(ctx, v)
 }

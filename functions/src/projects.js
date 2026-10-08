@@ -11,7 +11,7 @@ import { liveConfigured, mintLive } from "./live.js";
 import { sweepAttachments } from "./attachments.js";
 import { searchConfigured, unindexDuties } from "./searching.js";
 import { sharedBoards, sweepMembers, syncAccess } from "./members.js";
-import { mergeProfile, mergeRunner } from "./profile.js";
+import { isFilesBoard, mergeProfile, mergeRunner } from "./profile.js";
 import { rulesDuty, runnersOf, sweepBoardMachines } from "./machines.js";
 
 const SWEEP_PAGE = 200;
@@ -73,8 +73,8 @@ export async function createProjectFor(ctx, caller, body) {
   };
   // A board made for a runner starts with its rules to write. One made the old way — for an agent
   // connected by hand — does not: a duty it never asked for would be the first thing that agent
-  // claimed.
-  const rules = withRunner ? rulesDuty({ key, owner_uid: caller.uid }, now) : null;
+  // claimed. Nor does a board of one-off tasks with files: there is no project to write rules for.
+  const rules = withRunner && !isFilesBoard(row) ? rulesDuty({ key, owner_uid: caller.uid }, now) : null;
   await ctx.store.transaction([putOp("projects", key, row), ...(rules ? [rules.op] : [])]);
   return { project_id: key, name, rules_duty_id: rules ? rules.id : null };
 }

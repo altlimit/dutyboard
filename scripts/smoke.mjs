@@ -1198,6 +1198,27 @@ async function main() {
   const late = await call("/machine/request/report", { request_id: createRepo.request.request_id, status: "done", repo_url: "git@github.com:someone/else.git" }, mkey, { expectStatus: true });
   check("a finished request cannot hand the board a repository later", late.status === 409, late.json);
   await call("/projects/delete", { project_id: fresh, confirm: fresh }, human);
+
+  // A board of one-off tasks: no repository, files in and files out.
+  const errands = `smoke-errands-${Date.now().toString(36)}`;
+  const madeErrands = await call("/projects/create", { name: "Errands", project_id: errands, profile: { workspace: "files", description: "PDFs to print." } }, human);
+  check("a board of one-off tasks needs no repository, and starts with no rules to write", madeErrands.rules_duty_id === null, madeErrands);
+  const errandsLink = await call("/machine/link", { project_id: errands }, mkey);
+  check(
+    "a machine works it without a repository, and with no setup duty to run first",
+    errandsLink.created === true && errandsLink.setup_duty_id === null && errandsLink.rules_duty_id === null,
+    errandsLink,
+  );
+  const errandsRepo = await call("/machine/request", { machine_id: paired.machine_id, project_id: errands, kind: "create_repo", repo: { name: errands } }, human, { expectStatus: true });
+  check("and is not given one to make", errandsRepo.status === 409, errandsRepo.json);
+  const errandsSetup = await call("/machine/request", { machine_id: paired.machine_id, project_id: errands }, human);
+  check("but can be put on a machine from the console", errandsSetup.request.status === "pending", errandsSetup.request);
+  await call("/machine/request/report", { request_id: errandsSetup.request.request_id, status: "done", result: "ready" }, mkey);
+  const printable = await call("/duty/enqueue", { project_id: errands, title: "Make the menu printable", brief: "Black on white.", expect_files: 2 }, human);
+  const printableRow = (await call("/duty/get", { duty_id: printable.duty_id }, human)).duty;
+  check("a duty says how many files its filer is still attaching, for a runner to wait for", printableRow.expect_files === 2, printableRow);
+  await call("/machine/unlink", { project_id: errands }, mkey);
+  await call("/projects/delete", { project_id: errands, confirm: errands }, human);
   await call("/machine/state", { project_id: mBoard, runs: [{ duty_id: pauseMenu.duty_id, state: "parked", detail: "waiting on Esc" }] }, mkey);
   const ownerView = (await call("/machines/list", {}, human)).machines.find((m) => m.machine_id === paired.machine_id) || {};
   check(

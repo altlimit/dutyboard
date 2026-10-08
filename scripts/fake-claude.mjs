@@ -12,7 +12,8 @@
 // and a work duty's title can carry [park], [crash] or [slow].
 
 import { spawn, execFileSync } from "node:child_process";
-import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 
 const args = process.argv.slice(2);
@@ -135,7 +136,13 @@ const tools = (await rpc("tools/list", {})).result.tools.map((t) => t.name);
 const dutyId = (prompt.match(/`(duty_[0-9A-Z]+)`/) || [])[1];
 const title = (prompt.match(/^# (?!The project|Working|Tools|From)(.+)$/m) || [])[1] || "";
 record({
-  event: "start", dutyId, title, resumed, session, tools, cwd: process.cwd(), branch: git("rev-parse", "--abbrev-ref", "HEAD"), path: process.env.PATH.split(":")[0],
+  event: "start", dutyId, title, resumed, session, tools, cwd: process.cwd(), branch: (() => {
+    try {
+      return git("rev-parse", "--abbrev-ref", "HEAD");
+    } catch {
+      return null; // a task's folder, which is no repository
+    }
+  })(), path: process.env.PATH.split(":")[0],
   mcp: mcpServers, strictMCP: args.includes("--strict-mcp-config"), allowedTools: (opt("--allowedTools") || "").split(","),
   instructions: (codex ? config.developer_instructions : cursor ? cursorPrompt.slice(0, Math.max(cursorSplit, 0)) : opt("--append-system-prompt")) || "",
   sandbox: codex ? { mode: config.sandbox_mode, writable: config["sandbox_workspace_write.writable_roots"] } : null,
@@ -156,6 +163,17 @@ if (/write this project's rules/.test(prompt)) {
   const completed = await tool("duty_complete", { duty_id: dutyId, outcome_summary: "Drafted the rules." });
   record({ event: "rules", submitError: submitted.isError ? submitted.text : null, integrate: integrated.data, completeError: completed.isError ? completed.text : null });
   finish("rules");
+}
+
+if (/put what it produces in `out\/`/.test(prompt)) {
+  // A task on a board with no repository: what came in is in in/, what it makes goes in out/.
+  const inputs = readdirSync("in").sort();
+  for (const f of inputs) writeFileSync(join("out", f.replace(/(\.\w+)?$/, "-printable$1")), readFileSync(join("in", f), "utf8").toUpperCase());
+  // And one too big to send inline, the size a scanned PDF often is.
+  writeFileSync(join("out", "scan.pdf"), Buffer.concat([Buffer.from("%PDF-1.4\n"), Buffer.alloc(3 * 1024 * 1024, 7)]));
+  const completed = await tool("duty_complete", { duty_id: dutyId, outcome_summary: "Made it printable." });
+  record({ event: "files", dutyId, inputs, offeredIntegrate: tools.includes("duty_integrate"), completeError: completed.isError ? completed.text : null });
+  finish("files");
 }
 
 if (title.includes("[crash]")) {

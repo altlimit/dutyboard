@@ -60,6 +60,8 @@ func (d *Daemon) ensureWorkspaces(ctx context.Context) {
 		problem := ""
 		if err := d.agentReady(ctx, v); err != nil {
 			problem = err.Error()
+		} else if v.Files() {
+			// A board of one-off tasks has no repository to clone: each duty gets a folder of its own.
 		} else if dir, err := d.ensureClone(ctx, v); err != nil {
 			problem = err.Error()
 		} else if err := commitIdentity(ctx, dir); err != nil {

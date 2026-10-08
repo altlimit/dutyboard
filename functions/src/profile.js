@@ -22,6 +22,14 @@ import { resolveProject, projectOfDuty, requireHuman, checkAgentId } from "./ide
 import { loadDuty, stripMeta } from "./duties.js";
 import { putOp } from "./store.js";
 
+/**
+ * Where a board's duties are worked. `repo`: in a worktree of the board's repository, landed with git.
+ * `files`: in a plain folder per duty, for one-off tasks — the files a person attached come in, the
+ * files the agent makes go back on the duty, and there is no repository at all.
+ */
+export const WORKSPACES = ["repo", "files"];
+export const isFilesBoard = (project) => !!(project && project.profile && project.profile.workspace === "files");
+
 export const PROJECT_TYPES = ["game", "website", "webapp", "mobile", "desktop", "api", "cli-lib", "other"];
 export const DEPLOY_METHODS = ["ci", "ci-dispatch", "altengine", "command", "none"];
 export const GIT_MODES = ["push", "squash", "pr"];
@@ -188,6 +196,7 @@ const obj = (v, field) => {
 export function mergeProfile(stored, input) {
   const next = { ...(stored || {}) };
   const p = obj(input, "profile");
+  if (has(p, "workspace")) next.workspace = oneOf(p.workspace, "profile.workspace", WORKSPACES, "repo");
   if (has(p, "type")) next.type = oneOf(p.type, "profile.type", PROJECT_TYPES);
   if (has(p, "type_other")) next.type_other = str(p.type_other, "profile.type_other", { max: 60 });
   if (has(p, "description")) next.description = str(p.description, "profile.description", { max: 2000 });

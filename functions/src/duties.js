@@ -45,7 +45,7 @@ import { badRequest, conflict, forbidden, notFound, str, oneOf, intIn, clip } fr
 import { dutyId, threadId } from "./ids.js";
 import { putOp } from "./store.js";
 import { resolveProject, projectOfDuty, requireHuman, authorOf, checkAgentId } from "./identity.js";
-import { sweepAttachments } from "./attachments.js";
+import { sweepAttachments, MAX_ATTACHMENTS } from "./attachments.js";
 import { indexFinished, unindexDuties } from "./searching.js";
 import { machinesPresent } from "./live.js";
 import { noteScheduleOutcome } from "./schedules.js";
@@ -365,6 +365,7 @@ export async function getDuty(ctx, body) {
       outcome_summary: duty.outcome_summary || null,
       last_question: duty.last_question || null,
       attachment_count: duty.attachment_count || 0,
+      expect_files: duty.expect_files || 0,
       affinity: duty.affinity || null,
       spawned_by: duty.spawned_by || null,
       blocked_by: duty.blocked_by || null,
@@ -621,6 +622,10 @@ export async function enqueueDuty(ctx, body) {
     reserved_for: reservedFor,
     affinity: null,
     lane: null,
+    // Files the person filing it is about to attach. The console adds them once the duty exists, and a
+    // runner claims within seconds — so it waits for this many before it starts, rather than working
+    // a duty whose input has not arrived.
+    expect_files: intIn(body.expect_files, "expect_files", 0, MAX_ATTACHMENTS, 0),
     created_at: now,
     updated_at: now,
   };

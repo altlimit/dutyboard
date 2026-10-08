@@ -508,6 +508,8 @@ async function addDuty() {
       title: draft.value.title,
       brief: draft.value.brief,
       priority: draft.value.priority,
+      // The files go up once it exists; a runner that claims it first waits for this many.
+      expect_files: draftFiles.value.length,
     });
     // From here the duty EXISTS. A file that fails does not un-create it — rolling back work
     // someone has written because a screenshot timed out would lose the part that mattered.

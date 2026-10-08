@@ -42,6 +42,14 @@ type Input struct {
 	PrepFailed  string // the board's prep command failed in this worktree: what ran and what it said
 	MCPServers  []MCPServer
 	Repos       []Repo // the board's other repositories, when it has any
+	Files       *Files // set on a board of one-off tasks, which has no repository
+}
+
+// Files is a duty's folder on a board of one-off tasks.
+type Files struct {
+	Dir, In, Out string   // the folder, the files that came with the duty, and where what it makes goes
+	Inputs       []string // what is in In
+	Missing      int      // files the person filing it was still attaching when it started
 }
 
 // System is the part appended to the agent's own system prompt.

@@ -354,6 +354,14 @@ works the board. Its setup duty sees a repository with nothing in it but a READM
 project's first version from the board's description and stack before setting the machine up. An
 empty repository you point a board at gets the same first commit.
 
+A board can also have **no repository at all**, for one-off tasks — *make this PDF print in black
+and white*, *resize these photos*. Choose *One-off tasks — files in, files out* when you make it.
+Attach what a task needs to its duty; the machine works it in a folder of its own, with the
+attached files in `in/`, and everything the agent leaves in `out/` is put back on the duty when it
+completes, ready to download. There is no setup or rules duty, nothing is committed, and the folder
+is removed once the duty is done. A tool a task needs is installed and registered once, for every
+later task on that machine.
+
 Git runs as the machine's user, with its keys and credentials. A board can set the **commit author**
 and an **SSH command** (another key or account) — written into the machine's clone of that board,
 never your global config. A board that opens **pull requests** needs the GitHub CLI signed in on the

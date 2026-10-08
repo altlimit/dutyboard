@@ -18,6 +18,7 @@ const modes = computed(() =>
   draft.value.agent === "codex" ? CODEX_PERMISSION_MODES : draft.value.agent === "cursor" ? CURSOR_PERMISSION_MODES : PERMISSION_MODES,
 );
 const agentName = computed(() => agentLabel(draft.value.agent));
+const files = computed(() => draft.value.workspace === "files");
 const agentNeeds = computed(() => (AGENTS.find((a) => a.key === draft.value.agent) || AGENTS[0]).install);
 
 const addRepo = () => {
@@ -44,6 +45,36 @@ const removeServer = (i) => {
 
 <template>
   <fieldset class="stack" :disabled="disabled">
+    <legend class="label">What does it work on?</legend>
+    <label class="choice choice--block">
+      <input v-model="draft.workspace" type="radio" :name="`${idPrefix}-workspace`" value="repo" />
+      <span>
+        A project in a repository
+        <span class="hint" style="display: block; margin: 0">Each duty is a change to the code, landed with git.</span>
+      </span>
+    </label>
+    <label class="choice choice--block">
+      <input v-model="draft.workspace" type="radio" :name="`${idPrefix}-workspace`" value="files" />
+      <span>
+        One-off tasks — files in, files out
+        <span class="hint" style="display: block; margin: 0">
+          No repository. Attach what a task needs to its duty; the agent works in a folder of its own and puts what it
+          makes back on the duty, ready to download.
+        </span>
+      </span>
+    </label>
+  </fieldset>
+
+  <fieldset v-if="files" class="stack" :disabled="disabled">
+    <legend class="label">What it is for</legend>
+    <div class="field">
+      <label :for="`${idPrefix}-desc`">About it <span class="muted">(optional)</span></label>
+      <textarea :id="`${idPrefix}-desc`" v-model="draft.description" maxlength="2000" placeholder="Office errands: PDFs to print, photos to resize, spreadsheets to tidy." />
+      <p class="hint">Every agent on the board reads this.</p>
+    </div>
+  </fieldset>
+
+  <fieldset v-if="!files" class="stack" :disabled="disabled">
     <legend class="label">What kind of project is it?</legend>
     <div class="choices" role="radiogroup">
       <label v-for="t in PROJECT_TYPES" :key="t.key" class="choice">
@@ -62,7 +93,7 @@ const removeServer = (i) => {
     </div>
   </fieldset>
 
-  <fieldset class="stack" :disabled="disabled">
+  <fieldset v-if="!files" class="stack" :disabled="disabled">
     <legend class="label">Where the code is</legend>
     <div v-if="offerNewRepo" class="choices" role="radiogroup" aria-label="Where its repository comes from">
       <label class="choice">
@@ -132,7 +163,7 @@ const removeServer = (i) => {
     </fieldset>
   </fieldset>
 
-  <fieldset class="stack" :disabled="disabled">
+  <fieldset v-if="!files" class="stack" :disabled="disabled">
     <legend class="label">When a duty is done, its work is</legend>
     <label v-for="g in GIT_MODES" :key="g.key" class="choice choice--block">
       <input v-model="draft.git_mode" type="radio" :name="`${idPrefix}-git`" :value="g.key" />

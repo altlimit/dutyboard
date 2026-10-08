@@ -203,6 +203,8 @@ const runners = ref([]);
 // about that comes with the runners, and so does the repository once it is made.
 const repoRequest = ref(null);
 const newRepo = ref(newRepoDraft(props.projectId));
+/** A board of one-off tasks needs no repository; any other needs one before a machine can work it. */
+const needsRepo = computed(() => profile.value.workspace !== "files" && !profile.value.repo_url);
 const repoBusy = computed(() => !!repoRequest.value && ["pending", "running"].includes(repoRequest.value.status));
 const repoFailure = computed(() => (repoRequest.value ? (repoRequest.value.status === "failed" ? repoRequest.value.result : "") : route.query.repo_error || ""));
 const repoMaker = computed(() => (repoRequest.value && (myMachines.value.find((m) => m.machine_id === repoRequest.value.machine_id) || {}).name) || "Your machine");
@@ -303,7 +305,10 @@ async function workOn(m) {
   profileNotice.value = "";
   try {
     await api("/machine/request", { machine_id: m.machine_id, project_id: props.projectId });
-    profileNotice.value = `Asked ${m.name} to work this board. If it is online it clones the repository and starts within a minute.`;
+    profileNotice.value =
+      profile.value.workspace === "files"
+        ? `Asked ${m.name} to work this board. If it is online it takes its tasks within a minute.`
+        : `Asked ${m.name} to work this board. If it is online it clones the repository and starts within a minute.`;
   } catch (err) {
     error.value = err.message;
   } finally {
@@ -553,7 +558,7 @@ onUnmounted(() => {
       <p v-if="repoBusy" class="notice" role="status" style="margin: 0">
         {{ repoMaker }} is {{ profile.repo_url ? "setting the board up in its new repository" : "making the board's repository on GitHub" }}{{ repoRequest.status === "pending" ? " — it starts when it next checks in" : "" }}…
       </p>
-      <template v-else-if="!profile.repo_url && isOwner">
+      <template v-else-if="needsRepo && isOwner">
         <p v-if="repoFailure" class="notice notice--error" role="alert" style="margin: 0">Making the repository failed: {{ repoFailure }}</p>
         <p style="margin: 0">
           Give the board its repository URL below — or start it from nothing, in a new repository one of your machines makes on GitHub:
@@ -565,11 +570,11 @@ onUnmounted(() => {
           </div>
         </form>
       </template>
-      <p v-else-if="!profile.repo_url" class="notice notice--warn" style="margin: 0">
+      <p v-else-if="needsRepo" class="notice notice--warn" style="margin: 0">
         Give the board its repository URL below first — a machine works a board from its own clone of it.
       </p>
       <div v-if="freeMachines.length" class="row">
-        <button v-for="m in freeMachines" :key="m.machine_id" type="button" :disabled="busy || !profile.repo_url" @click="workOn(m)">
+        <button v-for="m in freeMachines" :key="m.machine_id" type="button" :disabled="busy || needsRepo" @click="workOn(m)">
           Work it on {{ m.name }}
         </button>
       </div>
@@ -582,8 +587,9 @@ onUnmounted(() => {
         <button type="button" @click="copy(linkCommand)">Copy</button>
       </div>
       <p class="small muted" style="margin: 0">
-        It pairs the machine; then choose it here. Its first duties get the machine ready for the project and draft
-        this board's rules for you to accept.
+        It pairs the machine; then choose it here.
+        <template v-if="profile.workspace === 'files'">It takes the board's tasks as they are filed, each in a folder of its own.</template>
+        <template v-else>Its first duties get the machine ready for the project and draft this board's rules for you to accept.</template>
       </p>
     </section>
 

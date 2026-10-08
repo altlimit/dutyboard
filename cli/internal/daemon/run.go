@@ -40,6 +40,8 @@ type Run struct {
 	Token                             string
 	Spec                              worktree.Spec
 	Worktree                          string
+	// Files is a duty on a board of one-off tasks: worked in a folder of files, with no repository.
+	Files bool
 
 	mu         sync.Mutex
 	st, det    string
@@ -172,22 +174,40 @@ func (d *Daemon) rulesFor(ctx context.Context, boardID string) (int, string) {
 func (d *Daemon) execute(dctx, rctx context.Context, run *Run, duty *board.Duty, resuming bool) {
 	v := d.view(run.Board)
 	spec := d.specFor(dctx, run.Board, run.DutyID, v)
-	run.Spec = spec
+	run.Spec, run.Files = spec, v.Files()
 	run.set("working", "preparing its worktree")
 	d.report(dctx, run.Board)
 
-	path, created, err := d.wt.Ensure(rctx, spec)
-	var prepErr *worktree.PrepError
-	prepFailed := ""
-	switch {
-	case errors.As(err, &prepErr) && path != "":
-		// The worktree is there; only its prep failed. That is the session's to sort out — it has the
-		// shell and the project in front of it — not a question for a person.
-		d.log.Printf("%s: prep failed for %q, handing it to the session: %v", run.Board, run.Title, prepErr.Err)
-		prepFailed = fmt.Sprintf("Command: %s\nError: %v\nOutput (tail):\n%s", prepErr.Command, prepErr.Err, prepErr.Output)
-	case err != nil:
-		d.park(dctx, run, v, fmt.Sprintf("The runner on this machine could not prepare a worktree for this duty, so it has not started:\n\n%v", err))
-		return
+	var (
+		path, prepFailed string
+		created          bool
+		files            prompt.Files
+		err              error
+	)
+	if run.Files {
+		path, created, files.Inputs, files.Missing, err = d.prepareFiles(rctx, run, duty)
+		if err != nil {
+			if rctx.Err() != nil {
+				return
+			}
+			d.park(dctx, run, v, fmt.Sprintf("The runner on this machine could not fetch this duty's files, so it has not started:\n\n%v", err))
+			return
+		}
+		files.Dir = path
+		_, files.In, files.Out = d.filesFolder(run)
+	} else {
+		path, created, err = d.wt.Ensure(rctx, spec)
+		var prepErr *worktree.PrepError
+		switch {
+		case errors.As(err, &prepErr) && path != "":
+			// The worktree is there; only its prep failed. That is the session's to sort out — it has the
+			// shell and the project in front of it — not a question for a person.
+			d.log.Printf("%s: prep failed for %q, handing it to the session: %v", run.Board, run.Title, prepErr.Err)
+			prepFailed = fmt.Sprintf("Command: %s\nError: %v\nOutput (tail):\n%s", prepErr.Command, prepErr.Err, prepErr.Output)
+		case err != nil:
+			d.park(dctx, run, v, fmt.Sprintf("The runner on this machine could not prepare a worktree for this duty, so it has not started:\n\n%v", err))
+			return
+		}
 	}
 	run.Worktree = path
 
@@ -198,6 +218,9 @@ func (d *Daemon) execute(dctx, rctx context.Context, run *Run, duty *board.Duty,
 	// opened before — or of every one, for a setup, which has to make the machine ready for them all.
 	d.repoPlaceholders(dctx, run, v)
 	for _, r := range boardRepos(v) {
+		if run.Files {
+			break
+		}
 		wanted := run.Kind == "setup"
 		for _, n := range rec.Repos {
 			wanted = wanted || n == r.Name
@@ -231,6 +254,9 @@ func (d *Daemon) execute(dctx, rctx context.Context, run *Run, duty *board.Duty,
 			ProjectRoot: spec.Repo, LocalDir: spec.CopyFrom, Tools: d.tools.Describe(), PrepFailed: prepFailed,
 			Repos: d.promptRepos(dctx, run, v),
 		}
+		if run.Files {
+			in.Files = &files
+		}
 		servers, _ := d.boardMCPServers(v)
 		for _, s := range servers {
 			in.MCPServers = append(in.MCPServers, prompt.MCPServer{Name: s.Name, Tools: s.Tools, Note: noteOf(v, s.Name)})
@@ -242,7 +268,7 @@ func (d *Daemon) execute(dctx, rctx context.Context, run *Run, duty *board.Duty,
 			}
 			in.Hints = hints.For(kind)
 		}
-		if run.Kind == "setup" {
+		if run.Kind == "setup" && !run.Files {
 			base := spec.Base
 			if base == "" {
 				base = worktree.DefaultBranch(dctx, spec.Repo, worktree.Remote(dctx, spec.Repo))
@@ -332,8 +358,7 @@ func (d *Daemon) execute(dctx, rctx context.Context, run *Run, duty *board.Duty,
 		fresh, err := d.api.Get(dctx, run.Board, run.DutyID)
 		if board.IsStatus(err, 404) {
 			d.log.Printf("%s was deleted; removing its worktree", run.DutyID)
-			_ = d.wt.Remove(dctx, spec, false)
-			d.removeRepos(dctx, run, v, false)
+			d.removeWork(dctx, run, v, false)
 			_ = state.SaveRunRecord(run.DutyID, nil)
 			return
 		}
@@ -347,8 +372,7 @@ func (d *Daemon) execute(dctx, rctx context.Context, run *Run, duty *board.Duty,
 		case "done", "failed":
 			res := run.integration()
 			keepBranch := res != nil && res.Mode == worktree.ModeBranch && !res.NoOp
-			_ = d.wt.Remove(dctx, spec, keepBranch)
-			d.removeRepos(dctx, run, v, keepBranch)
+			d.removeWork(dctx, run, v, keepBranch)
 			_ = state.SaveRunRecord(run.DutyID, nil)
 			d.log.Printf("%s: %s %q", run.Board, fresh.Status, fresh.Title)
 			if fresh.Status == "done" && res != nil && res.OK && !res.NoOp && (res.Mode == worktree.ModePush || res.Mode == worktree.ModeSquash) {
@@ -384,6 +408,17 @@ func (d *Daemon) execute(dctx, rctx context.Context, run *Run, duty *board.Duty,
 			return
 		}
 	}
+}
+
+// removeWork removes a finished duty's worktrees — or, on a board of one-off tasks, its folder.
+func (d *Daemon) removeWork(ctx context.Context, run *Run, v board.BoardView, keepBranch bool) {
+	if run.Files {
+		dir, _, _ := d.filesFolder(run)
+		_ = os.RemoveAll(dir)
+		return
+	}
+	_ = d.wt.Remove(ctx, run.Spec, keepBranch)
+	d.removeRepos(ctx, run, v, keepBranch)
 }
 
 func describe(o runner.Outcome) string {
@@ -443,7 +478,7 @@ func (d *Daemon) job(run *Run, v board.BoardView, path, system, task string, rec
 		}}, servers...),
 		// A worktree's commits are written to its clone's git folder, and setup installs into the tools
 		// folder: an agent that sandboxes its writes to the worktree needs both.
-		Writable: append(append([]string{filepath.Join(run.Spec.Repo, ".git"), tools.Dir()}, d.repoWritable(v)...), d.repoPlaceholders(context.Background(), run, v)...),
+		Writable: append(append([]string{tools.Dir()}, d.repoWritable(v)...), d.repoPlaceholders(context.Background(), run, v)...),
 		AddDirs:  d.repoPlaceholders(context.Background(), run, v),
 		Env:      append(d.tools.SessionEnv(), "DUTYBOARD_RUN_TOKEN="+run.Token, "DUTYBOARD_HOME="+state.Home()),
 	}
@@ -460,7 +495,10 @@ func (d *Daemon) job(run *Run, v board.BoardView, path, system, task string, rec
 			j.Timeout = time.Duration(r.SessionMinutes) * time.Minute
 		}
 	}
-	if run.Kind == "setup" {
+	if run.Spec.Repo != "" {
+		j.Writable = append(j.Writable, filepath.Join(run.Spec.Repo, ".git"))
+	}
+	if run.Kind == "setup" && !run.Files {
 		j.AddDirs = append(j.AddDirs, run.Spec.CopyFrom)
 	}
 	var loggedAt time.Time

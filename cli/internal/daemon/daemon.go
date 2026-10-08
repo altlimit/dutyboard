@@ -460,7 +460,8 @@ func (d *Daemon) tick(ctx context.Context) error {
 			if d.running() >= maxSessions {
 				return nil
 			}
-			if d.folder(b.ProjectID) == "" || d.problem(b.ProjectID) != "" {
+			// A board is ready once it has its clone — or, with no repository, as soon as it is linked.
+			if (d.folder(b.ProjectID) == "" && !d.view(b.ProjectID).Files()) || d.problem(b.ProjectID) != "" {
 				continue
 			}
 			if d.startOne(ctx, b, started, tried) {

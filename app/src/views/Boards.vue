@@ -71,7 +71,7 @@ async function create() {
   creating.value = true;
   error.value = "";
   try {
-    const makeRepo = forRunner.value && creatingRepo.value;
+    const makeRepo = forRunner.value && creatingRepo.value && profile.value.workspace !== "files";
     const payload = forRunner.value ? profilePayload(profile.value) : {};
     if (makeRepo) payload.profile.repo_url = "";
     const res = await api("/projects/create", {
@@ -156,7 +156,7 @@ onMounted(load);
         </template>
       </ProfileForm>
       <div>
-        <button class="primary" type="submit" :disabled="creating || !name || (forRunner && creatingRepo && !(newRepo.machine_id && newRepo.name))">
+        <button class="primary" type="submit" :disabled="creating || !name || (forRunner && creatingRepo && profile.workspace !== 'files' && !(newRepo.machine_id && newRepo.name))">
           {{ creating ? "Creating…" : "Create board" }}
         </button>
       </div>

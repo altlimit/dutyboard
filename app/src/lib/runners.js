@@ -138,6 +138,7 @@ export function profileDraft(profile, runner) {
   return {
     mcp_servers: (p.mcp_servers || []).map(mcpServerDraft),
     repos: (p.repos || []).map((r) => ({ name: r.name, repo_url: r.repo_url, default_branch: r.default_branch || "", test_command: r.test_command || "" })),
+    workspace: p.workspace || "repo",
     type: p.type || "webapp",
     type_other: p.type_other || "",
     description: p.description || "",
@@ -195,6 +196,7 @@ export function profilePayload(d) {
   deploy.altengine_instances = targets.filter((t) => t.kind === "any").map((t) => t.instance);
   return {
     profile: {
+      workspace: d.workspace || "repo",
       type: d.type,
       type_other: d.type === "other" ? d.type_other.trim() : "",
       description: d.description.trim(),

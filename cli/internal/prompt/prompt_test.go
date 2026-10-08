@@ -69,6 +69,18 @@ func TestEveryKindRenders(t *testing.T) {
 		t.Errorf("a setup on an existing repository reads it, and keeps its steps in order:\n%s", out)
 	}
 
+	in.Duty.Kind, in.Fresh = "work", false
+	in.Files = &Files{Dir: "/w/duty_01ABC", In: "/w/duty_01ABC/in", Out: "/w/duty_01ABC/out", Inputs: []string{"menu.pdf"}, Missing: 1}
+	sys, _ = System(in)
+	task, _ := Duty(in)
+	if !strings.Contains(sys, "there is no repository") || strings.Contains(sys, "duty_integrate") || strings.Contains(sys, "Full test suite") {
+		t.Errorf("a task's session works in its folder, and is told nothing about landing commits:\n%s", sys)
+	}
+	if !strings.Contains(task, "`in/`: menu.pdf") || !strings.Contains(task, "1 more were still being uploaded") || !strings.Contains(task, "put what it produces in `out/`") || strings.Contains(task, "duty_integrate") {
+		t.Errorf("a task names its files and where what it makes goes:\n%s", task)
+	}
+	in.Files = nil
+
 	in.Duty.Kind, in.Resuming = "work", true
 	in.Duty.UnblockedContext = &struct {
 		LastQuestion    string `json:"last_question"`

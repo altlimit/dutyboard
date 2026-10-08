@@ -164,6 +164,18 @@ func (d *Daemon) MCP(ctx context.Context, runToken, cwd string, raw json.RawMess
 		if refusal := guard(s, p.Name, p.Arguments); refusal != "" {
 			return toolText(msg.ID, refusal, true), nil
 		}
+		if s.run != nil && s.run.Files && p.Name == "duty_complete" {
+			// What the task made goes on the duty before the duty says it is done, so a person told it is
+			// finished finds the files there. A file that cannot be attached stops the completion.
+			names, err := d.attachOutputs(ctx, s.run)
+			if err != nil {
+				return toolText(msg.ID, "the files in out/ could not all be attached, so the duty is not complete yet: "+err.Error(), true), nil
+			}
+			if len(names) > 0 {
+				summary, _ := p.Arguments["outcome_summary"].(string)
+				p.Arguments["outcome_summary"] = strings.TrimSpace(summary + "\n\nAttached: " + strings.Join(names, ", "))
+			}
+		}
 		if takesAgent[p.Name] {
 			p.Arguments["agent_id"] = s.agent
 		}
@@ -200,7 +212,7 @@ func guard(s *session, name string, args map[string]any) string {
 			return fmt.Sprintf("this session may only change its own duty, %s — not %q", s.run.DutyID, id)
 		}
 	}
-	if name == "duty_complete" && s.run.integration() == nil {
+	if name == "duty_complete" && !s.run.Files && s.run.integration() == nil {
 		return "call duty_integrate first: a duty is complete only once its work has landed, and the outcome should name the commit or pull request it gives you"
 	}
 	return ""
@@ -233,6 +245,9 @@ func (d *Daemon) filterTools(reply json.RawMessage, s *session) (json.RawMessage
 		if t["name"] == "duty_repo_open" && len(boardRepos(d.view(s.board))) == 0 {
 			continue
 		}
+		if s.run != nil && s.run.Files && (t["name"] == "duty_integrate" || t["name"] == "duty_repo_open") {
+			continue // nothing to land: a task's files go on the duty when it completes
+		}
 		out = append(out, t)
 	}
 	if s.run != nil {
@@ -253,6 +268,9 @@ func (d *Daemon) localTool(ctx context.Context, s *session, id json.RawMessage, 
 	case "duty_integrate":
 		if s.run == nil {
 			return toolText(id, "duty_integrate is for sessions the daemon started", true), true
+		}
+		if s.run.Files {
+			return toolText(id, "this board has no repository, so there is nothing to integrate: put what the task produced in out/ and call duty_complete", true), true
 		}
 		run := s.run
 		v := d.view(run.Board)

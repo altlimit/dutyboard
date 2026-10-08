@@ -197,6 +197,8 @@ func (c *Client) WaitForApproval(ctx context.Context, p *Pairing) (*Paired, erro
 
 // Profile is a board's profile, as the daemon uses it. Unknown fields are ignored.
 type Profile struct {
+	// Workspace is "files" for a board of one-off tasks with no repository; "" or "repo" otherwise.
+	Workspace     string   `json:"workspace"`
 	Type          string   `json:"type"`
 	Description   string   `json:"description"`
 	RepoURL       string   `json:"repo_url"`
@@ -311,6 +313,10 @@ type BoardView struct {
 	Runner       *Runner  `json:"runner"`
 	RulesVersion int      `json:"rules_version"`
 }
+
+// Files reports whether the board's duties are one-off tasks worked in a folder of files, with no
+// repository.
+func (v BoardView) Files() bool { return v.Profile != nil && v.Profile.Workspace == "files" }
 
 // Request is a setup a person asked this machine for: "setup" to work a board, or "create_repo" to
 // make the board's repository on GitHub first.
@@ -504,6 +510,7 @@ type Duty struct {
 	OutcomeSummary   string `json:"outcome_summary"`
 	LastQuestion     string `json:"last_question"`
 	AttachmentCount  int    `json:"attachment_count"`
+	ExpectFiles      int    `json:"expect_files"` // files the person filing it was still attaching
 	UnblockedContext *struct {
 		LastQuestion    string `json:"last_question"`
 		HumanResolution string `json:"human_resolution"`
