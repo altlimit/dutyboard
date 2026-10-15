@@ -324,11 +324,13 @@ export default {
         requestId,
         defaultAgentId: defaultAgentId(url, request, caller),
         publish: makePublisher(env, cfg, request.headers.get("x-dutyboard-origin") || ""),
+        // The `dutyboard` release making this call, when a machine makes it.
+        clientVersion: str(request.headers.get("x-dutyboard-version") || "", "version", { max: 40 }),
       };
       // Fire-and-forget in spirit; awaited because a function has no waitUntil. It
       // writes at most once a minute per token, so it is not on the hot path.
       await noteTokenUse(ctx, caller);
-      await noteMachineUse(ctx, caller, str(request.headers.get("x-dutyboard-version") || "", "version", { max: 40 }));
+      await noteMachineUse(ctx, caller, ctx.clientVersion);
 
       if (path === "/mcp") return await handleMcp(ctx, request, ATTACH_BODY_BYTES);
 

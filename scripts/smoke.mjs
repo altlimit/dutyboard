@@ -1203,12 +1203,25 @@ async function main() {
   const errands = `smoke-errands-${Date.now().toString(36)}`;
   const madeErrands = await call("/projects/create", { name: "Errands", project_id: errands, profile: { workspace: "files", description: "PDFs to print." } }, human);
   check("a board of one-off tasks needs no repository, and starts with no rules to write", madeErrands.rules_duty_id === null, madeErrands);
-  const errandsLink = await call("/machine/link", { project_id: errands }, mkey);
+  const oldRunner = await call("/machine/link", { project_id: errands }, mkey, { expectStatus: true, version: "2.15.0" });
+  check(
+    "a machine too old to work it is told to update itself, not to give the board a repository",
+    oldRunner.status === 400 && /runs dutyboard 2\.15\.0.*update it to 2\.18\.0 or later/.test(oldRunner.json.error?.message || ""),
+    oldRunner.json,
+  );
+  const errandsLink = await call("/machine/link", { project_id: errands }, mkey, { version: "smoke" });
   check(
     "a machine works it without a repository, and with no setup duty to run first",
     errandsLink.created === true && errandsLink.setup_duty_id === null && errandsLink.rules_duty_id === null,
     errandsLink,
   );
+  // One already linked that is then run as an old release says the board needs a repository URL.
+  await call("/machine/state", { project_id: errands, runs: [], problem: "the board has no repository URL — set one in its settings" }, mkey, { version: "2.15.0" });
+  const advised = (await call("/board/runners", { project_id: errands }, human)).runners[0] || {};
+  check("and one already working it that is too old says to update it, wherever it is shown", /alt update altlimit\/dutyboard/.test(advised.problem || ""), advised);
+  await call("/machine/state", { project_id: errands, runs: [] }, mkey, { version: "smoke" });
+  const updatedRunner = (await call("/board/runners", { project_id: errands }, human)).runners[0] || {};
+  check("until it is updated", updatedRunner.problem === "", updatedRunner);
   const errandsRepo = await call("/machine/request", { machine_id: paired.machine_id, project_id: errands, kind: "create_repo", repo: { name: errands } }, human, { expectStatus: true });
   check("and is not given one to make", errandsRepo.status === 409, errandsRepo.json);
   const errandsSetup = await call("/machine/request", { machine_id: paired.machine_id, project_id: errands }, human);

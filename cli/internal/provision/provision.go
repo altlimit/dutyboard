@@ -466,7 +466,8 @@ func configureData(ctx context.Context, c *altengine.Client, u *ui.UI, a *assets
 	// the machine holding its worktree is still there to resume it.
 	presence := map[string]any{"presence": true}
 	if c.Local() {
-		presence = map[string]any{"presence": true, "publishRateLimit": 0, "connectRateLimit": 0}
+		// No limit is null, as the hosted service spells it; an emulator refuses the 0 older ones took.
+		presence = map[string]any{"presence": true, "publishRateLimit": nil, "connectRateLimit": nil}
 	}
 	if err := c.PatchConfig(ctx, "channel", channel, presence); err != nil {
 		return fmt.Errorf("channel presence: %w", err)

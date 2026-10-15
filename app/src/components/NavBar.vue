@@ -5,6 +5,11 @@ import { signOut } from "../lib/altengine.js";
 import { signedIn, user } from "../lib/session.js";
 import { THEMES, currentTheme, cycleTheme } from "../lib/theme.js";
 import { config, isRetargeted } from "../config.js";
+import { CONSOLE_VERSION } from "../lib/version.js";
+
+// Which console this is, always in view: the first thing to rule out when something behaves
+// differently from what was released, and a screenshot then says it without being asked.
+const consoleVersion = CONSOLE_VERSION === "dev" ? "dev" : `v${CONSOLE_VERSION}`;
 
 const route = useRoute();
 const router = useRouter();
@@ -52,7 +57,10 @@ async function leave() {
             <rect x="40" y="38" width="8" height="6" rx="2"/>
           </g>
         </svg>
-        DutyBoard
+        <span class="brand__name">
+          DutyBoard
+          <span class="brand__version" :title="`Console ${consoleVersion}`">{{ consoleVersion }}</span>
+        </span>
       </router-link>
 
       <nav v-if="signedIn" class="topbar__nav" aria-label="Main">

@@ -47,6 +47,35 @@ const MAX_RUNS = 20;
 /** `last_seen_at` is written at most this often per machine: it is a hint, not a heartbeat. */
 const TOUCH_EVERY_MS = 60_000;
 
+/**
+ * The first `dutyboard` that can work a board with no repository. An older one reads such a board as
+ * a repository whose URL is missing, and says so — which sends its owner to the board's settings to
+ * fix something that is not wrong. It is told to update itself instead.
+ */
+const FILES_RUNNER = "2.18.0";
+
+/** Whether release `a` is older than release `b`. A build with no release number is never older. */
+function olderRelease(a, b) {
+  const parse = (v) => (/^v?(\d+)\.(\d+)\.(\d+)/.exec(String(v || "")) || []).slice(1).map(Number);
+  const x = parse(a);
+  const y = parse(b);
+  if (x.length !== 3 || y.length !== 3) return false;
+  for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] < y[i];
+  return false;
+}
+
+/** Why the calling machine cannot work `project`, when it is too old to; "" when it can. */
+function runnerTooOld(ctx, project, machineName) {
+  return tooOldFor(project, ctx.clientVersion || (ctx.caller.machineRow && ctx.caller.machineRow.cli_version) || "", machineName);
+}
+
+/** Why a machine running `version` cannot work `project`; "" when it can. */
+function tooOldFor(project, version, machineName) {
+  if (!isFilesBoard(project) || !olderRelease(version, FILES_RUNNER)) return "";
+  return `${machineName || "this machine"} runs dutyboard ${version}, which cannot work a board without a repository — ` +
+    `update it to ${FILES_RUNNER} or later: on it, run \`alt update altlimit/dutyboard && dutyboard --service\``;
+}
+
 export const RUN_STATES = ["working", "integrating", "parked", "limited", "waiting", "error"];
 const REMOTE_SETUP = ["auto", "ask"];
 const UNFINISHED = ["queued", "active", "needs_decision", "blocked"];
@@ -301,11 +330,14 @@ export async function listMachines(ctx) {
   });
   const ids = rows.map((m) => m.machine_id);
   const [links, requests, present] = await Promise.all([linksOfMachines(ctx, ids), openRequests(ctx, ids), machinesPresent(ctx, ids)]);
+  const projects = await ctx.store.getMany("projects", [...new Set(links.map((l) => l.project_id))]);
   return {
     machines: rows.map((m) =>
       machineView(m, {
         online: present.get(m.machine_id),
-        links: links.filter((l) => l.machine_id === m.machine_id).map(linkView),
+        links: links
+          .filter((l) => l.machine_id === m.machine_id)
+          .map((l) => linkView({ ...l, problem: tooOldFor(projects.get(l.project_id), m.cli_version, m.name) || l.problem })),
         requests: requests.filter((r) => r.machine_id === m.machine_id).map(requestView),
       }),
     ),
@@ -401,9 +433,9 @@ export async function runnersOf(ctx, projectKey) {
     limit: MAX_LINKS_PER_BOARD,
   });
   const ids = rows.map((l) => l.machine_id);
-  const [present, machines] = await Promise.all([machinesPresent(ctx, ids), machinesByIds(ctx, ids)]);
+  const [present, machines, project] = await Promise.all([machinesPresent(ctx, ids), machinesByIds(ctx, ids), ctx.store.get("projects", projectKey)]);
   return rows.map((l) => ({
-    ...linkView(l),
+    ...linkView({ ...l, problem: tooOldFor(project, (machines.get(l.machine_id) || {}).cli_version, l.machine_name) || l.problem }),
     owner_uid: l.owner_uid,
     online: present.get(l.machine_id),
     // What it is actually running. A board where one machine is three versions behind looks like a
@@ -496,6 +528,8 @@ export async function linkMachine(ctx, body) {
     throw forbidden("the board's owner has not let you run agents on it");
   }
   const files = isFilesBoard(project);
+  const tooOld = runnerTooOld(ctx, project, caller.machineRow.name);
+  if (tooOld) throw badRequest(tooOld);
   if (!files && !(project.profile && project.profile.repo_url)) {
     throw badRequest("this board has no repository URL — set one in its settings first: a machine works a board from its own clone of it");
   }
@@ -638,8 +672,10 @@ export async function reportState(ctx, body) {
     detail: str(r && r.detail, `runs[${i}].detail`, { max: 300 }),
   }));
   // What stops this machine working the board at all — a clone that failed, a pull-request board with
-  // no GitHub CLI — as opposed to anything about one duty. Empty when nothing is wrong.
-  const problem = str(body.problem, "problem", { max: 300 });
+  // no GitHub CLI — as opposed to anything about one duty. Empty when nothing is wrong. A machine too
+  // old for the board says something else, which is not the problem; it is told what is.
+  const project = await ctx.store.get("projects", projectId);
+  const problem = runnerTooOld(ctx, project, caller.machineRow.name) || str(body.problem, "problem", { max: 300 });
   await ctx.store.putOne("machine_links", link.key, { ...stripMeta(link), runs, problem, runs_at: now, updated_at: now });
   await ctx.publish(projectId, null, { t: "runner", machine_id: caller.machineId, runs: runs.length });
   return { ok: true, runs: runs.length };

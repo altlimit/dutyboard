@@ -176,6 +176,16 @@ main:focus { outline: none; }
   gap: 0.5rem;
   align-items: center;
 }
+.brand__name { display: flex; flex-direction: column; line-height: 1.1; }
+/* Small and quiet: there for whoever is debugging, not competing with the name. */
+.brand__version {
+  font-size: 0.66rem;
+  font-weight: 400;
+  letter-spacing: 0;
+  color: var(--text-dim);
+  opacity: 0.8;
+  font-variant-numeric: tabular-nums;
+}
 /* The tile is inside the SVG now, so this only has to size it. */
 .brand__mark {
   width: 1.5rem;
