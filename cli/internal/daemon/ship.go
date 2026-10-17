@@ -354,7 +354,7 @@ func (d *Daemon) altengineDeploy(ctx context.Context, s *session, name string, a
 		}
 		// nil: a board deploying its own project's function must not touch whatever schedules
 		// that function has — they are the project's, not ours.
-		res, err := client.DeployFunction(ctx, instance, fn, string(code), grants, nil)
+		res, err := client.DeployFunction(ctx, instance, fn, string(code), grants, nil, 0)
 		if altengine.IsStatus(err, 401) || altengine.IsStatus(err, 403) {
 			return nil, d.deployRefused(run, instance, err.Error())
 		}

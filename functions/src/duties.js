@@ -1185,8 +1185,9 @@ async function removeDuty(ctx, duty, projectKey) {
   await ctx.publish(project.key, duty.key, { t: "duty", id: duty.key, status: "deleted" });
 }
 
-/** Finished duties removed per run of the function's clock; the rest go on the next. */
-const EXPIRE_PER_TICK = 50;
+/** Finished duties removed per run of the function's clock; the rest go on the next, a minute later.
+ *  Each removal is several calls, and a run of the function may make only so many. */
+const EXPIRE_PER_TICK = 20;
 
 /** Remove the finished duties whose time on the board is up. Answers how many went. */
 export async function sweepExpiredDuties(ctx, now = Date.now(), limit = EXPIRE_PER_TICK) {

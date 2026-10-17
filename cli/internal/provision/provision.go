@@ -507,7 +507,7 @@ func deployFunction(ctx context.Context, c *altengine.Client, u *ui.UI, a *asset
 	if err != nil {
 		return "", err
 	}
-	d, err := c.DeployFunction(ctx, n.Functions, FunctionName, string(code), n.grants(), schedules())
+	d, err := c.DeployFunction(ctx, n.Functions, FunctionName, string(code), n.grants(), schedules(), subRequests)
 	if err != nil {
 		return "", fmt.Errorf("deploying the function: %w", err)
 	}
@@ -532,6 +532,12 @@ func deployFunction(ctx context.Context, c *altengine.Client, u *ui.UI, a *asset
 // Every minute, because a person who asks for 9am means 9am. The run costs one indexed query that
 // usually finds nothing.
 func schedules() []string { return []string{"* * * * *"} }
+
+// subRequests is how many calls one run of the board function may make to the services it is
+// granted. The platform's default is 50, and a machine's poll asks a handful per board it works —
+// so one working eight boards ran out part way and every poll failed. A machine works at most 25
+// boards; this leaves the poll, and the clock's tick, room several times over.
+const subRequests = 500
 
 var errConsoleSkipped = errors.New("console not published")
 

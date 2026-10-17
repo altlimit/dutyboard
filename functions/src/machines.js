@@ -700,7 +700,9 @@ export async function pollMachine(ctx, body) {
   // gets there second writes nothing.
   for (const l of links) {
     if (!projects.has(l.project_id)) continue;
-    await runDueSchedules(ctx, { projectKey: l.project_id }).catch(() => ({}));
+    // A couple per board: the function's own clock is what files them; this only covers a minute it
+    // missed, and a poll that fired a board's whole backlog could run out of calls for the rest.
+    await runDueSchedules(ctx, { projectKey: l.project_id, limit: 2 }).catch(() => ({}));
   }
 
   const boards = await Promise.all(
