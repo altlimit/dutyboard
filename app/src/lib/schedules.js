@@ -40,9 +40,9 @@ export function cronOf(draft) {
 /** A blank form, and the form a stored schedule fills. The preset is recovered from the
  *  expression where it can be, so a schedule made here does not come back as "custom". */
 export function scheduleDraft(row) {
-  const base = { schedule_id: "", title: "", brief: "", priority: "next", repeat: "weekly", day: 1, date: 1, time: "09:00", cron: "0 9 * * 1", tz: browserZone() };
+  const base = { schedule_id: "", title: "", brief: "", priority: "next", expire_after_days: 0, repeat: "weekly", day: 1, date: 1, time: "09:00", cron: "0 9 * * 1", tz: browserZone() };
   if (!row) return base;
-  const draft = { ...base, schedule_id: row.schedule_id, title: row.title, brief: row.brief, priority: row.priority, cron: row.cron, tz: row.tz || "UTC", repeat: "custom" };
+  const draft = { ...base, schedule_id: row.schedule_id, title: row.title, brief: row.brief, priority: row.priority, expire_after_days: row.expire_after_days || 0, cron: row.cron, tz: row.tz || "UTC", repeat: "custom" };
   const m = /^(\d{1,2}) (\d{1,2}) (\*|\d{1,2}) \* (\*|1-5|[0-6])$/.exec(String(row.cron || "").trim());
   if (m) {
     const [, minute, hour, date, dow] = m;
@@ -66,6 +66,7 @@ export function schedulePayload(draft) {
     title: draft.title.trim(),
     brief: draft.brief.trim(),
     priority: draft.priority,
+    expire_after_days: Number(draft.expire_after_days) || 0,
     cron: cronOf(draft),
     tz: draft.tz,
     offset_min: zoneOffset(draft.tz),

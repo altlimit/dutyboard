@@ -30,7 +30,7 @@ import { badRequest, forbidden, notFound, str, oneOf, intIn, clip } from "./http
 import { scheduleId } from "./ids.js";
 import { putOp } from "./store.js";
 import { requireHuman, resolveProject } from "./identity.js";
-import { PRIORITIES, RANK, UNFINISHED, MAX_OPEN_DUTIES, seedDuty, stripMeta } from "./duties.js";
+import { PRIORITIES, RANK, UNFINISHED, MAX_OPEN_DUTIES, expireDays, seedDuty, stripMeta } from "./duties.js";
 import { notifyNeedsYou } from "./notify.js";
 
 /**
@@ -235,6 +235,7 @@ export function scheduleView(row, now = Date.now()) {
     brief: row.brief,
     priority: row.priority,
     reserved_for: row.reserved_for || null,
+    expire_after_days: row.expire_after_days || 0,
     cron: row.cron,
     tz: row.tz,
     offset_min: row.offset_min || 0,
@@ -316,6 +317,7 @@ export async function updateSchedule(ctx, body) {
     cron: has(body, "cron") ? body.cron : row.cron,
     tz: has(body, "tz") ? body.tz : row.tz,
     offset_min: has(body, "offset_min") ? body.offset_min : row.offset_min,
+    expire_after_days: has(body, "expire_after_days") ? body.expire_after_days : row.expire_after_days,
   };
   const fields = scheduleFields(ctx, wanted, now);
   Object.assign(next, fields.data, { updated_at: now });
@@ -460,6 +462,8 @@ function scheduleFields(ctx, body, now) {
       tz: str(body.tz, "tz", { max: 64, fallback: "UTC" }) || "UTC",
       offset_min: offset,
       offset_checked_at: has(body, "offset_min") ? now : null,
+      // How long each duty it files stays on the board once done; 0 keeps them.
+      expire_after_days: expireDays(body.expire_after_days),
     },
   };
 }
@@ -685,7 +689,7 @@ async function fireSchedule(ctx, row, now) {
       reservedFor: row.reserved_for || null,
       now,
       // The mutex: one occurrence, one duty, whichever tick gets there first.
-      fields: { fire_key: fireKey(row.key, due), schedule_id: row.key },
+      fields: { fire_key: fireKey(row.key, due), schedule_id: row.key, expire_after_days: row.expire_after_days || 0, expires_at: null },
     },
   );
   await ctx.store.transaction([

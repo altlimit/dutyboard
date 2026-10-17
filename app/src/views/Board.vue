@@ -1,7 +1,7 @@
 <script setup>
 import { computed, onUnmounted, reactive, ref, watch } from "vue";
 import { aggregate, api, putSigned, query, subscribeLive } from "../lib/altengine.js";
-import { STATUS_COLUMNS, PRIORITIES, ago, columnOrder, sortColumn } from "../lib/duties.js";
+import { STATUS_COLUMNS, PRIORITIES, EXPIRY_CHOICES, ago, columnOrder, sortColumn } from "../lib/duties.js";
 import BoardColumn from "../components/BoardColumn.vue";
 import { activityByDuty, runnerSummary } from "../lib/runners.js";
 import { pastedFiles } from "../lib/paste.js";
@@ -139,7 +139,7 @@ function clearSearch() {
 const error = ref("");
 const liveState = ref("connecting");
 const showForm = ref(false);
-const draft = ref({ title: "", brief: "", priority: "next" });
+const draft = ref({ title: "", brief: "", priority: "next", expire_after_days: 0 });
 const adding = ref(false);
 
 // Files chosen while writing the duty, uploaded once it exists. A screenshot of the bug is
@@ -508,6 +508,7 @@ async function addDuty() {
       title: draft.value.title,
       brief: draft.value.brief,
       priority: draft.value.priority,
+      expire_after_days: draft.value.expire_after_days,
       // The files go up once it exists; a runner that claims it first waits for this many.
       expect_files: draftFiles.value.length,
     });
@@ -515,7 +516,7 @@ async function addDuty() {
     // someone has written because a screenshot timed out would lose the part that mattered.
     const failed = draftFiles.value.length ? await attachAll(created.duty_id, draftFiles.value) : [];
     if (failed.length) attachFailed.value = { dutyId: created.duty_id, title: draft.value.title, lines: failed };
-    draft.value = { title: "", brief: "", priority: "next" };
+    draft.value = { title: "", brief: "", priority: "next", expire_after_days: 0 };
     draftFiles.value = [];
     showForm.value = false;
     // A new duty is queued, by definition — no other column can have changed, so no other
@@ -645,6 +646,13 @@ onUnmounted(() => {
         <select id="d-priority" v-model="draft.priority">
           <option v-for="p in PRIORITIES" :key="p.key" :value="p.key">{{ p.label }} — {{ p.hint }}</option>
         </select>
+      </div>
+      <div class="field">
+        <label for="d-expire">Once it is done</label>
+        <select id="d-expire" v-model.number="draft.expire_after_days">
+          <option v-for="c in EXPIRY_CHOICES" :key="c.days" :value="c.days">{{ c.label }}</option>
+        </select>
+        <p class="hint">For one-off work nobody needs the record of — it is removed with its thread and files.</p>
       </div>
       <div class="field">
         <span class="label" id="d-files-label">Files <span class="muted">(optional)</span></span>

@@ -1324,6 +1324,9 @@ async function main() {
   // Two ticks over the same occurrence at the same time — the case the unique fire key exists
   // for. A machine polling while the function's own cron fires is not rare, it is the normal
   // arrangement, and a duty filed twice a week for a year is a board nobody trusts.
+  // Old runs can be set to remove themselves once done; the duties it files from now on carry that.
+  const expiring = await call("/schedules/update", { schedule_id: weekly.schedule.schedule_id, expire_after_days: 2 }, human);
+  check("a recurring duty can be set to remove each run some days after it is done", expiring.schedule.expire_after_days === 2, expiring.schedule);
   await call("/duty/delete", { duty_id: filed.id, confirm: filed.id }, human);
   await due();
   await Promise.all([call("/machine/poll", {}, mkey), call("/machine/poll", {}, mkey)]);
@@ -1331,6 +1334,8 @@ async function main() {
   const racedDuties = raced.runnable_duties.filter((d) => d.title === "Weekly post");
   check("two ticks racing over one occurrence file it once", racedDuties.length === 1, raced.runnable_duties);
   const refiled = racedDuties[0];
+  const refiledRow = refiled ? (await call("/duty/get", { duty_id: refiled.id }, human)).duty : {};
+  check("and each duty it files carries that", refiledRow.expire_after_days === 2 && refiledRow.expires_at === null, refiledRow);
 
   // The same occurrence, ticked again — and the occurrence after it while the first is open.
   await call("/machine/poll", {}, mkey);
@@ -1431,6 +1436,32 @@ async function main() {
   check("a board stops taking recurring duties at its limit", overSchedules.status === 400 && /10/.test(JSON.stringify(overSchedules.json)), overSchedules.json);
   const stopped = await call("/schedules/delete", { schedule_id: weekly.schedule.schedule_id }, human);
   check("and one can be stopped for good", stopped.ok === true, stopped);
+
+  // Finished work that removes itself, on the function's own clock.
+  const once = await call("/duty/enqueue", { project_id: mBoard, title: "Print the menu", brief: "Once.", priority: "backlog", expire_after_days: 3 }, human);
+  await call("/duty/update", { duty_id: once.duty_id, status: "done" }, human);
+  const onceDone = (await call("/duty/get", { duty_id: once.duty_id }, human)).duty;
+  check(
+    "a duty set to go once it is done is given its time, counted from then",
+    onceDone.expire_after_days === 3 && Math.abs(onceDone.expires_at - (Date.now() + 3 * 86400000)) < 120000,
+    onceDone,
+  );
+  await call("/duty/reopen", { duty_id: once.duty_id, note: "Not yet." }, human);
+  const onceBack = (await call("/duty/get", { duty_id: once.duty_id }, human)).duty;
+  check("brought back, it loses its time and keeps its setting", onceBack.expires_at === null && onceBack.expire_after_days === 3, onceBack);
+  await call("/duty/update", { duty_id: once.duty_id, status: "done" }, human);
+  // Its time is up: as if three days had passed, then wait for the clock, which ticks each minute.
+  // Only on an emulator, whose admin key can write the row as it would be by then.
+  if (LOCAL) {
+    const { key: _onceKey, ...onceData } = await dsGet("duties", once.duty_id, human);
+    await fetch(`${BASE}/v1/datastore/${encodeURIComponent(DS)}/ns/_default/col/duties/documents`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: "Bearer dev" },
+      body: JSON.stringify({ documents: [{ key: once.duty_id, data: { ...onceData, expires_at: Date.now() - 1000 } }] }),
+    });
+    const expired = await eventually(async () => (await call("/duty/get", { duty_id: once.duty_id }, human, { expectStatus: true })).status === 404, 150_000);
+    check("and when its time is up, the function's clock removes it", expired);
+  }
 
   const mRemoved = await call("/projects/delete", { project_id: mBoard, confirm: mBoard }, human);
   check("deleting a board unlinks every machine on it", mRemoved.removed.machine_links === 1, mRemoved.removed);

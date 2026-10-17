@@ -124,6 +124,12 @@
         "created_at"
       ],
       "for": "the function: what one schedule has filed, newest first"
+    },
+    {
+      "fields": [
+        "expires_at"
+      ],
+      "for": "the function's clock: finished duties whose time on the board is up, soonest first"
     }
   ],
   "threads": [

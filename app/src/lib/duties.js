@@ -71,6 +71,23 @@ export const PRIORITIES = [
   { key: "backlog", label: "Backlog", hint: "Picked up when nothing else is waiting." },
 ];
 
+/** How long a finished duty stays on the board, as the console offers it. 0 keeps it. */
+export const EXPIRY_CHOICES = [
+  { days: 0, label: "Keep it on the board" },
+  { days: 1, label: "Remove it a day after it is done" },
+  { days: 3, label: "Remove it 3 days after it is done" },
+  { days: 7, label: "Remove it a week after it is done" },
+  { days: 14, label: "Remove it 2 weeks after it is done" },
+  { days: 30, label: "Remove it a month after it is done" },
+  { days: 90, label: "Remove it 3 months after it is done" },
+];
+
+/** The choices, with `days` among them even when it is not one of the usual ones (set by an agent). */
+export function expiryChoices(days) {
+  if (!days || EXPIRY_CHOICES.some((c) => c.days === days)) return EXPIRY_CHOICES;
+  return [...EXPIRY_CHOICES, { days, label: `Remove it ${days} days after it is done` }].sort((a, b) => a.days - b.days);
+}
+
 export const ALL_STATUSES = ["queued", "active", "needs_decision", "blocked", "done", "failed"];
 
 const LABELS = {

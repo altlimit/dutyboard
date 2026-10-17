@@ -531,6 +531,17 @@ this existed keeps working, and gains the cron the next time you provision. Both
 without filing anything twice: the duty carries the occurrence that filed it under a unique index,
 so one occurrence files one duty.
 
+An agent holding a duty can also change a schedule — its title, brief, repeat or priority — with
+`duty_schedule_update`, so "rewrite the weekly post's brief so it stops repeating itself" is a duty
+like any other.
+
+**Old runs can remove themselves.** A schedule (or any one duty) can say what happens once it is
+done: kept, or removed a day, three days, a week, two weeks, a month or three months later — with
+its thread and files, as if a person had deleted it. The function's clock does the removing. The
+time counts from when the duty was done; a duty sent back out of done stops counting, and a failed
+one is never removed this way. The next run still hears how the last one went: that is kept on the
+schedule, not on the duty.
+
 The timezone is the interesting part. A cron expression is written in local time, and the board's
 function cannot convert a zone to an offset at all — the emulator's JavaScript runtime has no
 timezone support, and a schedule that behaves differently there than hosted is worse than no

@@ -60,6 +60,18 @@ export const THREAD_KINDS = ["question", "resolution", "checkpoint", "note"];
  * the rules — which is why they are exclusive (invariant 3).
  */
 export const KINDS = ["work", "setup", "rules"];
+
+/**
+ * How long a finished duty stays on the board, in days — for work nobody needs the record of once it
+ * is done, like the fifth hundred run of a daily check. 0 keeps it. The clock starts when the duty is
+ * done; a duty that comes back out of done keeps its setting and loses its clock. Failed duties are
+ * never removed this way: a failure is something a person should see.
+ */
+export const MAX_EXPIRE_DAYS = 365;
+const DAY_MS = 24 * 60 * 60 * 1000;
+export const expireDays = (v, field = "expire_after_days") => intIn(v, field, 0, MAX_EXPIRE_DAYS, 0);
+/** When a duty in `status` is removed from the board, or null if it is not. */
+export const expiresAt = (duty, status, now) => (status === "done" && duty.expire_after_days > 0 ? now + duty.expire_after_days * DAY_MS : null);
 const EXCLUSIVE_KINDS = new Set(["setup", "rules"]);
 
 /**
@@ -366,6 +378,8 @@ export async function getDuty(ctx, body) {
       last_question: duty.last_question || null,
       attachment_count: duty.attachment_count || 0,
       expect_files: duty.expect_files || 0,
+      expire_after_days: duty.expire_after_days || 0,
+      expires_at: duty.expires_at || null,
       affinity: duty.affinity || null,
       spawned_by: duty.spawned_by || null,
       blocked_by: duty.blocked_by || null,
@@ -626,6 +640,8 @@ export async function enqueueDuty(ctx, body) {
     // runner claims within seconds — so it waits for this many before it starts, rather than working
     // a duty whose input has not arrived.
     expect_files: intIn(body.expect_files, "expect_files", 0, MAX_ATTACHMENTS, 0),
+    expire_after_days: expireDays(body.expire_after_days),
+    expires_at: null,
     created_at: now,
     updated_at: now,
   };
@@ -852,7 +868,16 @@ async function finishDuty(ctx, body, terminal) {
   }
 
   const ops = [
-    putOp("duties", duty.key, { ...stripMeta(duty), status: terminal, outcome_summary: summary, holder: null, lane: null, affinity: null, updated_at: now }),
+    putOp("duties", duty.key, {
+      ...stripMeta(duty),
+      status: terminal,
+      outcome_summary: summary,
+      holder: null,
+      lane: null,
+      affinity: null,
+      expires_at: expiresAt(duty, terminal, now),
+      updated_at: now,
+    }),
     putOp("threads", threadId(), {
       duty_id: duty.key,
       project_id: project.key,
@@ -991,6 +1016,8 @@ export async function reopenDuty(ctx, body) {
       lane: null,
       // Redone from scratch, in a fresh worktree: whatever the last one left is the old attempt.
       affinity: null,
+      // Not finished any more, so not on its way off the board either.
+      expires_at: null,
       updated_at: now,
     }),
   ];
@@ -1075,6 +1102,12 @@ export async function updateDuty(ctx, body) {
     }
     if (next.status === "done" || next.status === "failed") next.affinity = null;
   }
+  if (body.expire_after_days != null) next.expire_after_days = expireDays(body.expire_after_days);
+  // The clock starts when it is done, and stops when it no longer is; a new setting on a duty that is
+  // already done counts from now.
+  if (next.status !== duty.status || next.expire_after_days !== (duty.expire_after_days || 0)) {
+    next.expires_at = expiresAt(next, next.status, now);
+  }
 
   const ops = [putOp("duties", duty.key, next)];
   // Moving a duty off `active` by hand has to free whichever agent was holding it, or
@@ -1108,7 +1141,16 @@ export async function deleteDuty(ctx, body) {
   // Owner only. A member does the work on a board; removing work, and its whole decision log,
   // is the owner's call.
   const project = await projectOfDuty(ctx.caller, duty, ctx.store, { ownerOnly: true });
+  await removeDuty(ctx, duty, project.key);
+  return { ok: true, deleted: duty.key };
+}
 
+/**
+ * A duty and everything that hangs off it — its thread, its files, its place in search — gone, and
+ * whatever it was holding up let go. What a person deleting it and a finished duty expiring share.
+ */
+async function removeDuty(ctx, duty, projectKey) {
+  const project = { key: projectKey };
   // Threads are keyed independently of the duty, so they have to be swept explicitly.
   // Bounded per call and repeated until empty rather than assuming one page is all there is.
   for (;;) {
@@ -1141,7 +1183,33 @@ export async function deleteDuty(ctx, body) {
     }
   }
   await ctx.publish(project.key, duty.key, { t: "duty", id: duty.key, status: "deleted" });
-  return { ok: true, deleted: duty.key };
+}
+
+/** Finished duties removed per run of the function's clock; the rest go on the next. */
+const EXPIRE_PER_TICK = 50;
+
+/** Remove the finished duties whose time on the board is up. Answers how many went. */
+export async function sweepExpiredDuties(ctx, now = Date.now(), limit = EXPIRE_PER_TICK) {
+  const { rows } = await ctx.store.query("duties", {
+    where: [
+      { field: "expires_at", op: ">", value: 0 },
+      { field: "expires_at", op: "<=", value: now },
+    ],
+    order: [{ field: "expires_at", dir: "asc" }],
+    limit,
+  });
+  let removed = 0;
+  for (const duty of rows) {
+    // Read as it stands: one reopened since the query is not done any more.
+    if (duty.status !== "done") continue;
+    try {
+      await removeDuty(ctx, duty, duty.project_id);
+      removed++;
+    } catch (err) {
+      console.log(`expiring ${duty.key}:`, err && err.message);
+    }
+  }
+  return removed;
 }
 
 // --- helpers --------------------------------------------------------------

@@ -640,6 +640,74 @@ th { font-size: 0.85rem; color: var(--text-dim); font-weight: 600; }
    kills every `position: sticky` on the page — the top bar and the column heads included.
    The layout above has to fit on its own, and there is a test that checks it does. */
 
+/* --- tabs ------------------------------------------------------------------ */
+/* A row of plain text tabs under a rule. On a phone they scroll sideways inside their own row
+   rather than wrapping into a second one or pushing the page wider. */
+.tabs {
+  display: flex;
+  gap: 0.15rem;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--border);
+  scrollbar-width: thin;
+}
+button.tabs__tab {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  background: none;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 6px 6px 0 0;
+  margin-bottom: -1px;
+  padding: 0.55rem 0.8rem;
+  color: var(--text-dim);
+  font-weight: 500;
+  white-space: nowrap;
+}
+button.tabs__tab:hover:not(:disabled) { background: var(--surface-2); color: var(--text); }
+button.tabs__tab[aria-selected="true"] { color: var(--text); border-bottom-color: var(--accent); }
+.tabs__count {
+  font-size: 0.72rem;
+  line-height: 1.5;
+  min-width: 1.3rem;
+  padding: 0 0.4rem;
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--text-dim);
+  text-align: center;
+}
+.tabs__alert { width: 0.45rem; height: 0.45rem; border-radius: 50%; background: var(--warn); }
+[role="tabpanel"]:focus-visible { outline: 2px solid var(--focus); outline-offset: 4px; border-radius: var(--radius); }
+
+/* Board settings: tabs in a row above the page on a phone, a list down its side on a wider screen,
+   where seven tabs in a row would not fit and a side list is the familiar shape for settings. */
+.wrap--settings { max-width: 1040px; }
+.settings > [role="tabpanel"] { margin-top: 1rem; }
+@media (min-width: 60rem) {
+  .settings { display: grid; grid-template-columns: 12rem minmax(0, 1fr); gap: 0 2rem; align-items: start; }
+  .settings > .tabs {
+    grid-column: 1;
+    grid-row: 1;
+    flex-direction: column;
+    overflow: visible;
+    border-bottom: 0;
+    border-right: 1px solid var(--border);
+    position: sticky;
+    top: calc(var(--topbar-h) + 1rem);
+  }
+  .settings > .tabs button.tabs__tab {
+    justify-content: flex-start;
+    border-bottom: 0;
+    border-right: 2px solid transparent;
+    border-radius: 6px 0 0 6px;
+    margin: 0 -1px 0 0;
+  }
+  .settings > .tabs button.tabs__tab[aria-selected="true"] { border-right-color: var(--accent); background: var(--surface-2); }
+  .settings > .tabs .tabs__count { margin-left: auto; }
+  .settings > [role="tabpanel"] { grid-column: 2; grid-row: 1; margin-top: 0; }
+}
+
 /* --- runners --------------------------------------------------------------- */
 fieldset { border: 0; margin: 0; padding: 0; min-width: 0; }
 fieldset legend { margin-bottom: 0.4rem; }

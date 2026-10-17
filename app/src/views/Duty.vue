@@ -2,7 +2,7 @@
 import { computed, onUnmounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { api, getDocs, query, subscribeLive } from "../lib/altengine.js";
-import { ALL_STATUSES, PRIORITIES, THREAD_KIND_LABELS, ago, exactTime, originLabel, priorityLabel, statusLabel } from "../lib/duties.js";
+import { ALL_STATUSES, PRIORITIES, THREAD_KIND_LABELS, ago, exactTime, expiryChoices, originLabel, priorityLabel, statusLabel } from "../lib/duties.js";
 import { activityByDuty, activityLine } from "../lib/runners.js";
 import Attachments from "../components/Attachments.vue";
 import { user } from "../lib/session.js";
@@ -127,7 +127,15 @@ function resetEdit() {
     brief: duty.value.brief,
     priority: duty.value.priority,
     status: duty.value.status,
+    expire_after_days: duty.value.expire_after_days || 0,
   };
+}
+
+/** "on 23 Oct", or "today" — a date is what someone deciding whether to download it needs. */
+function removedOn(at) {
+  const d = new Date(at);
+  if (d.toDateString() === new Date().toDateString()) return "today";
+  return "on " + d.toLocaleDateString(undefined, { day: "numeric", month: "short" });
 }
 
 function startEdit() {
@@ -282,6 +290,9 @@ onUnmounted(() => {
             {{ duty.status === "active" ? "held by" : "last worked by" }} {{ duty.assigned_agent_id }}
           </span>
           <span :title="exactTime(duty.updated_at)">updated {{ ago(duty.updated_at) }}</span>
+          <span v-if="duty.expires_at && duty.status === 'done'" class="badge" :title="`Removed from the board, with its thread and files, ${exactTime(duty.expires_at)}`">
+            removed {{ removedOn(duty.expires_at) }}
+          </span>
         </p>
         <p v-if="activity && duty.status === 'active'" class="duty__now duty__now--page" role="status">
           <span class="livedot" :class="activity.online === false ? 'livedot--off' : 'livedot--live'">{{ activity.machine }}</span>
@@ -324,6 +335,13 @@ onUnmounted(() => {
               finished work back, use <strong>Did not work?</strong> instead — it records why,
               and that note is the first thing the next agent reads.
             </p>
+          </div>
+          <div class="field">
+            <label for="e-expire">Once it is done</label>
+            <select id="e-expire" v-model.number="edit.expire_after_days">
+              <option v-for="c in expiryChoices(edit.expire_after_days)" :key="c.days" :value="c.days">{{ c.label }}</option>
+            </select>
+            <p v-if="duty.status === 'done'" class="hint">It is done already, so a new choice counts from now.</p>
           </div>
           <div class="row">
             <button class="primary" type="submit" :disabled="posting">Save</button>

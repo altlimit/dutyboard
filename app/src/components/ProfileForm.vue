@@ -241,7 +241,8 @@ const removeServer = (i) => {
     <div class="field">
       <label :for="`${idPrefix}-parallel`">Duties at once</label>
       <input :id="`${idPrefix}-parallel`" v-model.number="draft.parallel" type="number" min="1" max="10" />
-      <p class="hint">
+      <p v-if="files" class="hint">Each task works in a folder of its own, so several can run side by side.</p>
+      <p v-else class="hint">
         Each duty works in its own git worktree, so several can run side by side. Start with 1, and raise it
         once the board has rules and a test command to check merges against.
       </p>

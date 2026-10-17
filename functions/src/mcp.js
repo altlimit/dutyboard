@@ -364,6 +364,7 @@ const TOOLS = [
         cron: s("Five fields — minute, hour, day of the month, month, day of the week. '0 9 * * 1' is 9am every Monday."),
         priority: s("How each filed duty schedules.", { enum: PRIORITIES, default: "next" }),
         reserved_for: s("A machine's agent prefix, if the work can only be done on that machine."),
+        expire_after_days: { type: "integer", minimum: 0, maximum: 365, description: "Remove each duty it files from the board this many days after it is done, for runs nobody needs the record of. 0, the default, keeps them." },
         agent_id: s("Which agent you are. Defaults to the id configured on this connection."),
       },
       required: ["title", "brief", "cron"],
@@ -400,6 +401,8 @@ const TOOLS = [
         cron: s("A new five-field repeat."),
         priority: s("How each filed duty schedules.", { enum: PRIORITIES }),
         enabled: { type: "boolean", description: "False pauses it; true starts it again." },
+        expire_after_days: { type: "integer", minimum: 0, maximum: 365, description: "Remove each duty it files this many days after it is done; 0 keeps them. Applies to the duties it files from now on." },
+
         agent_id: s("Which agent you are. Defaults to the id configured on this connection."),
       },
       required: ["schedule_id"],
