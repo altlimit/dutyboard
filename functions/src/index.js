@@ -38,6 +38,7 @@ import {
   reopenDuty,
   updateDuty,
   deleteDuty,
+  sweepExpiredDuties,
   listThread,
   getDuty,
 } from "./duties.js";
@@ -256,6 +257,34 @@ export default {
     const requestId = request.headers.get("x-ae-request-id") || "";
     const path = routePath(url, request.headers.get("x-ae-fn"));
 
+    // The platform's own clock, and the only caller that arrives with no credential and is
+    // believed: `x-ae-trigger` is stripped from every ordinary request before a function sees
+    // it, so it cannot be forged from outside. This is what makes recurring duties appear
+    // without anybody's machine being awake.
+    //
+    // FIRST, before any route: a scheduled run is addressed to the function itself, which reads as
+    // `/` — the health check's path. Checked after it, every run was answered as a health check, and
+    // only machines' polls ever filed recurring duties.
+    if (request.headers.get("x-ae-trigger") === "cron") {
+      try {
+        const cfg = configure(env);
+        const ctx = { env, cfg, store: makeStore(env, cfg.datastoreInstance, cfg.datastoreNamespace), publish: makePublisher(env, cfg, "cron") };
+        const at = Date.now();
+        const ran = await tickAllSchedules(ctx, at);
+        if (ran.filed || ran.skipped) console.log(`schedules: filed ${ran.filed}, skipped ${ran.skipped}`);
+        // And finished duties whose time on the board is up. Never able to stop the schedules above.
+        const expired = await sweepExpiredDuties(ctx, at).catch((err) => {
+          console.log("expiring duties:", err && err.message);
+          return 0;
+        });
+        if (expired) console.log(`duties: removed ${expired} expired`);
+        return json({ ok: true, ...ran, expired, at });
+      } catch (err) {
+        console.log("scheduled run:", err && err.message);
+        return json({ ok: false }, 500);
+      }
+    }
+
     // Unauthenticated, so a deploy can be checked before any credential exists.
     if (path === "/health" || path === "/") {
       // Capabilities, not configuration: whether attachments work here is decided by the
@@ -297,17 +326,6 @@ export default {
     try {
       const cfg = configure(env);
       const store = makeStore(env, cfg.datastoreInstance, cfg.datastoreNamespace);
-
-      // The platform's own clock, and the only caller that arrives with no credential and is
-      // believed: `x-ae-trigger` is stripped from every ordinary request before a function sees
-      // it, so it cannot be forged from outside. This is what makes recurring duties appear
-      // without anybody's machine being awake.
-      if (request.headers.get("x-ae-trigger") === "cron") {
-        const at = Date.now();
-        const ran = await tickAllSchedules({ env, cfg, store, publish: makePublisher(env, cfg, "cron") }, at);
-        if (ran.filed || ran.skipped) console.log(`schedules: filed ${ran.filed}, skipped ${ran.skipped}`);
-        return json({ ok: true, ...ran, at });
-      }
 
       const open = PUBLIC_ROUTES[path];
       if (open) {
