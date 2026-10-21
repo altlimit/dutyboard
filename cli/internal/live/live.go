@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"net/url"
 	"regexp"
 	"time"
@@ -31,10 +32,10 @@ func (e Event) Str(k string) string { s, _ := e.Data[k].(string); return s }
 
 // Token is a minted subscribe token.
 type Token struct {
-	Token     string
-	WSURL     string
-	ExpiresAt int64
-	Channels  []string
+	Token      string
+	WSEndpoint string
+	ExpiresAt  int64
+	Channels   []string
 }
 
 // Options configure a Run.
@@ -140,7 +141,11 @@ func (o Options) dial(ctx context.Context) (*conn, error) {
 	}
 	dialCtx, cancelDial := context.WithTimeout(ctx, 15*time.Second)
 	defer cancelDial()
-	ws, _, err := websocket.Dial(dialCtx, u, nil)
+	// The token goes in the Authorization header: `?token=` is deprecated and may stop working
+	// after 31 January 2027.
+	ws, _, err := websocket.Dial(dialCtx, u, &websocket.DialOptions{
+		HTTPHeader: http.Header{"Authorization": {"Bearer " + tok.Token}},
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -197,10 +202,10 @@ func (o Options) dial(ctx context.Context) (*conn, error) {
 }
 
 func socketURL(tok *Token, server string) (string, error) {
-	if tok.WSURL == "" {
+	if tok.WSEndpoint == "" {
 		return "", errors.New("the channel token names no socket URL")
 	}
-	u, err := url.Parse(tok.WSURL)
+	u, err := url.Parse(tok.WSEndpoint)
 	if err != nil {
 		return "", err
 	}
@@ -213,11 +218,6 @@ func socketURL(tok *Token, server string) (string, error) {
 				u.Scheme = "ws"
 			}
 		}
-	}
-	q := u.Query()
-	if q.Get("token") == "" {
-		q.Set("token", tok.Token)
-		u.RawQuery = q.Encode()
 	}
 	return u.String(), nil
 }

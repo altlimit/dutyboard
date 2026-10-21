@@ -458,10 +458,10 @@ func (c *Client) SyncSchedules(ctx context.Context, board string, offsets map[st
 
 // LiveToken is a channel subscribe token.
 type LiveToken struct {
-	Token     string   `json:"token"`
-	WSURL     string   `json:"ws_url"`
-	ExpiresAt int64    `json:"expires_at"`
-	Channels  []string `json:"channels"`
+	Token      string   `json:"token"`
+	WSEndpoint string   `json:"ws_endpoint"`
+	ExpiresAt  int64    `json:"expires_at"`
+	Channels   []string `json:"channels"`
 }
 
 // Live mints this machine's channel token.

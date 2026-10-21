@@ -312,7 +312,7 @@ func (d *Daemon) liveLoop(ctx context.Context) {
 					if err != nil {
 						return nil, err
 					}
-					return &live.Token{Token: t.Token, WSURL: t.WSURL, ExpiresAt: t.ExpiresAt, Channels: t.Channels}, nil
+					return &live.Token{Token: t.Token, WSEndpoint: t.WSEndpoint, ExpiresAt: t.ExpiresAt, Channels: t.Channels}, nil
 				},
 				OnEvent:     d.onEvent,
 				OnConnected: d.wake,

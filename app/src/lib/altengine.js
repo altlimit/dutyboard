@@ -396,30 +396,28 @@ export function subscribeLive({ projectId, dutyIds = [], mint = null, mintWith =
       }
     }
 
-    // Take the PATH and QUERY from the mint but keep our own origin.
+    // Take the PATH from the mint but keep our own origin.
     //
-    // The mint's `ws_url` already carries the token, so re-appending one would produce
-    // `?token=A?token=B` and a 401 handshake. But its host is the server's idea of where
-    // it lives, which is not always where this page can reach it — an emulator hands back
-    // a placeholder host, and a deployment behind a tunnel or a port-forward has the same
-    // problem. The origin we were configured with is the one that demonstrably works,
-    // since every other call in this file just succeeded against it.
+    // The mint's `ws_endpoint` host is the server's idea of where it lives, which is not
+    // always where this page can reach it — an emulator hands back a placeholder host, and
+    // a deployment behind a tunnel or a port-forward has the same problem. The origin we
+    // were configured with is the one that demonstrably works, since every other call in
+    // this file just succeeded against it.
     const wsBase = config.baseUrl.replace(/^http/, "ws");
-    const fallback = `/v1/channel/${seg(config.channel)}/subscribe`;
-    let pathAndQuery = fallback;
-    if (minted.ws_url) {
+    let path = `/v1/channel/${seg(config.channel)}/subscribe`;
+    if (minted.ws_endpoint) {
       try {
-        const from = new URL(minted.ws_url, wsBase);
-        pathAndQuery = from.pathname + from.search;
+        path = new URL(minted.ws_endpoint, wsBase).pathname;
       } catch {
         /* unparseable — fall back to the path we can build ourselves */
       }
     }
-    const u = new URL(pathAndQuery, wsBase);
-    if (!u.searchParams.has("token")) u.searchParams.set("token", minted.token);
+    // The token rides in the subprotocol: a browser cannot set an Authorization header on a
+    // socket, and `?token=` is deprecated (it may stop working after 31 January 2027).
+    const protocols = minted.protocols || ["altengine.v1", `altengine.token.${minted.token}`];
 
     try {
-      ws = new WebSocket(u.toString());
+      ws = new WebSocket(new URL(path, wsBase).toString(), protocols);
     } catch {
       return scheduleReconnect();
     }

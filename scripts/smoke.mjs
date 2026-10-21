@@ -151,11 +151,9 @@ async function machineTool(key, board, name, args) {
  */
 function openSocket(minted) {
   const base = BASE.replace(/^http/, "ws");
-  const from = minted.ws_url ? new URL(minted.ws_url, base) : null;
-  const u = new URL(from ? from.pathname + from.search : `/v1/channel/dutyboard-live/subscribe`, base);
-  if (!u.searchParams.has("token")) u.searchParams.set("token", minted.token);
+  const u = new URL(minted.ws_endpoint ? new URL(minted.ws_endpoint, base).pathname : `/v1/channel/dutyboard-live/subscribe`, base);
   const frames = [];
-  const ws = new WebSocket(u.toString());
+  const ws = new WebSocket(u.toString(), minted.protocols || ["altengine.v1", `altengine.token.${minted.token}`]);
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error("socket did not subscribe within 5s")), 5000);
     ws.onmessage = (ev) => {
