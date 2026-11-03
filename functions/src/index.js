@@ -20,11 +20,12 @@
 // every change back through here.
 
 import { liveMe, pushKey, pushSubscribe, pushTest, pushUnsubscribe } from "./notify.js";
-import { HttpError, errorResponse, json, readJson, notFound, str } from "./http.js";
+import { HttpError, errorResponse, json, readJson, forbidden, notFound, str } from "./http.js";
 import { makeStore } from "./store.js";
 import { identify } from "./identity.js";
 import { makePublisher, liveToken } from "./live.js";
-import { noteTokenUse, createToken, listTokens, revokeToken } from "./tokens.js";
+import { noteTokenUse, createToken, listTokens, revokeToken, updateToken } from "./tokens.js";
+import { deliverWebhook, rotateWebhookSecret, setWebhook, testWebhook, withWebhooks } from "./webhooks.js";
 import { openBoard, createProject, listProjects, renameProject, deleteProject } from "./projects.js";
 import { attachToDuty, listAttachments, deleteAttachment } from "./attachments.js";
 import {
@@ -42,6 +43,8 @@ import {
   sweepExpiredDuties,
   listThread,
   getDuty,
+  listChanges,
+  cancelDuty,
 } from "./duties.js";
 import { handleMcp } from "./mcp.js";
 import { addMember, listMembers, removeMember, setMemberAgents, syncAccess } from "./members.js";
@@ -86,6 +89,9 @@ function configure(env) {
     channelInstance: env.DUTYBOARD_CHANNEL || "dutyboard-live",
     blobInstance: env.DUTYBOARD_BLOB || "dutyboard-files",
     searchInstance: env.DUTYBOARD_SEARCH || "dutyboard-search",
+    // Where the webhooks queue lives. Usually not set here: the provisioner records it with the
+    // deployment (settings/webhooks), for the same reason it records the console's address.
+    tasksInstance: env.DUTYBOARD_TASKS || "",
     // Where the console is served, for a daemon that has just started pairing and needs to tell a
     // person where to approve it. The function cannot work this out: the console is a static site
     // anywhere, and this is only ever called by the thing it serves.
@@ -109,6 +115,8 @@ const ROUTES = {
   "/duty/delete": deleteDuty,
   "/duty/thread": listThread,
   "/duty/get": getDuty,
+  "/duty/changes": listChanges,
+  "/duty/cancel": cancelDuty,
   "/duty/search": searchDuties,
   "/duty/attach": attachToDuty,
   "/duty/attachments": listAttachments,
@@ -141,6 +149,10 @@ const ROUTES = {
   "/tokens/mint": createToken,
   "/tokens/list": listTokens,
   "/tokens/revoke": revokeToken,
+  "/tokens/update": updateToken,
+  "/tokens/webhook": setWebhook,
+  "/tokens/webhook/rotate": rotateWebhookSecret,
+  "/tokens/webhook/test": testWebhook,
   "/live/token": liveToken,
   "/live/me": liveMe,
   "/push/key": pushKey,
@@ -166,6 +178,22 @@ const ROUTES = {
   "/machine/request": requestSetup,
   "/machine/request/report": reportRequest,
 };
+
+/**
+ * All a `submit` token may call: file a duty, follow the ones it filed, give them their files, and
+ * see where it can send them. Checked here, once, rather than in each handler — a route added
+ * later is closed to it until someone decides otherwise. Its MCP tools are the same set (mcp.js).
+ */
+const SUBMIT_ROUTES = new Set([
+  "/duty/enqueue",
+  "/duty/get",
+  "/duty/changes",
+  "/duty/cancel",
+  "/duty/thread",
+  "/duty/attach",
+  "/duty/attachments",
+  "/board/runners",
+]);
 
 /**
  * The two routes that take no credential, because the thing calling them does not have one yet: a
@@ -270,7 +298,8 @@ export default {
     if (request.headers.get("x-ae-trigger") === "cron") {
       try {
         const cfg = configure(env);
-        const ctx = { env, cfg, store: makeStore(env, cfg.datastoreInstance, cfg.datastoreNamespace), publish: makePublisher(env, cfg, "cron") };
+        const ctx = { env, cfg, store: makeStore(env, cfg.datastoreInstance, cfg.datastoreNamespace) };
+        ctx.publish = withWebhooks(ctx, makePublisher(env, cfg, "cron"));
         const at = Date.now();
         const ran = await tickAllSchedules(ctx, at);
         if (ran.filed || ran.skipped) console.log(`schedules: filed ${ran.filed}, skipped ${ran.skipped}`);
@@ -284,6 +313,19 @@ export default {
       } catch (err) {
         console.log("scheduled run:", err && err.message);
         return json({ ok: false }, 500);
+      }
+    }
+
+    // The webhooks queue handing back one delivery to make (webhooks.js). Believed for the same
+    // reason the clock is: `x-ae-trigger` cannot be set from outside. What it carries is still only
+    // data — which token, which event — and the URL and secret are read fresh from the datastore.
+    if (request.headers.get("x-ae-trigger") === "task") {
+      try {
+        const cfg = configure(env);
+        return await deliverWebhook({ env, cfg, store: makeStore(env, cfg.datastoreInstance, cfg.datastoreNamespace) }, request);
+      } catch (err) {
+        console.log("webhook delivery:", err && err.message);
+        return json({ ok: false }, 503);
       }
     }
 
@@ -336,6 +378,9 @@ export default {
       }
 
       const caller = await identify(request, env, cfg, store);
+      if (caller.scope === "submit" && path !== "/mcp" && !SUBMIT_ROUTES.has(path)) {
+        throw forbidden("this token files duties and follows the ones it filed — it cannot call this");
+      }
       const ctx = {
         env,
         cfg,
@@ -343,10 +388,10 @@ export default {
         caller,
         requestId,
         defaultAgentId: defaultAgentId(url, request, caller),
-        publish: makePublisher(env, cfg, request.headers.get("x-dutyboard-origin") || ""),
         // The `dutyboard` release making this call, when a machine makes it.
         clientVersion: str(request.headers.get("x-dutyboard-version") || "", "version", { max: 40 }),
       };
+      ctx.publish = withWebhooks(ctx, makePublisher(env, cfg, request.headers.get("x-dutyboard-origin") || ""));
       // Fire-and-forget in spirit; awaited because a function has no waitUntil. It
       // writes at most once a minute per token, so it is not on the hot path.
       await noteTokenUse(ctx, caller);

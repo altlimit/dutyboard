@@ -4,7 +4,7 @@ import { useRoute, useRouter } from "vue-router";
 import { api, subscribeLive } from "../lib/altengine.js";
 import { user as me } from "../lib/session.js";
 import { config } from "../config.js";
-import { ago, expiryChoices, statusLabel } from "../lib/duties.js";
+import { ago, exactTime, expiryChoices, statusLabel } from "../lib/duties.js";
 import { agentLabel, newRepoDraft, profileDraft, profilePayload, requestNewRepo, runStateLabel } from "../lib/runners.js";
 import ProfileForm from "../components/ProfileForm.vue";
 import NewRepoFields from "../components/NewRepoFields.vue";
@@ -322,8 +322,19 @@ const error = ref("");
 const busy = ref(false);
 const name = ref("");
 const agentId = ref("");
+/** `agent` works the board; `submit` is software outside it that files duties and follows them. */
+const scope = ref("agent");
+/** A runner's agent prefix every duty the token files is reserved for, or "" for any runner. */
+const reserveFor = ref("");
 /** Shown once, right after minting — the value is not stored anywhere it can be read back. */
 const fresh = ref(null);
+/** Hosts this deployment lets a webhook call; empty when webhooks are not set up here. */
+const webhookHosts = ref([]);
+/** The token whose webhook is being edited, and the draft URL. */
+const hookEdit = ref(null);
+/** A webhook secret, shown once after it is minted or rotated. */
+const hookSecret = ref(null);
+const hookNotice = ref("");
 const copied = ref(false);
 const confirmDelete = ref("");
 
@@ -454,7 +465,12 @@ async function load() {
       // Whether a machine is making its repository is the owner's to see.
       isOwner.value ? loadRunners() : null,
       // Tokens are the owner's. A member is refused them, so they are not asked for.
-      isOwner.value ? api("/tokens/list", { project_id: props.projectId }).then((l) => (tokens.value = l.tokens)) : null,
+      isOwner.value
+        ? api("/tokens/list", { project_id: props.projectId }).then((l) => {
+            tokens.value = l.tokens;
+            webhookHosts.value = l.webhook_hosts || [];
+          })
+        : null,
     ]);
   } catch (err) {
     error.value = err.message;
@@ -471,10 +487,13 @@ async function mint() {
     fresh.value = await api("/tokens/mint", {
       project_id: props.projectId,
       name: name.value,
-      default_agent_id: agentId.value || undefined,
+      scope: scope.value,
+      default_agent_id: (scope.value === "agent" && agentId.value) || undefined,
+      reserve_for: reserveFor.value || undefined,
     });
     name.value = "";
     agentId.value = "";
+    reserveFor.value = "";
     await load();
   } catch (err) {
     error.value = err.message;
@@ -483,8 +502,74 @@ async function mint() {
   }
 }
 
+/** Where a token's duties go: one runner, or "" for whichever takes them first. */
+async function setPin(t, value) {
+  busy.value = true;
+  error.value = "";
+  try {
+    await api("/tokens/update", { project_id: props.projectId, token_id: t.token_id, reserve_for: value });
+    await load();
+  } catch (err) {
+    error.value = err.message;
+  } finally {
+    busy.value = false;
+  }
+}
+
+function editHook(t) {
+  hookNotice.value = "";
+  hookSecret.value = null;
+  hookEdit.value = { token_id: t.token_id, name: t.name, url: (t.webhook && t.webhook.url) || "", had: !!t.webhook };
+}
+
+/** Run one webhook call for the token being edited, then reload the list. */
+async function hookCall(path, body, done) {
+  busy.value = true;
+  error.value = "";
+  hookNotice.value = "";
+  try {
+    const res = await api(path, { project_id: props.projectId, token_id: hookEdit.value.token_id, ...body });
+    if (res.secret) hookSecret.value = { name: hookEdit.value.name, secret: res.secret };
+    done(res);
+    await load();
+  } catch (err) {
+    error.value = err.message;
+  } finally {
+    busy.value = false;
+  }
+}
+
+const saveHook = () =>
+  hookCall("/tokens/webhook", { url: hookEdit.value.url }, () => {
+    hookEdit.value.had = true;
+    hookNotice.value = "Saved. Every move of a duty this token files is sent there.";
+  });
+const removeHook = () => {
+  if (!confirm(`Stop sending "${hookEdit.value.name}"'s duties to ${hookEdit.value.url}? Deliveries still queued are dropped.`)) return;
+  hookCall("/tokens/webhook", { url: null }, () => (hookEdit.value = null));
+};
+const rotateHook = () => {
+  if (!confirm("Make a new signing secret? The receiver rejects deliveries until it has the new one.")) return;
+  hookCall("/tokens/webhook/rotate", {}, () => (hookNotice.value = "New secret made. The old one no longer signs anything."));
+};
+const testHook = () => hookCall("/tokens/webhook/test", {}, () => (hookNotice.value = "A ping is on its way. Its result shows in the list as the last delivery."));
+
+const runnerName = (prefix) => {
+  const r = runners.value.find((x) => x.agent_prefix === prefix);
+  return r ? r.machine_name : prefix;
+};
+
+const curlEnqueue = computed(
+  () =>
+    `curl -X POST ${config.api}/duty/enqueue \\\n  -H "Authorization: Bearer ${fresh.value ? fresh.value.token : "<your token>"}" \\\n  -H "content-type: application/json" \\\n  -d '{"title": "Run the nightly report", "brief": "What to do and why.", "external_ref": "report-2026-11-03"}'`,
+);
+const curlChanges = computed(
+  () =>
+    `curl -X POST ${config.api}/duty/changes \\\n  -H "Authorization: Bearer ${fresh.value ? fresh.value.token : "<your token>"}" \\\n  -H "content-type: application/json" -d '{"since": 0}'`,
+);
+
 async function revoke(t) {
-  if (!confirm(`Revoke "${t.name}"? Any agent using it stops working immediately.`)) return;
+  if (!confirm(`Revoke "${t.name}"? Anything using it stops working immediately${t.webhook ? ", and its webhook goes with it" : ""}.`)) return;
   busy.value = true;
   try {
     await api("/tokens/revoke", { project_id: props.projectId, token_id: t.token_id });
@@ -995,10 +1080,12 @@ function tabKey(event) {
       tabindex="0"
     >
       <div v-if="isOwner">
-        <h2 style="margin: 0">Connect an agent by hand, with a token</h2>
+        <h2 style="margin: 0">Connect an agent or an integration, with a token</h2>
         <p class="muted">
-          An agent connects with a project token. The token names this board and nothing else,
-          so an agent holding it can never reach another one.
+          A token names this board and nothing else, so whatever holds it can never reach another
+          one. An <strong>agent</strong> token works the board. An <strong>integration</strong>
+          token is for software outside it, like a CI job or your own backend. It files duties,
+          follows the ones it filed, and can be told when they move.
         </p>
       </div>
 
@@ -1011,24 +1098,43 @@ function tabKey(event) {
           <span v-if="copied" class="small muted" role="status">Copied.</span>
         </div>
 
-        <h3 style="margin: 0.5rem 0 0">Point an agent at this board</h3>
-        <p class="small muted" style="margin: 0">
-          As an MCP server, so the agent gets duty_poll, duty_claim, duty_checkpoint and the
-          rest as tools:
-        </p>
-        <pre class="token" style="white-space: pre-wrap">{{ mcpCommand }}</pre>
-        <div class="row">
-          <button type="button" @click="copy(mcpCommand)">Copy command</button>
-        </div>
-        <p class="small muted" style="margin: 0">
-          Run it inside the repo this board is for: Claude Code keeps the server for that
-          directory only, so an agent there sees this board and no other. To disconnect, or to
-          replace a token you have revoked, <code class="mono">claude mcp remove {{ serverName }}</code>.
-        </p>
-        <p class="small muted" style="margin: 0">
-          Or over plain HTTP: <code class="mono">POST {{ config.api }}/duty/poll</code> with the same
-          Authorization header.
-        </p>
+        <template v-if="fresh.scope === 'submit'">
+          <h3 style="margin: 0.5rem 0 0">File work from outside</h3>
+          <p class="small muted" style="margin: 0">
+            Send an <code class="mono">external_ref</code>, your own id for the request. Retrying
+            with the same one returns the duty already filed instead of creating a second.
+          </p>
+          <pre class="token" style="white-space: pre-wrap">{{ curlEnqueue }}</pre>
+          <div class="row">
+            <button type="button" @click="copy(curlEnqueue)">Copy command</button>
+          </div>
+          <p class="small muted" style="margin: 0">
+            To find out what happened, poll for the duties it filed that changed. Pass back the
+            <code class="mono">next_since</code> each answer gives you, or set a webhook on the
+            token below.
+          </p>
+          <pre class="token" style="white-space: pre-wrap">{{ curlChanges }}</pre>
+        </template>
+        <template v-else>
+          <h3 style="margin: 0.5rem 0 0">Point an agent at this board</h3>
+          <p class="small muted" style="margin: 0">
+            As an MCP server, so the agent gets duty_poll, duty_claim, duty_checkpoint and the
+            rest as tools:
+          </p>
+          <pre class="token" style="white-space: pre-wrap">{{ mcpCommand }}</pre>
+          <div class="row">
+            <button type="button" @click="copy(mcpCommand)">Copy command</button>
+          </div>
+          <p class="small muted" style="margin: 0">
+            Run it inside the repo this board is for: Claude Code keeps the server for that
+            directory only, so an agent there sees this board and no other. To disconnect, or to
+            replace a token you have revoked, <code class="mono">claude mcp remove {{ serverName }}</code>.
+          </p>
+          <p class="small muted" style="margin: 0">
+            Or over plain HTTP: <code class="mono">POST {{ config.api }}/duty/poll</code> with the same
+            Authorization header.
+          </p>
+        </template>
         <div><button type="button" @click="fresh = null">Done</button></div>
       </div>
 
@@ -1039,11 +1145,29 @@ function tabKey(event) {
           <input id="t-name" v-model="name" required maxlength="80" placeholder="laptop, CI runner, agent alpha" />
         </div>
         <div class="field">
+          <label for="t-scope">What holds it</label>
+          <select id="t-scope" v-model="scope">
+            <option value="agent">An agent: it works the board's duties</option>
+            <option value="submit">An integration: it files duties and follows them</option>
+          </select>
+        </div>
+        <div v-if="scope === 'agent'" class="field">
           <label for="t-agent">Default agent id <span class="muted">(optional)</span></label>
           <input id="t-agent" v-model="agentId" maxlength="64" placeholder="alpha" />
           <p class="hint">
             Identifies the worker holding a duty. Setting it here means the agent does not have to
             repeat it on every call — useful when a model is producing the arguments.
+          </p>
+        </div>
+        <div v-if="runners.length" class="field">
+          <label for="t-route">Duties it files go to</label>
+          <select id="t-route" v-model="reserveFor">
+            <option value="">Any runner on this board</option>
+            <option v-for="r in runners" :key="r.machine_id" :value="r.agent_prefix">Only {{ r.machine_name }}</option>
+          </select>
+          <p class="hint">
+            When set to one runner, everything the token files waits for that machine and nothing
+            else picks it up.
           </p>
         </div>
         <div><button class="primary" type="submit" :disabled="busy || !name">Mint token</button></div>
@@ -1060,7 +1184,9 @@ function tabKey(event) {
               <tr>
                 <th scope="col">Name</th>
                 <th scope="col">Token</th>
-                <th scope="col">Agent</th>
+                <th scope="col">Kind</th>
+                <th scope="col">Duties go to</th>
+                <th scope="col">Webhook</th>
                 <th scope="col">Last used</th>
                 <th scope="col"><span class="sr-only">Actions</span></th>
               </tr>
@@ -1072,7 +1198,38 @@ function tabKey(event) {
                   <span v-if="t.revoked" class="badge badge--failed">revoked</span>
                 </td>
                 <td class="mono">{{ t.hint }}</td>
-                <td>{{ t.default_agent_id || "—" }}</td>
+                <td>{{ t.scope === "submit" ? "integration" : `agent${t.default_agent_id ? ` (${t.default_agent_id})` : ""}` }}</td>
+                <td>
+                  <select
+                    v-if="!t.revoked && runners.length"
+                    :value="t.reserve_for || ''"
+                    :disabled="busy"
+                    :aria-label="`Where ${t.name}'s duties go`"
+                    @change="setPin(t, $event.target.value)"
+                  >
+                    <option value="">Any runner</option>
+                    <option v-for="r in runners" :key="r.machine_id" :value="r.agent_prefix">{{ r.machine_name }}</option>
+                  </select>
+                  <span v-else>{{ t.reserve_for ? runnerName(t.reserve_for) : "any runner" }}</span>
+                </td>
+                <td>
+                  <template v-if="t.webhook">
+                    <span class="mono small">{{ t.webhook.url.replace(/^https:\/\//, "") }}</span>
+                    <span v-if="t.webhook.last_status" class="small muted" :title="t.webhook.last_at ? exactTime(t.webhook.last_at) : ''">
+                      · last {{ t.webhook.last_status }}
+                    </span>
+                  </template>
+                  <span v-else class="muted">—</span>
+                  <button
+                    v-if="!t.revoked && (t.webhook || webhookHosts.length)"
+                    type="button"
+                    class="link"
+                    :disabled="busy"
+                    @click="editHook(t)"
+                  >
+                    {{ t.webhook ? "Edit" : "Add" }}<span class="sr-only"> webhook for {{ t.name }}</span>
+                  </button>
+                </td>
                 <td class="nowrap">{{ t.last_used_at ? ago(t.last_used_at) : "never" }}</td>
                 <td>
                   <button v-if="!t.revoked" type="button" class="danger" :disabled="busy" @click="revoke(t)">
@@ -1083,7 +1240,45 @@ function tabKey(event) {
             </tbody>
           </table>
         </div>
+        <p v-if="!loading && !webhookHosts.length" class="small muted">
+          Webhooks are off on this deployment. To turn them on, deploy it again with
+          <code class="mono">dutyboard --provision-only --webhook-hosts your.host.example</code>.
+        </p>
       </section>
+
+      <form v-if="isOwner && hookEdit" class="panel stack" aria-labelledby="hook-h" @submit.prevent="saveHook">
+        <h2 id="hook-h">Webhook for {{ hookEdit.name }}</h2>
+        <p class="small muted" style="margin: 0">
+          Every time a duty this token filed changes status, including when it is deleted, a signed
+          POST is sent here. Failed deliveries are retried for up to a day.
+        </p>
+        <div class="field">
+          <label for="hook-url">URL</label>
+          <input id="hook-url" v-model="hookEdit.url" type="url" required maxlength="2000" placeholder="https://hooks.example.com/dutyboard" />
+          <p class="hint">
+            HTTPS, on a host this deployment allows: <span class="mono">{{ webhookHosts.join(", ") || "none yet" }}</span>.
+          </p>
+        </div>
+        <div v-if="hookSecret" class="notice stack" role="status">
+          <p style="margin: 0">
+            The signing secret for {{ hookSecret.name }}. This is the only time it is shown. Check that
+            <code class="mono">x-dutyboard-signature</code> equals <code class="mono">v1=</code> plus the HMAC-SHA256 of
+            <code class="mono">timestamp + "." + body</code>, keyed with this secret.
+          </p>
+          <p class="token">{{ hookSecret.secret }}</p>
+          <div class="row"><button type="button" @click="copy(hookSecret.secret)">Copy secret</button></div>
+        </div>
+        <p v-if="hookNotice" class="small" role="status">{{ hookNotice }}</p>
+        <div class="row">
+          <button class="primary" type="submit" :disabled="busy || !hookEdit.url">Save</button>
+          <template v-if="hookEdit.had">
+            <button type="button" :disabled="busy" @click="testHook">Send a test</button>
+            <button type="button" :disabled="busy" @click="rotateHook">New secret</button>
+            <button type="button" class="danger" :disabled="busy" @click="removeHook">Remove</button>
+          </template>
+          <button type="button" :disabled="busy" @click="hookEdit = null; hookSecret = null">Close</button>
+        </div>
+      </form>
     </div>
     <div
       v-show="tab === 'advanced'"

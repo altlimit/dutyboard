@@ -104,6 +104,12 @@ export function mintMachineKey() {
   return "dbm_" + B64URL(randomBytes(32));
 }
 
+/** What a token's webhook is signed with — 256 bits. Unlike a token it is kept, not hashed: the
+ *  function needs the value itself to sign every delivery. Shown to the owner once. */
+export function mintWebhookSecret() {
+  return "dbw_" + B64URL(randomBytes(32));
+}
+
 /** The secret half of a pairing: the daemon holds it and polls with it. Never shown to a
  *  person, so it can be as long as it likes. */
 export const mintDeviceCode = () => B64URL(randomBytes(32));

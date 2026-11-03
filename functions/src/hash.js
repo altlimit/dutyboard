@@ -26,7 +26,42 @@ const rotr = (x, n) => (x >>> n) | (x << (32 - n));
 
 /** SHA-256 of a UTF-8 string, as lowercase hex. */
 export function sha256Hex(input) {
-  const bytes = new TextEncoder().encode(input);
+  return hex(sha256(new TextEncoder().encode(input)));
+}
+
+/**
+ * HMAC-SHA256 of a UTF-8 message under a UTF-8 key, as lowercase hex — how a webhook is signed.
+ * Here and not `crypto.subtle.sign` for the reason this file exists: the emulator has `digest`
+ * and nothing else, and a signature that only works in production is one nobody has tested.
+ */
+export function hmacSha256Hex(key, message) {
+  const enc = new TextEncoder();
+  let k = enc.encode(key);
+  if (k.length > 64) k = sha256(k);
+  const inner = new Uint8Array(64);
+  const outer = new Uint8Array(64);
+  for (let i = 0; i < 64; i++) {
+    inner[i] = (k[i] || 0) ^ 0x36;
+    outer[i] = (k[i] || 0) ^ 0x5c;
+  }
+  const msg = enc.encode(message);
+  const first = new Uint8Array(64 + msg.length);
+  first.set(inner);
+  first.set(msg, 64);
+  const second = new Uint8Array(64 + 32);
+  second.set(outer);
+  second.set(sha256(first), 64);
+  return hex(sha256(second));
+}
+
+function hex(bytes) {
+  let out = "";
+  for (const b of bytes) out += b.toString(16).padStart(2, "0");
+  return out;
+}
+
+/** SHA-256 of bytes, as 32 bytes. */
+function sha256(bytes) {
   const bitLen = bytes.length * 8;
 
   // Pad to a multiple of 64 bytes: 0x80, zeros, then the length as a 64-bit big-endian.
@@ -66,7 +101,8 @@ export function sha256Hex(input) {
     h[4] = (h[4] + e) >>> 0; h[5] = (h[5] + f) >>> 0; h[6] = (h[6] + g) >>> 0; h[7] = (h[7] + hh) >>> 0;
   }
 
-  let out = "";
-  for (const word of h) out += word.toString(16).padStart(8, "0");
+  const out = new Uint8Array(32);
+  const outView = new DataView(out.buffer);
+  for (let i = 0; i < 8; i++) outView.setUint32(i * 4, h[i]);
   return out;
 }

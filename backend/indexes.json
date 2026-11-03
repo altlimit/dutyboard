@@ -120,6 +120,20 @@
     },
     {
       "fields": [
+        "api_ref"
+      ],
+      "unique": true,
+      "for": "ONE DUTY PER EXTERNAL REF. A duty filed with an external_ref carries '<token>:<ref>'; every other duty carries nothing, and nulls do not collide. Two retries of one request racing write two rows with the same value, so the second is refused and answered with the first."
+    },
+    {
+      "fields": [
+        "filed_by_token",
+        "updated_at"
+      ],
+      "for": "the function: /duty/changes — what one token filed that moved since a time"
+    },
+    {
+      "fields": [
         "schedule_id",
         "created_at"
       ],
@@ -180,6 +194,14 @@
         "created_at:desc"
       ],
       "for": "the function: a board's agent tokens"
+    }
+  ],
+  "webhooks": [
+    {
+      "fields": [
+        "project_id"
+      ],
+      "for": "the function: a board's token webhooks, for the owner's token list"
     }
   ],
   "attachments": [

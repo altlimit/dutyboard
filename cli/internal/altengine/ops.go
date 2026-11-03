@@ -58,7 +58,7 @@ func (c *Client) ListInstances(ctx context.Context) (Inventory, error) {
 		inv := Inventory{}
 		return inv, c.Tool(ctx, "list_instances", nil, &inv)
 	}
-	// Only these three have an admin listing: functions, blob and search instances come into being
+	// These three always have an admin listing: functions, blob and search instances come into being
 	// on first use, and asking the admin API for them falls through to the emulator's own web UI.
 	inv := Inventory{}
 	for _, service := range []string{"auth", "datastore", "channel"} {
@@ -69,6 +69,14 @@ func (c *Client) ListInstances(ctx context.Context) (Inventory, error) {
 			return nil, fmt.Errorf("listing the emulator's %s instances: %w", service, err)
 		}
 		inv[service] = out.Instances
+	}
+	// And tasks, on an emulator new enough to have them. One that is not answers with its web UI,
+	// which is "none", not a failure: it is the one service a DutyBoard can do without.
+	var tasks struct {
+		Instances []Instance `json:"instances"`
+	}
+	if err := c.Do(ctx, http.MethodGet, "/admin/tasks", nil, &tasks); err == nil {
+		inv["tasks"] = tasks.Instances
 	}
 	return inv, nil
 }
@@ -205,6 +213,35 @@ func (c *Client) SetFunctionSettings(ctx context.Context, instance string, cors,
 		return c.Do(ctx, http.MethodPut, "/v1/functions/"+Esc(instance)+"/settings", settings, nil)
 	}
 	return c.PatchConfig(ctx, "functions", instance, settings)
+}
+
+// EnsureQueue creates a tasks queue, or brings the one already there to these settings — only the
+// settings passed change. Locally the emulator's admin API addresses the instance by id, so the
+// caller passes the id there. A push queue's target must exist when this is called.
+func (c *Client) EnsureQueue(ctx context.Context, instance, name string, settings map[string]any) error {
+	if c.Local() {
+		p := "/admin/tasks/" + Esc(instance) + "/queues"
+		body := map[string]any{"name": name}
+		for k, v := range settings {
+			body[k] = v
+		}
+		err := c.Do(ctx, http.MethodPost, p, body, nil)
+		if IsStatus(err, 409) {
+			return c.Do(ctx, http.MethodPatch, p+"/"+Esc(name), settings, nil)
+		}
+		return err
+	}
+	args := map[string]any{"instance": instance, "name": name, "create": true}
+	for k, v := range settings {
+		args[k] = v
+	}
+	err := c.Tool(ctx, "tasks_set_queue", args, nil)
+	var te *ToolError
+	if errors.As(err, &te) && strings.Contains(strings.ToLower(te.Message), "already exists") {
+		delete(args, "create")
+		return c.Tool(ctx, "tasks_set_queue", args, nil)
+	}
+	return err
 }
 
 // SetFunctionSecrets adds or replaces env-exposure secrets on a functions instance, keeping every

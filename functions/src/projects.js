@@ -202,6 +202,8 @@ export async function deleteProject(ctx, body) {
     duties: await sweep(ctx, "duties", project.key),
     agents: await sweep(ctx, "agents", project.key),
     tokens: await sweep(ctx, "tokens", project.key),
+    // Each holding the secret its token's deliveries were signed with.
+    webhooks: await sweep(ctx, "webhooks", project.key),
     schedules: await sweep(ctx, "schedules", project.key),
     // And everyone who was on it, with the board taken back out of their claims.
     members: await sweepMembers(ctx, project.key),

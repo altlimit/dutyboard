@@ -1575,6 +1575,196 @@ async function main() {
     check("search is optional and this deployment says it is off", health.search === false, health);
   }
 
+  // --- software outside the board: submit tokens and webhooks ---------------
+  //
+  // A CI job or someone's backend files work and follows it. Its token can do exactly that: file,
+  // read what it filed, cancel what nobody has started — and nothing an agent does.
+  {
+    const apiBoard = `smoke-api-${Date.now().toString(36)}`;
+    await call("/projects/create", { name: "From outside", project_id: apiBoard, profile: { repo_url: "https://github.com/example/from-outside.git" } }, human);
+    await call("/machine/link", { project_id: apiBoard, setup: false }, mkey);
+    const submitter = await call("/tokens/mint", { project_id: apiBoard, name: "ci", scope: "submit" }, human);
+    check("an owner can mint a submit token", submitter.scope === "submit" && /^db_/.test(submitter.token), submitter);
+    const sub = submitter.token;
+    const worker = (await call("/tokens/mint", { project_id: apiBoard, name: "worker", default_agent_id: "w" }, human)).token;
+
+    const filed = await call("/duty/enqueue", { title: "Build 42", brief: "Run build 42 and report.", external_ref: "build-42", metadata: { run: 42 } }, sub);
+    check("a submit token files a duty", filed.status === "queued" && filed.external_ref === "build-42" && !filed.existing, filed);
+    const refiled = await call("/duty/enqueue", { title: "Build 42", brief: "Run build 42 and report.", external_ref: "build-42" }, sub);
+    check("filing the same external_ref again answers the duty already filed", refiled.duty_id === filed.duty_id && refiled.existing === true, refiled);
+    const theirs = await call("/duty/enqueue", { title: "Build 42", brief: "theirs", external_ref: "build-42" }, worker);
+    check("and another token's build-42 is a different duty", theirs.duty_id !== filed.duty_id && !theirs.existing, theirs);
+    const asFiled = (await call("/duty/get", { duty_id: filed.duty_id }, sub)).duty;
+    check(
+      "it is marked as filed through the API, by the token's name, with the caller's own fields",
+      asFiled.origin === "api" && asFiled.created_by_name === "ci" && asFiled.metadata && asFiled.metadata.run === 42,
+      asFiled,
+    );
+    const tooBig = await call("/duty/enqueue", { title: "x", brief: "x", metadata: { blob: "x".repeat(3000) } }, sub, { expectStatus: true });
+    check("metadata is kept small", tooBig.status === 400, tooBig);
+
+    const notForIt = [];
+    for (const [path, body] of [
+      ["/duty/poll", {}],
+      ["/duty/claim", { duty_id: filed.duty_id, agent_id: "x" }],
+      ["/duty/complete", { duty_id: filed.duty_id, outcome_summary: "no" }],
+      ["/duty/checkpoint", { duty_id: filed.duty_id, message: "no" }],
+      ["/duty/search", { query: "build" }],
+      ["/board/profile", {}],
+      ["/schedules/list", {}],
+    ]) {
+      const res = await call(path, body, sub, { expectStatus: true });
+      if (res.status !== 403) notForIt.push(`${path} → ${res.status}`);
+    }
+    check(`a submit token can do nothing an agent does${notForIt.length ? `: ${notForIt.join(", ")}` : ""}`, notForIt.length === 0);
+    const setupKind = await call("/duty/enqueue", { title: "x", brief: "x", kind: "setup" }, sub, { expectStatus: true });
+    check("and files work duties only", setupKind.status === 403, setupKind);
+    const humans = await call("/duty/enqueue", { project_id: apiBoard, title: "Someone's own", brief: "not the CI's" }, human);
+    const peek = await call("/duty/get", { duty_id: humans.duty_id }, sub, { expectStatus: true });
+    check("it cannot see a duty it did not file, even on its own board", peek.status === 404, peek);
+    const peekThread = await call("/duty/thread", { duty_id: theirs.duty_id }, sub, { expectStatus: true });
+    check("nor another token's", peekThread.status === 404, peekThread);
+
+    const subRpc = async (method, params) =>
+      (
+        await fetch(`${API}/mcp`, {
+          method: "POST",
+          headers: { "content-type": "application/json", authorization: `Bearer ${sub}` },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+        })
+      ).json();
+    const subTools = (await subRpc("tools/list", {})).result.tools.map((t) => t.name);
+    check(
+      "over MCP it is offered its own tools and no others",
+      subTools.includes("duty_enqueue") && subTools.includes("duty_get") && subTools.includes("duty_changes") && !subTools.includes("duty_claim") && !subTools.includes("duty_poll"),
+      subTools,
+    );
+    const subClaim = await subRpc("tools/call", { name: "duty_claim", arguments: { duty_id: filed.duty_id } });
+    check("and calling one it was not offered is an unknown tool", !!subClaim.error, subClaim);
+
+    const before = await call("/duty/changes", { since: 0 }, sub);
+    check("its changes list what it filed", before.duties.some((d) => d.id === filed.duty_id && d.status === "queued"), before);
+    check("and nothing it did not", !before.duties.some((d) => d.id === humans.duty_id || d.id === theirs.duty_id), before.duties.map((d) => d.id));
+    const quiet = await call("/duty/changes", { since: before.next_since }, sub);
+    check("asked again from where it left off, nothing has moved", quiet.duties.length === 0, quiet);
+    await call("/duty/claim", { duty_id: filed.duty_id }, worker);
+    await call("/duty/complete", { duty_id: filed.duty_id, outcome_summary: "Build 42 passed; artifacts in out/." }, worker);
+    const after = await call("/duty/changes", { since: before.next_since }, sub);
+    const done42 = after.duties.find((d) => d.id === filed.duty_id);
+    check("once an agent finishes it, the change carries the outcome", done42 && done42.status === "done" && /Build 42 passed/.test(done42.outcome_summary), after);
+
+    const toCancel = await call("/duty/enqueue", { title: "Build 43", brief: "never mind" }, sub);
+    const cancelled = await call("/duty/cancel", { duty_id: toCancel.duty_id, reason: "superseded by 44" }, sub);
+    const cancelledDuty = (await call("/duty/get", { duty_id: toCancel.duty_id }, sub)).duty;
+    check("it can cancel what it filed", cancelled.status === "failed" && /superseded by 44/.test(cancelledDuty.outcome_summary), cancelledDuty);
+    const working = await call("/duty/enqueue", { title: "Build 44", brief: "in progress" }, sub);
+    await call("/duty/claim", { duty_id: working.duty_id }, worker);
+    const midWork = await call("/duty/cancel", { duty_id: working.duty_id }, sub, { expectStatus: true });
+    check("but not while an agent is working on it", midWork.status === 409, midWork);
+    await call("/duty/complete", { duty_id: working.duty_id, outcome_summary: "done" }, worker);
+    const notMine = await call("/duty/cancel", { duty_id: humans.duty_id }, sub, { expectStatus: true });
+    check("and not what it did not file", notMine.status === 404, notMine);
+
+    // Sending work to one machine.
+    const subRunners = await call("/board/runners", {}, sub);
+    check(
+      "it can see which runners it can send work to, and no more than that",
+      subRunners.runners.length === 1 && subRunners.runners[0].agent_prefix === prefix && !("owner_uid" in subRunners.runners[0]),
+      subRunners,
+    );
+    const nowhere = await call("/duty/enqueue", { title: "x", brief: "x", reserved_for: "no-such-machine" }, sub, { expectStatus: true });
+    check("a reservation to a name no runner has is refused", nowhere.status === 400 && JSON.stringify(nowhere.json).includes(prefix), nowhere);
+    const targeted = await call("/duty/enqueue", { title: "On that machine", brief: "x", reserved_for: prefix }, sub);
+    check("and one to a linked runner is kept", targeted.reserved_for === prefix, targeted);
+    const otherAgentPoll = await call("/duty/poll", { agent_id: "w", limit: 20 }, worker);
+    check("so no other agent is offered it", !otherAgentPoll.runnable_duties.some((d) => d.id === targeted.duty_id), otherAgentPoll.runnable_duties);
+    const pinned = await call("/tokens/update", { project_id: apiBoard, token_id: submitter.token_id, reserve_for: prefix }, human);
+    check("an owner can pin a token to one runner", pinned.reserve_for === prefix, pinned);
+    const viaPin = await call("/duty/enqueue", { title: "Pinned", brief: "x" }, sub);
+    check("and then everything it files goes there", viaPin.reserved_for === prefix, viaPin);
+    const pinBreak = await call("/duty/enqueue", { title: "x", brief: "x", reserved_for: "elsewhere" }, sub, { expectStatus: true });
+    check("and it cannot ask for anywhere else", pinBreak.status === 403, pinBreak);
+    const badPin = await call("/tokens/update", { project_id: apiBoard, token_id: submitter.token_id, reserve_for: "nope" }, human, { expectStatus: true });
+    check("a pin must name one of the board's runners", badPin.status === 400, badPin);
+    await call("/tokens/update", { project_id: apiBoard, token_id: submitter.token_id, reserve_for: "" }, human);
+
+    // Webhooks. The emulator's fetch reaches no local server, so the delivery itself is not watched
+    // here; what is: a URL is held to the hosts the deploy allowed, every move of a duty the token filed
+    // becomes a task on the webhooks queue, and the queue hands each back to the function.
+    const offHost = await call("/tokens/webhook", { project_id: apiBoard, token_id: submitter.token_id, url: "https://not-allowed.example.org/hook" }, human, { expectStatus: true });
+    const hooksOn = offHost.status !== 403;
+    check(
+      hooksOn ? "a webhook URL on a host the deploy did not allow is refused" : "webhooks are refused on a deployment with none set up",
+      hooksOn ? offHost.status === 400 && /--webhook-hosts/.test(JSON.stringify(offHost.json)) : offHost.status === 403,
+      offHost,
+    );
+    if (hooksOn) {
+      const plain = await call("/tokens/webhook", { project_id: apiBoard, token_id: submitter.token_id, url: "http://hooks.example.com/hook" }, human, { expectStatus: true });
+      check("and one that is not https", plain.status === 400, plain);
+      const hook = await call("/tokens/webhook", { project_id: apiBoard, token_id: submitter.token_id, url: "https://hooks.example.com/dutyboard" }, human);
+      check("a webhook on an allowed host is set, with its secret shown once", /^dbw_/.test(hook.secret || ""), hook);
+      const moved = await call("/tokens/webhook", { project_id: apiBoard, token_id: submitter.token_id, url: "https://hooks.example.com/v2" }, human);
+      check("moving it keeps the secret, so it is not shown again", !moved.secret, moved);
+      const listed = await call("/tokens/list", { project_id: apiBoard }, human);
+      const row = listed.tokens.find((t) => t.token_id === submitter.token_id);
+      check("the token list shows where it goes and its scope", row.scope === "submit" && row.webhook && row.webhook.url === "https://hooks.example.com/v2", row);
+      check("and never the secret", !JSON.stringify(listed).includes(hook.secret), listed);
+      check("and which hosts a webhook may call here", listed.webhook_hosts.includes("hooks.example.com"), listed.webhook_hosts);
+      const rotated = await call("/tokens/webhook/rotate", { project_id: apiBoard, token_id: submitter.token_id }, human);
+      check("rotating gives a new secret", /^dbw_/.test(rotated.secret) && rotated.secret !== hook.secret, rotated);
+      const subSets = await call("/tokens/webhook", { project_id: apiBoard, token_id: submitter.token_id, url: "https://hooks.example.com/x" }, sub, { expectStatus: true });
+      check("only the owner sets a webhook, not the token itself", subSets.status === 403, subSets);
+
+      const watched = await call("/duty/enqueue", { title: "Watched", brief: "x", external_ref: "watched-1" }, sub);
+      const tasksInstance = ((await (await fetch(`${BASE}/admin/tasks`)).json()).instances || []).find((i) => i.name === "dutyboard-tasks");
+      const queued = async (name) =>
+        ((await (await fetch(`${BASE}/admin/tasks/${tasksInstance.id}/queues/webhooks/tasks?name=${encodeURIComponent(name)}`)).json()).tasks || [])[0];
+      const listTasks = async () => (await (await fetch(`${BASE}/admin/tasks/${tasksInstance.id}/queues/webhooks/tasks`)).json()).tasks || [];
+      let named = (await listTasks()).filter((t) => (t.name || "").startsWith(watched.duty_id));
+      check("filing a duty queues its webhook", named.some((t) => t.name.endsWith(".queued")), named.map((t) => t.name));
+      await call("/duty/claim", { duty_id: watched.duty_id }, worker);
+      await call("/duty/complete", { duty_id: watched.duty_id, outcome_summary: "watched and done" }, worker);
+      named = (await listTasks()).filter((t) => (t.name || "").startsWith(watched.duty_id));
+      check(
+        "and every move after it, under its own delivery id",
+        ["queued", "active", "done"].every((st) => named.some((t) => t.name.endsWith(`.${st}`))),
+        named.map((t) => t.name),
+      );
+      const humansMoves = (await listTasks()).filter((t) => (t.name || "").startsWith(humans.duty_id));
+      check("a duty the token did not file queues nothing", humansMoves.length === 0, humansMoves);
+      const detail = async (t) => (await (await fetch(`${BASE}/admin/tasks/${tasksInstance.id}/tasks/${t.id}`)).json()).task;
+      const doneTask = await detail(named.find((t) => t.name.endsWith(".done")));
+      const doneBody = JSON.parse(doneTask.payload.body);
+      check(
+        "the event carries the duty as it stood, with the caller's own ref",
+        doneBody.type === "duty.done" && doneBody.duty.status === "done" && doneBody.duty.external_ref === "watched-1" && /watched and done/.test(doneBody.duty.outcome_summary),
+        doneBody,
+      );
+      check("and not the secret", !JSON.stringify(doneTask.payload).includes("dbw_"), doneTask.payload);
+      // The queue hands each one back to the function. hooks.example.com answers nothing a delivery
+      // can land on, so the attempt fails — as a retry, which is what a receiver that is down gets.
+      let attempt = null;
+      for (let i = 0; i < 40 && !attempt; i++) {
+        const t = await queued(doneTask.name);
+        attempt = t && t.lastStatus ? t : null;
+        if (!attempt) await new Promise((r) => setTimeout(r, 500));
+      }
+      check(
+        "the queue hands the delivery back to the function, which retries a receiver it cannot reach",
+        attempt && attempt.lastStatus === "http:503" && attempt.state === "scheduled",
+        attempt && { state: attempt.state, lastStatus: attempt.lastStatus, lastError: attempt.lastError },
+      );
+
+      const ping = await call("/tokens/webhook/test", { project_id: apiBoard, token_id: submitter.token_id }, human);
+      check("a test ping is queued like any event", /^ping\./.test(ping.queued) && !!(await queued(ping.queued)), ping);
+      await call("/tokens/revoke", { project_id: apiBoard, token_id: submitter.token_id }, human);
+      const afterRevoke = (await call("/tokens/list", { project_id: apiBoard }, human)).tokens.find((t) => t.token_id === submitter.token_id);
+      check("revoking a token takes its webhook with it", afterRevoke.revoked && afterRevoke.webhook === null, afterRevoke);
+    }
+    const apiRemoved = await call("/projects/delete", { project_id: apiBoard, confirm: apiBoard }, human);
+    check("deleting the board sweeps its webhooks too", typeof apiRemoved.removed.webhooks === "number", apiRemoved.removed);
+  }
+
   // --- the bounds that protect the bill -----------------------------------
   //
   // These exist because agents write here unattended and our own protocol tells them to
@@ -1631,6 +1821,9 @@ async function main() {
     "/duty/delete": (d) => ({ duty_id: d, confirm: d }),
     "/duty/thread": (d) => ({ duty_id: d }),
     "/duty/get": (d) => ({ duty_id: d }),
+    "/duty/changes": () => ({ project_id: projectId }),
+    "/duty/cancel": (d) => ({ duty_id: d }),
+    "/duty/quiet": (d) => ({ duty_id: d, agent_id: "x" }),
     "/duty/search": () => ({ project_id: projectId, query: "anything" }),
     "/duty/attach": (d) => ({ duty_id: d, name: "x.png", size: 10, content_type: "image/png" }),
     "/duty/attachments": (d) => ({ duty_id: d }),
@@ -1645,6 +1838,10 @@ async function main() {
     "/tokens/mint": () => ({ project_id: projectId, name: "no" }),
     "/tokens/list": () => ({ project_id: projectId }),
     "/tokens/revoke": () => ({ project_id: projectId, token_id: "tok_nope" }),
+    "/tokens/update": () => ({ project_id: projectId, token_id: minted.token_id, name: "mine now" }),
+    "/tokens/webhook": () => ({ project_id: projectId, token_id: minted.token_id, url: "https://hooks.example.com/stolen" }),
+    "/tokens/webhook/rotate": () => ({ project_id: projectId, token_id: minted.token_id }),
+    "/tokens/webhook/test": () => ({ project_id: projectId, token_id: minted.token_id }),
     "/live/token": () => ({ project_id: projectId }),
     "/board/members/agents": () => ({ project_id: projectId, uid: other0.user.uid, can_run_agents: true }),
     "/board/profile": () => ({ project_id: projectId }),

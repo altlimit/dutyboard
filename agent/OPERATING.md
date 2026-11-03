@@ -121,7 +121,9 @@ board, or another agent claiming this duty next week.
   say what the choice is and what turns on it.
 - **`outcome_summary`**: what changed and where. `"Added GitHub OAuth via net/http; session
   cookie verification lives in middleware/auth.go"` — not `"Completed the auth task"`.
-  This is the only thing that survives your session.
+  This is the only thing that survives your session. On a duty whose `origin` is `api`, it is
+  also the answer sent back to the system that filed it, which sees nothing else: make it stand
+  on its own.
 
 ## The project itself
 

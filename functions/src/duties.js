@@ -44,11 +44,12 @@ import { notifyNeedsYou } from "./notify.js";
 import { badRequest, conflict, forbidden, notFound, str, oneOf, intIn, clip } from "./http.js";
 import { dutyId, threadId } from "./ids.js";
 import { putOp } from "./store.js";
-import { resolveProject, projectOfDuty, requireHuman, authorOf, checkAgentId } from "./identity.js";
+import { resolveProject, projectOfDuty, requireHuman, requireAgent, authorOf, checkAgentId } from "./identity.js";
 import { sweepAttachments, MAX_ATTACHMENTS } from "./attachments.js";
 import { indexFinished, unindexDuties } from "./searching.js";
 import { machinesPresent } from "./live.js";
 import { noteScheduleOutcome, noteQuietRun } from "./schedules.js";
+import { runnerPrefixes } from "./tokens.js";
 
 export const STATUSES = ["queued", "active", "needs_decision", "blocked", "done", "failed"];
 export const PRIORITIES = ["immediate_blocker", "next", "backlog"];
@@ -386,8 +387,57 @@ export async function getDuty(ctx, body) {
       // Set when a schedule filed this duty: the console says so rather than leaving a duty that
       // appeared at 9am on Monday looking like one nobody can account for.
       schedule_id: duty.schedule_id || null,
+      external_ref: duty.external_ref || null,
+      metadata: duty.metadata || null,
+      created_by_name: duty.created_by_name || null,
+      created_at: duty.created_at,
       updated_at: duty.updated_at,
     },
+  };
+}
+
+/** Duties per page of `/duty/changes`. */
+const MAX_CHANGES = 100;
+
+/**
+ * `POST /duty/changes` — the duties this token filed that moved since `since`, oldest change first.
+ *
+ * Polling for what a webhook would have said, for a caller with nowhere to receive one: keep the
+ * `next_since` it answers and pass it back. A duty that moves twice between polls is listed once,
+ * as it stands now.
+ */
+export async function listChanges(ctx, body) {
+  const caller = requireAgent(ctx.caller);
+  await resolveProject(caller, body.project_id, ctx.store);
+  if (!caller.tokenKey) throw forbidden("changes are listed per token — call this with a db_… project token");
+  const since = intIn(body.since, "since", 0, Number.MAX_SAFE_INTEGER, 0);
+  const limit = intIn(body.limit, "limit", 1, MAX_CHANGES, 50);
+  const { rows } = await ctx.store.query("duties", {
+    where: [
+      { field: "filed_by_token", op: "=", value: caller.tokenKey },
+      { field: "updated_at", op: ">", value: since },
+    ],
+    order: [{ field: "updated_at", dir: "asc" }],
+    limit,
+  });
+  // One transition can stamp two of its duties with the same millisecond — finishing one puts its
+  // parent back in the queue. A full page that ends inside such a millisecond would skip the rest
+  // of it next time, so that millisecond is left for the next page whole.
+  const more = rows.length === limit;
+  const last = rows.length ? rows[rows.length - 1].updated_at : since;
+  const page = more && rows[0].updated_at !== last ? rows.filter((d) => d.updated_at !== last) : rows;
+  return {
+    more,
+    duties: page.map((d) => ({
+      ...briefOf(d, { full: true }),
+      outcome_summary: d.outcome_summary || null,
+      last_question: d.last_question || null,
+      attachment_count: d.attachment_count || 0,
+      external_ref: d.external_ref || null,
+      metadata: d.metadata || null,
+      updated_at: d.updated_at,
+    })),
+    next_since: page.length ? page[page.length - 1].updated_at : since,
   };
 }
 
@@ -591,6 +641,18 @@ function pickLane(duty, board, active, projectKey) {
  */
 export async function enqueueDuty(ctx, body) {
   const project = await resolveProject(ctx.caller, body.project_id, ctx.store);
+  const submit = ctx.caller.scope === "submit";
+
+  // The caller's own name for this work — an order id, a CI run — under which filing it again
+  // answers the duty already filed instead of filing a second. The unique index on `api_ref` is
+  // what makes that hold when two retries race; the read first is what makes the common case
+  // (a retry long after the first went through) an answer rather than an error.
+  const externalRef = str(body.external_ref, "external_ref", { max: 128, fallback: "" }) || null;
+  const apiRef = externalRef ? `${refOwner(ctx.caller)}:${externalRef}` : null;
+  if (apiRef) {
+    const existing = await dutyByRef(ctx, apiRef);
+    if (existing) return filedAlready(existing);
+  }
 
   // Counted before anything is written, so a loop is refused rather than recorded.
   const open = await ctx.store.countAtMost(
@@ -611,9 +673,17 @@ export async function enqueueDuty(ctx, body) {
 
   const now = Date.now();
   const priority = oneOf(body.priority, "priority", PRIORITIES, "next");
-  const agentId = agentIdFrom(ctx, body, { required: false });
+  // A submit token is no agent: it holds nothing, so there is nothing for an interrupt to block.
+  const agentId = submit ? "" : agentIdFrom(ctx, body, { required: false });
   const kind = oneOf(body.kind, "kind", KINDS, "work");
-  const reservedFor = reservation(ctx, body);
+  if (submit) {
+    // What it files is work, standing on its own. Setup and rules duties change what every other
+    // duty runs against; a parent or a spawning duty would tie it to work it cannot see.
+    if (kind !== "work") throw forbidden("a submit token files work duties only");
+    if (body.parent_id || body.spawned_by) throw forbidden("a submit token files duties of its own — no parent_id or spawned_by");
+  }
+  const reservedFor = await reservation(ctx, body, project.key);
+  const metadata = metadataFrom(body.metadata);
 
   const duty = {
     project_id: project.key,
@@ -624,12 +694,19 @@ export async function enqueueDuty(ctx, body) {
     status: "queued",
     priority,
     prio_rank: RANK[priority],
-    origin: ctx.caller.kind === "agent" ? "agent" : "human",
+    origin: submit ? "api" : ctx.caller.kind === "agent" ? "agent" : "human",
     // WHICH person. `origin` said "a human", which was the same thing as "the owner" until a
     // board could be shared; now a member files work too, and a card that says "from you" to
-    // everyone who opens the board is wrong for all but one of them.
+    // everyone who opens the board is wrong for all but one of them. From outside, the token's
+    // name is the nearest thing to a who.
     created_by: ctx.caller.kind === "human" ? ctx.caller.uid : null,
-    created_by_name: ctx.caller.kind === "human" ? ctx.caller.name : null,
+    created_by_name: ctx.caller.kind === "human" ? ctx.caller.name : submit ? ctx.caller.tokenName || null : null,
+    // The token that filed it, by its hash: who a submit token may see, and whose webhook hears
+    // about every move it makes.
+    filed_by_token: ctx.caller.tokenKey || null,
+    external_ref: externalRef,
+    api_ref: apiRef,
+    metadata,
     assigned_agent_id: null,
     outcome_summary: null,
     spawned_by: str(body.spawned_by, "spawned_by", { max: 64, fallback: null }) || null,
@@ -668,7 +745,15 @@ export async function enqueueDuty(ctx, body) {
     }
   }
 
-  await ctx.store.transaction(ops);
+  if (apiRef) await ctx.store.ensureUniqueIndex("duties", ["api_ref"]);
+  try {
+    await ctx.store.transaction(ops);
+  } catch (err) {
+    // Two retries of one external_ref, at once: the other one's duty is the answer to both.
+    const existing = apiRef && isUniqueViolation(err) ? await dutyByRef(ctx, apiRef) : null;
+    if (existing) return filedAlready(existing);
+    throw err;
+  }
   await ctx.publish(project.key, id, { t: "duty", id, status: "queued" });
   if (blocked) {
     // The interrupt released whoever it interrupted, in the same transaction.
@@ -680,27 +765,76 @@ export async function enqueueDuty(ctx, body) {
     });
   }
 
-  return { duty_id: id, status: "queued", priority, kind, reserved_for: reservedFor, blocked_duty_id: blocked };
+  return { duty_id: id, status: "queued", priority, kind, reserved_for: reservedFor, blocked_duty_id: blocked, external_ref: externalRef };
+}
+
+/** Whose namespace an `external_ref` is in: the token, machine or person filing. Two integrations
+ *  that both call their work "build-42" are two duties. */
+const refOwner = (caller) => caller.tokenKey || caller.machineId || caller.uid || "";
+
+async function dutyByRef(ctx, apiRef) {
+  const { rows } = await ctx.store.query("duties", { where: [{ field: "api_ref", op: "=", value: apiRef }], limit: 1 });
+  return rows[0] || null;
+}
+
+const filedAlready = (duty) => ({
+  duty_id: duty.key,
+  status: duty.status,
+  priority: duty.priority,
+  kind: duty.kind || "work",
+  reserved_for: duty.reserved_for || null,
+  blocked_duty_id: null,
+  external_ref: duty.external_ref || null,
+  existing: true,
+});
+
+/** The caller's own fields, carried on the duty and handed back on every read and webhook. Small,
+ *  because it is stored on a row the console reads whole. */
+const MAX_METADATA_BYTES = 2048;
+
+function metadataFrom(v) {
+  if (v == null) return null;
+  if (typeof v !== "object" || Array.isArray(v)) throw badRequest("'metadata' must be a JSON object");
+  const json = JSON.stringify(v);
+  if (json.length > MAX_METADATA_BYTES) throw badRequest(`'metadata' must be at most ${MAX_METADATA_BYTES} bytes as JSON`);
+  return JSON.parse(json);
 }
 
 /**
  * Who a new duty is reserved for, if anyone.
  *
  * A machine may reserve work for itself — that is how a session that finds a missing tool asks
- * for a setup duty on its own computer. A person may reserve for any agent prefix. A project
- * token may not: it has no machine, so there is nothing for it to reserve to.
+ * for a setup duty on its own computer. A person may reserve for any agent prefix.
+ *
+ * A project token may reserve for a machine linked to the board, and only that: a reservation to a
+ * name no runner has would sit queued for ever with nothing to say why. A token the owner pinned to
+ * one runner files everything there, and may not ask for anywhere else.
  */
-function reservation(ctx, body) {
+async function reservation(ctx, body, projectKey) {
   const wanted = str(body.reserved_for, "reserved_for", { max: 64, fallback: "" });
-  if (!wanted) return null;
-  if (ctx.caller.kind === "human") return wanted;
+  if (ctx.caller.kind === "human") return wanted || null;
   if (ctx.caller.machineId) {
+    if (!wanted) return null;
     if (wanted !== ctx.caller.agentPrefix) {
       throw forbidden(`this machine can reserve work only for itself ('${ctx.caller.agentPrefix}')`);
     }
     return wanted;
   }
-  throw forbidden("a project token cannot reserve work — only a machine or a person can");
+  const pin = ctx.caller.reserveFor || "";
+  if (pin) {
+    if (wanted && !reservedTo(pin, wanted)) throw forbidden(`this token's duties go to '${pin}' — the board's owner set that on the token`);
+    return wanted || pin;
+  }
+  if (!wanted) return null;
+  const prefixes = await runnerPrefixes(ctx, projectKey);
+  if (!prefixes.some((p) => reservedTo(p, wanted))) {
+    throw badRequest(
+      prefixes.length
+        ? `'reserved_for' must name one of this board's runners: ${prefixes.join(", ")}`
+        : "this board has no runners to reserve work for — a person links a machine to it first",
+    );
+  }
+  return wanted;
 }
 
 /**
@@ -855,8 +989,34 @@ export async function failDuty(ctx, body) {
   return finishDuty(ctx, body, "failed");
 }
 
-async function finishDuty(ctx, body, terminal) {
+/**
+ * `POST /duty/cancel` — the token that filed a duty takes it back, while nobody is working it.
+ *
+ * It ends `failed`, not deleted: the record of what was asked and why it was called off stays on
+ * the board, and the webhook says so like any other ending. A duty a session holds is not the
+ * caller's to pull out from under it — a person on the board can.
+ */
+export async function cancelDuty(ctx, body) {
+  const caller = requireAgent(ctx.caller);
   const duty = await loadDuty(ctx, body.duty_id);
+  await projectOfDuty(caller, duty, ctx.store);
+  if (!caller.tokenKey || duty.filed_by_token !== caller.tokenKey) {
+    throw forbidden(`duty '${duty.key}' was not filed by this token — only what it filed can it cancel`);
+  }
+  if (duty.status === "active") {
+    throw conflict(`duty '${duty.key}' is being worked on — cancel it from the board, where whoever holds it can be stopped`, { status: duty.status });
+  }
+  const reason = str(body.reason, "reason", { max: 1000, fallback: "" });
+  return finishDuty(
+    ctx,
+    { duty_id: duty.key, reason: `Cancelled by ${caller.tokenName || "the token that filed it"}${reason ? `: ${reason}` : "."}` },
+    "failed",
+    { duty },
+  );
+}
+
+async function finishDuty(ctx, body, terminal, { duty: held } = {}) {
+  const duty = held || (await loadDuty(ctx, body.duty_id));
   const project = await projectOfDuty(ctx.caller, duty, ctx.store);
   const agentId = agentIdFrom(ctx, body, { required: false });
   const now = Date.now();
@@ -1257,7 +1417,8 @@ async function removeDuty(ctx, duty, projectKey) {
       await ctx.store.putOne("agents", aKey, { ...stripMeta(agent), active_duty_id: null, last_seen_at: Date.now() });
     }
   }
-  await ctx.publish(project.key, duty.key, { t: "duty", id: duty.key, status: "deleted" });
+  // The row is gone by now; the webhook (webhooks.js) is handed the one this started with.
+  await ctx.publish(project.key, duty.key, { t: "duty", id: duty.key, status: "deleted" }, duty);
 }
 
 /** Finished duties removed per run of the function's clock; the rest go on the next, a minute later.

@@ -37,6 +37,9 @@ type Names struct {
 	Blob      string `json:"blob"`
 	Search    string `json:"search"`
 	Static    string `json:"static"`
+	// Tasks holds the queue webhooks are delivered from. Empty when this altengine has no tasks
+	// service: everything else works, and a token's webhook cannot be set.
+	Tasks string `json:"tasks"`
 }
 
 // NamesFor is the naming convention a new deployment uses: `dutyboard`, `dutyboard-auth`, …
@@ -53,6 +56,7 @@ func NamesFor(prefix string) Names {
 		Blob:      prefix + "-files",
 		Search:    prefix + "-search",
 		Static:    prefix + "-console",
+		Tasks:     prefix + "-tasks",
 	}
 }
 
@@ -60,6 +64,10 @@ func NamesFor(prefix string) Names {
 // auth lists when it gets a console of its own. dutyboard.com is only a marketing site: allowing it
 // would let a page there call a deployment it has no business reaching.
 var retiredOrigins = []string{"https://www.dutyboard.com", "https://dutyboard.com"}
+
+// WebhookQueue is the queue a token's webhook deliveries wait on. Kept in step with WEBHOOK_QUEUE in
+// functions/src/webhooks.js.
+const WebhookQueue = "webhooks"
 
 // PushHosts are the browsers' push services, which the function must reach to send a notification to
 // a device with no console open — and nothing else. Kept in step with PUSH_HOSTS in
@@ -70,20 +78,25 @@ var PushHosts = []string{"fcm.googleapis.com", "updates.push.services.mozilla.co
 func (n Names) Map() map[string]string {
 	return map[string]string{
 		"functions": n.Functions, "datastore": n.Datastore, "auth": n.Auth,
-		"channel": n.Channel, "blob": n.Blob, "search": n.Search, "static": n.Static,
+		"channel": n.Channel, "blob": n.Blob, "search": n.Search, "static": n.Static, "tasks": n.Tasks,
 	}
 }
 
 // grants is the function's blast radius, and nothing wider — the grants it has always had: delete
 // sits above write for the datastore and blob, and nothing here needs more than write on the rest.
 func (n Names) grants() map[string]string {
-	return map[string]string{
+	g := map[string]string{
 		"datastore:" + n.Datastore: "full",
 		"auth:" + n.Auth:           "write",
 		"channel:" + n.Channel:     "write",
 		"blob:" + n.Blob:           "full",
 		"search:" + n.Search:       "full",
 	}
+	// Write is adding a task; the queue's settings are the provisioner's, not the function's.
+	if n.Tasks != "" {
+		g["tasks:"+n.Tasks] = "write"
+	}
+	return g
 }
 
 // secrets are the env overrides the deployed function needs to find instances that are not named
@@ -114,6 +127,9 @@ type Options struct {
 	// Origins are console origins to allow besides the deployed console's own — the dev server's,
 	// locally.
 	Origins []string
+	// WebhookHosts are hosts a token's webhook may call, added to those allowed before. `*.example.com`
+	// is any subdomain of it.
+	WebhookHosts []string
 }
 
 // Result is what a run leaves behind.
@@ -178,6 +194,8 @@ func runHosted(ctx context.Context, o Options) (*Result, error) {
 	if inv, err = ensureInstances(ctx, c, u, inv, names); err != nil {
 		return nil, err
 	}
+	names.Tasks = ensureTasks(ctx, c, u, inv, names.Tasks)
+	res.Names.Tasks = names.Tasks
 
 	u.Step("Configuration")
 	if err := configureData(ctx, c, u, o.Assets, names, names.Datastore, names.Channel); err != nil {
@@ -196,6 +214,7 @@ func runHosted(ctx context.Context, o Options) (*Result, error) {
 	if res.APIURL, err = deployFunction(ctx, c, u, o.Assets, names); err != nil {
 		return nil, err
 	}
+	queue := webhookQueue(ctx, c, u, names, names.Tasks)
 
 	u.Step("Console")
 	manual := false
@@ -241,6 +260,9 @@ func runHosted(ctx context.Context, o Options) (*Result, error) {
 		}
 	}
 	if err := allowOrigins(ctx, c, u, names, origins, drop, existing == nil, o.Assets); err != nil {
+		return nil, err
+	}
+	if err := allowWebhooks(ctx, c, u, names, o.WebhookHosts, queue); err != nil {
 		return nil, err
 	}
 	if res.ConsoleURL != "" {
@@ -306,6 +328,8 @@ func Detect(ctx context.Context, c *altengine.Client, inv altengine.Inventory) [
 					n.Blob = name
 				case "search":
 					n.Search = name
+				case "tasks":
+					n.Tasks = name
 				}
 			}
 			out = append(out, Deployment{Names: n, URL: f.URL, Version: h.Version, ConsoleURL: h.ConsoleURL})
@@ -453,6 +477,84 @@ func ensureInstances(ctx context.Context, c *altengine.Client, u *ui.UI, inv alt
 		if refreshed, err = c.ListInstances(ctx); err != nil {
 			return nil, err
 		}
+	}
+}
+
+// ensureTasks makes the tasks instance webhooks are queued on, and answers its name — or "" when it
+// cannot be had. Not in ensureInstances, because it is not required: an altengine without the
+// service, or a key that may not create it, leaves a DutyBoard that works in every other way, so
+// this warns rather than stopping the run.
+func ensureTasks(ctx context.Context, c *altengine.Client, u *ui.UI, inv altengine.Inventory, name string) string {
+	if _, ok := inv.Find("tasks", name); ok {
+		u.Say("%-10s %s — already there", "tasks", name)
+		return name
+	}
+	if err := c.CreateInstance(ctx, "tasks", name); err != nil {
+		u.Warn("%-10s %s — not created (%v); token webhooks stay off until it exists", "tasks", name, err)
+		return ""
+	}
+	u.OK("%-10s %s — created", "tasks", name)
+	return name
+}
+
+// webhookQueue creates or updates the queue webhook deliveries wait on, pointed back at the function,
+// which signs and sends each one. `ref` is how the control plane addresses the tasks instance: its
+// name hosted, its id locally. Answers the instance's name when the queue is in place, else "".
+//
+// The retries are the queue's: ten attempts, from ten seconds apart to an hour, for at most a day.
+// A receiver down longer than that has missed those events; /duty/changes still has them.
+func webhookQueue(ctx context.Context, c *altengine.Client, u *ui.UI, n Names, ref string) string {
+	if n.Tasks == "" {
+		return ""
+	}
+	err := c.EnsureQueue(ctx, ref, WebhookQueue, map[string]any{
+		"mode":            "push",
+		"target":          map[string]any{"function": n.Functions + "/" + FunctionName},
+		"retry":           map[string]any{"maxAttempts": 10, "minBackoffSeconds": 10, "maxBackoffSeconds": 3600, "maxAgeSeconds": 86400},
+		"maxConcurrent":   10,
+		"deadlineSeconds": 30,
+	})
+	if err != nil {
+		u.Warn("tasks queue %s/%s: %v — token webhooks stay off", n.Tasks, WebhookQueue, err)
+		return ""
+	}
+	u.OK("tasks queue %s/%s delivers webhooks through %s", n.Tasks, WebhookQueue, FunctionName)
+	return n.Tasks
+}
+
+// allowWebhooks adds the hosts a token's webhook may call to what the function may reach, keeping
+// every host allowed before, and records them — with the tasks instance — where the function reads
+// them (settings/webhooks): hosted, a function secret cannot be written with an API key. Every
+// allowed host that is not a push service counts, so hosts added on an earlier deploy stay allowed
+// without being named again.
+func allowWebhooks(ctx context.Context, c *altengine.Client, u *ui.UI, n Names, add []string, tasks string) error {
+	fnCfg, err := c.GetConfig(ctx, "functions", n.Functions)
+	if err != nil {
+		return err
+	}
+	have := stringList(fnCfg["allowedHosts"])
+	hosts := mergeStrings(mergeStrings(have, PushHosts), add)
+	if len(removed(hosts, have)) > 0 {
+		if err := c.SetFunctionSettings(ctx, n.Functions, stringList(fnCfg["corsOrigins"]), hosts); err != nil {
+			return fmt.Errorf("function outbound hosts: %w", err)
+		}
+	}
+	recordWebhooks(ctx, c, u, n, without(hosts, PushHosts, nil), tasks)
+	return nil
+}
+
+func recordWebhooks(ctx context.Context, c *altengine.Client, u *ui.UI, n Names, hosts []string, tasks string) {
+	if err := c.PutDocument(ctx, n.Datastore, "settings", "webhooks", map[string]any{"hosts": hosts, "tasks_instance": tasks}); err != nil {
+		u.Warn("could not record the webhook settings with the deployment (%v) — token webhooks stay off", err)
+		return
+	}
+	switch {
+	case tasks == "":
+		u.Say("webhooks   off — no tasks queue")
+	case len(hosts) == 0:
+		u.Say("webhooks   no hosts allowed yet — deploy again with --webhook-hosts <host> to let a token's webhook call one")
+	default:
+		u.OK("webhooks may call: %s", strings.Join(hosts, ", "))
 	}
 }
 

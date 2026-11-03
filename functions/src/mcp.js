@@ -17,7 +17,7 @@
 // look to most clients like the server broke.
 
 import { HttpError, json, readBoundedText } from "./http.js";
-import { pollDuties, claimDuty, enqueueDuty, checkpointDuty, completeDuty, failDuty, listThread, PRIORITIES, THREAD_KINDS } from "./duties.js";
+import { pollDuties, claimDuty, enqueueDuty, checkpointDuty, completeDuty, failDuty, listThread, getDuty, cancelDuty, listChanges, PRIORITIES, THREAD_KINDS } from "./duties.js";
 import { attachToDuty, listAttachments, MAX_BYTES, MAX_INLINE_BYTES } from "./attachments.js";
 import { searchDuties } from "./searching.js";
 import { createSchedule, deleteSchedule, listSchedules, scheduleHistory, updateSchedule } from "./schedules.js";
@@ -69,6 +69,10 @@ board_profile says what this project is — its type, repository, toolchain, tes
 WORK THAT COMES ROUND AGAIN
 Some work is never finished, only due again — a weekly post, a monthly check of something that drifts. duty_schedule_list shows what this board already repeats; duty_schedule_create makes a duty recur on a cron expression, and each one it files tells the next how the last went. Only while you hold an active duty, and only for work you have just done and know will be wanted again; anything that commits the board indefinitely is better proposed to a person in a checkpoint than decided by you.`;
 
+/** For a `submit` token — software outside the board, filing work and following it. Not the
+ *  protocol above: it works nothing, so nearly all of that would be instructions it cannot follow. */
+const SUBMIT_INSTRUCTIONS = `This connection files work on a DutyBoard and follows it; the board's own agents do the work. duty_enqueue files a duty — give it a brief a person or agent with no other context can act on, and an external_ref (your own id for the request) so a retry answers the duty already filed instead of filing it twice. duty_get reads one as it stands now; duty_changes lists those you filed that moved since a time you pass back; a finished duty's outcome_summary says what was done. duty_attach gives a duty its input files. duty_cancel takes back one nobody has started. You see only the duties this connection filed.`;
+
 const s = (description, extra = {}) => ({ type: "string", description, ...extra });
 
 const TOOLS = [
@@ -114,10 +118,52 @@ const TOOLS = [
         priority: s("How it schedules.", { enum: PRIORITIES, default: "next" }),
         spawned_by: s("The duty you were working on when you found this."),
         agent_id: s("Which agent you are. Defaults to the id configured on this connection."),
+        external_ref: s("Your own id for this request. Filing the same external_ref again answers the duty already filed (existing: true) instead of a second one."),
+        metadata: { type: "object", description: "Your own fields, up to 2KB of JSON, handed back on every read of the duty." },
+        reserved_for: s("Send it to one runner: the agent_prefix of a machine linked to this board."),
       },
       required: ["title", "brief"],
     },
     handler: enqueueDuty,
+  },
+  {
+    name: "duty_get",
+    title: "Read one duty",
+    description: "One duty as it stands now: its status, and once it is done or failed, the outcome_summary saying what was done.",
+    inputSchema: {
+      type: "object",
+      properties: { duty_id: s("The duty to read.") },
+      required: ["duty_id"],
+    },
+    handler: getDuty,
+  },
+  {
+    name: "duty_changes",
+    title: "What moved",
+    description:
+      "The duties this connection filed whose status or content changed after `since` (epoch ms), oldest change first. Pass back the next_since it answers to get only what moved after that.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        since: { type: "number", description: "Epoch ms. 0, or leave it out, for everything.", default: 0 },
+        limit: { type: "number", description: "At most this many, up to 100.", default: 50 },
+      },
+    },
+    handler: listChanges,
+  },
+  {
+    name: "duty_cancel",
+    title: "Take back a duty you filed",
+    description: "Call off a duty this connection filed that nobody is working on yet. It ends failed, with your reason. One already being worked on is refused.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        duty_id: s("The duty to cancel."),
+        reason: s("Why, in a line. Kept on the duty."),
+      },
+      required: ["duty_id"],
+    },
+    handler: cancelDuty,
   },
   {
     name: "duty_checkpoint",
@@ -430,8 +476,23 @@ const TOOLS = [
 
 const BY_NAME = new Map(TOOLS.map((t) => [t.name, t]));
 
-const listing = () =>
-  TOOLS.map(({ name, title, description, inputSchema }) => ({ name, title, description, inputSchema }));
+/** What a `submit` token's connection has — the same set as its REST routes (index.js). */
+const SUBMIT_TOOLS = new Set(["duty_enqueue", "duty_get", "duty_changes", "duty_cancel", "duty_thread", "duty_attach", "duty_attachments"]);
+
+/** Fields a submit token's tools leave out: it holds no duty, so there is no agent_id or
+ *  spawned_by for it to fill in. */
+const SUBMIT_HIDDEN_FIELDS = new Set(["agent_id", "spawned_by"]);
+
+const allowedTool = (ctx, name) => ctx.caller.scope !== "submit" || SUBMIT_TOOLS.has(name);
+
+function listing(ctx) {
+  const submit = ctx.caller.scope === "submit";
+  return TOOLS.filter((t) => allowedTool(ctx, t.name)).map(({ name, title, description, inputSchema }) => {
+    if (!submit || !inputSchema.properties) return { name, title, description, inputSchema };
+    const properties = Object.fromEntries(Object.entries(inputSchema.properties).filter(([k]) => !SUBMIT_HIDDEN_FIELDS.has(k)));
+    return { name, title, description, inputSchema: { ...inputSchema, properties } };
+  });
+}
 
 const rpcOk = (id, result) => ({ jsonrpc: "2.0", id, result });
 const rpcErr = (id, code, message) => ({ jsonrpc: "2.0", id, error: { code, message } });
@@ -450,7 +511,7 @@ async function dispatch(ctx, msg) {
         protocolVersion: PROTOCOL_VERSION,
         capabilities: { tools: { listChanged: false } },
         serverInfo: SERVER_INFO,
-        instructions: INSTRUCTIONS,
+        instructions: ctx.caller.scope === "submit" ? SUBMIT_INSTRUCTIONS : INSTRUCTIONS,
       });
     case "notifications/initialized":
     case "notifications/cancelled":
@@ -458,10 +519,10 @@ async function dispatch(ctx, msg) {
     case "ping":
       return isNotification ? null : rpcOk(id, {});
     case "tools/list":
-      return rpcOk(id, { tools: listing() });
+      return rpcOk(id, { tools: listing(ctx) });
     case "tools/call": {
       const name = params && params.name;
-      const tool = BY_NAME.get(name);
+      const tool = allowedTool(ctx, name) ? BY_NAME.get(name) : null;
       if (!tool) return rpcErr(id, -32602, `unknown tool '${name}'`);
       try {
         const result = await tool.handler(ctx, (params && params.arguments) || {});

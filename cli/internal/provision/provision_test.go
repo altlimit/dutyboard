@@ -41,6 +41,7 @@ type fakeHosted struct {
 	staticSites map[string]int            // static instance → deployments made to it
 	documents   map[string]map[string]any // "datastore/collection/key" → data
 	noSecrets   bool                      // secrets are console-only, as on hosted altengine
+	queues      map[string]map[string]any // "tasks instance/queue" → settings
 }
 
 func newFake(t *testing.T, version string) *fakeHosted {
@@ -55,6 +56,7 @@ func newFake(t *testing.T, version string) *fakeHosted {
 		liveLabels:  map[string]string{},
 		staticSites: map[string]int{},
 		documents:   map[string]map[string]any{},
+		queues:      map[string]map[string]any{},
 		version:     version,
 	}
 	f.srv = httptest.NewServer(http.HandlerFunc(f.serve))
@@ -136,6 +138,26 @@ func (f *fakeHosted) serve(w http.ResponseWriter, r *http.Request) {
 			toolOK(w, msg.ID, map[string]any{"deployments": list})
 		case "auth_set_rules":
 			f.rules = a["access"].(map[string]any)
+			toolOK(w, msg.ID, map[string]any{"ok": true})
+		case "tasks_set_queue":
+			key := str("instance") + "/" + str("name")
+			_, exists := f.queues[key]
+			if a["create"] == true && exists {
+				toolErr(w, msg.ID, "CONFLICT: queue '"+str("name")+"' already exists")
+				return
+			}
+			if a["create"] != true && !exists {
+				toolErr(w, msg.ID, "NOT_FOUND: no queue '"+str("name")+"'")
+				return
+			}
+			if !exists {
+				f.queues[key] = map[string]any{}
+			}
+			for k, v := range a {
+				if k != "instance" && k != "name" && k != "create" {
+					f.queues[key][k] = v
+				}
+			}
 			toolOK(w, msg.ID, map[string]any{"ok": true})
 		default:
 			toolErr(w, msg.ID, "unknown tool "+msg.Params.Name)
@@ -280,9 +302,10 @@ func TestHostedFromNothing(t *testing.T) {
 	f.secrets["dutyboard"] = map[string]any{"OTHER": map[string]any{"value": "keep me", "egress": true}}
 
 	res, err := Run(context.Background(), Options{
-		Client: hosted(f.srv.URL),
-		Assets: testAssets(t, "9.9.9"),
-		UI:     quietUI(),
+		Client:       hosted(f.srv.URL),
+		Assets:       testAssets(t, "9.9.9"),
+		UI:           quietUI(),
+		WebhookHosts: []string{"hooks.example.com"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -343,6 +366,64 @@ func TestHostedFromNothing(t *testing.T) {
 	}
 	if _, ok := secrets["DUTYBOARD_DATASTORE"]; ok {
 		t.Error("default instance names should not need override secrets")
+	}
+
+	if f.functions["dutyboard"]["tasks:dutyboard-tasks"] != "write" {
+		t.Errorf("the function cannot add webhook tasks: %v", f.functions["dutyboard"])
+	}
+	q := f.queues["dutyboard-tasks/webhooks"]
+	if q == nil || q["mode"] != "push" || q["target"].(map[string]any)["function"] != "dutyboard/board" {
+		t.Errorf("the webhooks queue should push to the board function: %v", f.queues)
+	}
+	if b, _ := json.Marshal(f.configs["functions/dutyboard"]["allowedHosts"]); !strings.Contains(string(b), "hooks.example.com") || !strings.Contains(string(b), "fcm.googleapis.com") {
+		t.Errorf("the function cannot reach the webhook host as well as the push services: %s", b)
+	}
+	hooks := f.documents["dutyboard/settings/webhooks"]
+	if b, _ := json.Marshal(hooks["hosts"]); string(b) != `["hooks.example.com"]` || hooks["tasks_instance"] != "dutyboard-tasks" {
+		t.Errorf("the webhook settings recorded with the deployment are wrong: %v", hooks)
+	}
+}
+
+func TestHostedKeepsWebhookHostsAllowedBefore(t *testing.T) {
+	f := newFake(t, "9.9.9")
+	c := hosted(f.srv.URL)
+	if _, err := Run(context.Background(), Options{Client: c, Assets: testAssets(t, "9.9.9"), UI: quietUI(), WebhookHosts: []string{"*.ci.example.com"}}); err != nil {
+		t.Fatal(err)
+	}
+	// Deployed again, naming a different host and not the first.
+	if _, err := Run(context.Background(), Options{Client: c, Assets: testAssets(t, "9.9.9"), UI: quietUI(), Instance: "dutyboard", WebhookHosts: []string{"hooks.example.com"}}); err != nil {
+		t.Fatal(err)
+	}
+	hooks := f.documents["dutyboard/settings/webhooks"]
+	if b, _ := json.Marshal(hooks["hosts"]); string(b) != `["*.ci.example.com","hooks.example.com"]` {
+		t.Errorf("a host allowed on an earlier deploy should stay allowed, without the push services: %s", b)
+	}
+	if len(f.queues) != 1 {
+		t.Errorf("deploying again should update the one queue, not make another: %v", f.queues)
+	}
+}
+
+func TestHostedWithoutTasksStillDeploys(t *testing.T) {
+	f := newFake(t, "9.9.9")
+	f.consoleOnly["tasks"] = true
+	out := &bytes.Buffer{}
+	res, err := Run(context.Background(), Options{Client: hosted(f.srv.URL), Assets: testAssets(t, "9.9.9"), UI: &ui.UI{Out: out}, WebhookHosts: []string{"hooks.example.com"}})
+	if err != nil {
+		t.Fatalf("an altengine that will not make a tasks instance should cost webhooks, not the deploy: %v", err)
+	}
+	if res.Names.Tasks != "" {
+		t.Errorf("no tasks instance, but the deployment names one: %+v", res.Names)
+	}
+	for g := range f.functions["dutyboard"] {
+		if strings.HasPrefix(g, "tasks:") {
+			t.Errorf("the function was granted a tasks instance that does not exist: %v", f.functions["dutyboard"])
+		}
+	}
+	if f.documents["dutyboard/settings/webhooks"]["tasks_instance"] != "" {
+		t.Errorf("the function should be told there is no queue: %v", f.documents["dutyboard/settings/webhooks"])
+	}
+	if !strings.Contains(out.String(), "token webhooks stay off") {
+		t.Errorf("the run should say webhooks are off and why:\n%s", out)
 	}
 }
 

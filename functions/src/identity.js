@@ -57,6 +57,9 @@ export async function identify(request, env, cfg, store) {
       projectId: row.project_id,
       tokenKey: key,
       tokenName: row.name || "",
+      // `submit` files and follows its own duties and nothing else; see tokens.js.
+      scope: row.scope || "agent",
+      reserveFor: row.reserve_for || "",
       defaultAgentId: row.default_agent_id || "",
       ownerUid: row.owner_uid || "",
       // Kept so `noteTokenUse` can stamp last-used without reading the row a second time.
@@ -206,9 +209,10 @@ export async function resolveProject(caller, requestedId, store, { ownerOnly = f
 export async function projectOfDuty(caller, duty, store, { ownerOnly = false } = {}) {
   if (caller.kind === "machine") throw forbidden(NAME_THE_BOARD);
   if (caller.kind === "agent") {
-    if (duty.project_id !== caller.projectId) {
-      // Deliberately the same words as a missing duty. A token scoped to one board must
-      // not be able to learn that a duty id on another board exists.
+    // Deliberately the same words as a missing duty. A token scoped to one board must not be able
+    // to learn that a duty id on another board exists — and a submit token, that any duty exists
+    // on its own board but the ones it filed.
+    if (duty.project_id !== caller.projectId || (caller.scope === "submit" && duty.filed_by_token !== caller.tokenKey)) {
       throw notFound(`duty '${duty.key}' not found`);
     }
   } else if (duty.owner_uid !== caller.uid) {

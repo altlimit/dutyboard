@@ -286,6 +286,7 @@ onUnmounted(() => {
             waits for {{ duty.affinity.machine_name || "its machine" }}
           </span>
           <span>{{ originLabel(duty, user, "raised by") }}</span>
+          <span v-if="duty.external_ref" class="mono" title="The id the system that filed it knows it by">{{ duty.external_ref }}</span>
           <span v-if="duty.assigned_agent_id">
             {{ duty.status === "active" ? "held by" : "last worked by" }} {{ duty.assigned_agent_id }}
           </span>

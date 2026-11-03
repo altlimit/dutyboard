@@ -82,7 +82,7 @@ for anyone else's board, and does not have to remember to try.
 | | Credential | How it is checked |
 | --- | --- | --- |
 | **A person** | An auth identity token (`id_token`) | `env.auth.verifyToken` — the signing secret never enters this code. Ownership or membership is checked per request, against rows. |
-| **An agent** | A project token, `db_…` | Only its SHA-256 is stored, and that hash **is** the document key. Verifying a token is one point-read; the row names exactly one board, so an agent can never reach another. |
+| **An agent** | A project token, `db_…` | Only its SHA-256 is stored, and that hash **is** the document key. Verifying a token is one point-read; the row names exactly one board, so an agent can never reach another. A token minted for an *integration* (scope `submit`) is narrower still: it files duties and follows the ones it filed — see [Connecting another system](#connecting-another-system). |
 | **A machine** | A machine key, `dbm_…` | Handed over once, when a person approves the machine's pairing code; stored as a hash like a token. It reaches only the boards the machine is linked to, naming one per call. |
 
 The prefix is what tells them apart. A token or key is shown once and never again.
@@ -102,7 +102,8 @@ dutyboard --provision-only        # asks for an altengine API key, or reads $ALT
 It finds a DutyBoard already in the organization and upgrades it, or provisions a new one:
 
 - the instances — `dutyboard` (datastore, functions), `dutyboard-auth`, `dutyboard-live`,
-  `dutyboard-files`, `dutyboard-search`, and the static site `dutyboard-console` — and their config;
+  `dutyboard-files`, `dutyboard-search`, `dutyboard-tasks`, and the static site `dutyboard-console`
+  — and their config;
 - the indexes and the access rules;
 - the function, with its grants;
 - **the console**, published to the root of `dutyboard-console` with a `config.js` pointing it at
@@ -139,6 +140,13 @@ existing static instance is only written to when what it serves was published by
 before consoles had a site of their own kept its console under `/app` on the static instance named
 like its functions instance; that site is upgraded in place, and `/app` links are sent on to the
 root.
+
+**Webhooks are off until you name where they may go.** A token's webhook can only call a host the
+function is allowed to reach, so allow yours when you deploy:
+`dutyboard --provision-only --webhook-hosts hooks.example.com,*.ci.example.org` (or
+`$DUTYBOARD_WEBHOOK_HOSTS`). Hosts are added to those allowed before, so you name a new one once.
+Deliveries wait on a `webhooks` queue on `dutyboard-tasks`; an altengine without the tasks service
+gets everything else, and webhooks stay off.
 
 **It takes dutyboard.com off your origins.** Once your console is up, `https://www.dutyboard.com`
 — and the console's previous origin, if it moved — are removed from the function's CORS list and
@@ -281,7 +289,7 @@ A board has one owner and up to 25 members. The owner adds someone by email unde
 | Add duties, answer questions, send work back, attach, edit | ✓ | ✓ |
 | Delete a duty | ✓ | |
 | Rename or delete the board, add or remove members | ✓ | |
-| Mint or revoke agent tokens | ✓ | |
+| Mint or revoke tokens, and set their webhooks | ✓ | |
 | Edit the board's profile, runner settings and rules | ✓ | |
 | Put their own machines on the board | ✓ | if the owner allows it |
 
@@ -631,6 +639,88 @@ and claims something else. That is what makes the board asynchronous rather than
 of stalled agents, and it is the instruction most likely to be quietly overridden by a
 protocol written on the assumption that asking means blocking.
 
+## Connecting another system
+
+A CI job, a form on your site, your own backend: anything that should be able to put work on a
+board and find out how it went, without being an agent. Mint it a token on **Settings → Tokens**
+and choose **an integration** as what holds it. That token (scope `submit`) can:
+
+- **file** a duty — `/duty/enqueue`, or `duty_enqueue` over MCP;
+- **read** the duties *it* filed — `/duty/get`, `/duty/thread`, `/duty/attachments` — and give them
+  input files with `/duty/attach`;
+- **list what moved** — `/duty/changes`;
+- **cancel** one nobody has started — `/duty/cancel`;
+- **see the runners** it can send work to — `/board/runners`.
+
+It cannot claim, finish, search or see anything else on the board, including other duties. What
+it files is worked by the board's agents like any other duty, and shows on the board as
+*from ci (API)*.
+
+```bash
+curl -X POST https://<subdomain>-fn.altengine.app/board/duty/enqueue \
+  -H "Authorization: Bearer db_…" -H "content-type: application/json" \
+  -d '{"title": "Nightly report", "brief": "What to do and why.",
+       "external_ref": "report-2026-11-03", "metadata": {"run": 1182}}'
+```
+
+- **`external_ref`** is your own id for the request. Filing the same one again answers the duty
+  already filed (`"existing": true`) instead of filing a second, so a retry after a timeout is
+  safe. It is per token: two integrations' `build-42` are two duties.
+- **`metadata`** is up to 2KB of your own JSON, handed back on every read and webhook.
+- **`reserved_for`** sends the duty to one runner: the `agent_prefix` of a machine linked to the
+  board, from `/board/runners`. A name no runner has is refused. The owner can also pin a token
+  to one runner on the Tokens page, and then everything it files goes there.
+
+**Finding out what happened.** Either poll, or be told.
+
+Polling: `/duty/changes` with `{"since": 0}` lists the duties this token filed, oldest change
+first, each with its `status` and, once finished, its `outcome_summary`. Keep the `next_since`
+it answers and pass it back next time. `more: true` means there is another page now.
+
+Being told: on the Tokens page, give the token a webhook. Every time a duty it filed changes
+status — `queued`, `active`, `needs_decision`, `blocked`, `done`, `failed`, `deleted` — the
+function POSTs:
+
+```json
+{ "id": "duty_01J….1762180000000.done", "type": "duty.done", "created_at": 1762180000123,
+  "board": "nightly",
+  "duty": { "id": "duty_01J…", "title": "Nightly report", "status": "done", "priority": "next",
+            "external_ref": "report-2026-11-03", "metadata": {"run": 1182},
+            "outcome_summary": "Report built; attached as report.pdf.", "last_question": null,
+            "attachment_count": 1, "assigned_agent_id": "laptop/1", "reserved_for": null,
+            "created_at": 1762179000000, "updated_at": 1762180000000,
+            "url": "https://<console>/#/b/nightly/d/duty_01J…" } }
+```
+
+with `x-dutyboard-event` (the `type`), `x-dutyboard-delivery` (the `id`, the same on every retry
+of one event), `x-dutyboard-timestamp` and `x-dutyboard-signature`. The signature is `v1=` and
+the hex HMAC-SHA256 of `<timestamp>.<raw body>`, keyed with the webhook's secret (`dbw_…`, shown
+once when the webhook is set or the secret rotated):
+
+```js
+import { createHmac, timingSafeEqual } from "node:crypto";
+
+function verify(req, rawBody, secret) {
+  const ts = req.headers["x-dutyboard-timestamp"];
+  const want = "v1=" + createHmac("sha256", secret).update(`${ts}.${rawBody}`).digest("hex");
+  const got = String(req.headers["x-dutyboard-signature"] || "");
+  const fresh = Math.abs(Date.now() - Number(ts)) < 5 * 60 * 1000;
+  return fresh && got.length === want.length && timingSafeEqual(Buffer.from(got), Buffer.from(want));
+}
+```
+
+Answer `2xx` once you have it. A `429`, a `5xx` or no answer in ten seconds is retried — ten
+attempts, backing off from ten seconds to an hour, for up to a day — and any other `4xx` or a
+redirect is not, since the same request would be refused the same way. Deliveries can arrive out
+of order and an event can arrive twice: deduplicate on the delivery id, and keep the duty's state
+from the newest `updated_at`. Attachments are not in the payload; fetch them with
+`/duty/attachments`, whose links expire. If a receiver was down longer than a day,
+`/duty/changes` still has everything.
+
+The URL must be `https` on a host the deployment allows (see
+[Run your own](#run-your-own) — `--webhook-hosts`); the Tokens page says which. Revoking the token
+removes its webhook, and anything still queued for it is dropped.
+
 ## The API
 
 Every endpoint is `POST`, takes JSON, and answers JSON. Agent endpoints accept either
@@ -648,7 +738,10 @@ only when you first try it hosted.
 | --- | --- | --- |
 | `/duty/poll` | agent | Held duty + the top of the queue, with any resolution folded in. |
 | `/duty/claim` | agent | `queued` → `active`, for exactly one agent. |
-| `/duty/enqueue` | both | New work. `immediate_blocker` interrupts what the caller holds. |
+| `/duty/enqueue` | both | New work. `immediate_blocker` interrupts what the caller holds. `external_ref` makes a retry answer the duty already filed; `metadata` is the caller's own; `reserved_for` sends it to one runner. |
+| `/duty/get` | both | One duty as it stands now, with its outcome once finished. |
+| `/duty/changes` | token | The duties this token filed that changed since `since`, oldest first, with `next_since` to pass back. |
+| `/duty/cancel` | token | Call off a duty this token filed that nobody is working on: `→ failed`, with the reason. |
 | `/duty/checkpoint` | both | Post to the thread; optionally park the duty. |
 | `/duty/complete` | agent | `active` → `done`. Requires an outcome summary. Refused once, with the notes, when a person wrote on the duty since the session was shown its notes. |
 | `/duty/fail` | agent | `→ failed`, with a reason. Refused for unread notes like complete. |
@@ -663,6 +756,7 @@ only when you first try it hosted.
 | `/duty/update` · `/duty/delete` | human | Edit a duty; remove one (owner only). |
 | `/board/open` | human | The board, its agents and a channel token — one call, for the console. |
 | `/board/reindex` | human | Index work finished before search was turned on. Resumable. |
+| `/board/runners` | both | The machines working the board. A token sees each one's `agent_prefix`, name and whether it is online — what it needs for `reserved_for`. |
 | `/board/members/list` | human | The owner and everyone else on a board. |
 | `/board/members/add` · `/board/members/remove` | owner | Share a board by email, or stop sharing it. |
 | `/board/members/agents` | owner | Let a member link their own machines to the board, or stop them. |
@@ -676,14 +770,15 @@ only when you first try it hosted.
 | `/schedules/history` | any | The duties one schedule has filed, newest first, with how each went. A page at a time (`limit` up to 50, `cursor` for the rest). |
 | `/me/access` | human | Repair this person's `boards` claim; says whether their token is behind. |
 | `/projects/*` | human | `create` (optionally with a `profile` and `runner`), `list` (owned and shared), `rename`, `profile` and `delete` (owner only). |
-| `/tokens/*` | owner | `mint`, `list`, `revoke`. |
+| `/tokens/*` | owner | `mint` (with a `scope`: `agent`, or `submit` for an integration, and an optional runner to pin it to), `list`, `update` (its name and runner), `revoke`. |
+| `/tokens/webhook` · `/tokens/webhook/rotate` · `/tokens/webhook/test` | owner | Set or remove a token's webhook (its secret is returned once), make a new secret, queue a `ping`. |
 | `/live/token` · `/live/me` | human | A subscribe-only channel token for one board; or for the person's own channel, where "needs you" events arrive. |
 | `/push/*` | human | `key` (the deployment's VAPID public key), `subscribe` and `unsubscribe` a device, `test`. |
 | `/connect/start` · `/connect/poll` | anyone | A `dutyboard` daemon pairing: start, then poll until approved for its `dbm_` machine key (handed over once). |
 | `/connect/lookup` · `/connect/approve` · `/connect/deny` | human | Approve or refuse a pairing by the code the daemon printed. |
 | `/machines/*` | human | `list` your machines (online, boards, what each is doing), `update`, `revoke`, `unlink` and `retry` (the last two also the board's owner). |
 | `/machine/*` | machine | `me`, `link` / `unlink` a board, `poll` every linked board at once, `live` (channel token), `state`, `request` (a person asks a machine to set a board up) and `request/report`. |
-| `/mcp` | agent | The same tools over JSON-RPC. |
+| `/mcp` | agent | The same tools over JSON-RPC. An integration's token is offered only its own: `duty_enqueue`, `duty_get`, `duty_changes`, `duty_cancel`, `duty_thread`, `duty_attach`, `duty_attachments`. |
 | `/health` | anyone | No credential; safe to check a deploy with. |
 
 Errors are `{"error": {code, message, details?, request_id}}` with a real status: `409` for

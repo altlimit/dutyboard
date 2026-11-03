@@ -453,8 +453,18 @@ async function machinesByIds(ctx, ids) {
   return out;
 }
 
-/** `POST /board/runners` — anyone on the board. */
+/** `POST /board/runners` — anyone on the board. A project token sees only what it needs to send a
+ *  duty to one of them: whose prefix, what it is called, whether it is up. */
 export async function boardRunners(ctx, body) {
+  if (ctx.caller.kind === "agent" && ctx.caller.tokenKey) {
+    const project = await resolveProject(ctx.caller, body.project_id, ctx.store);
+    const runners = await runnersOf(ctx, project.key);
+    return {
+      project_id: project.key,
+      runners: runners.map((r) => ({ agent_prefix: r.agent_prefix, name: r.machine_name, online: r.online })),
+      reserve_for: ctx.caller.reserveFor || null,
+    };
+  }
   const caller = requireHuman(ctx.caller);
   const project = await resolveProject(caller, body.project_id, ctx.store);
   const [runners, repoRequest] = await Promise.all([
