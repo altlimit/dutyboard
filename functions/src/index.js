@@ -25,7 +25,7 @@ import { makeStore } from "./store.js";
 import { identify } from "./identity.js";
 import { makePublisher, liveToken } from "./live.js";
 import { noteTokenUse, createToken, listTokens, revokeToken, updateToken } from "./tokens.js";
-import { deliverWebhook, rotateWebhookSecret, setWebhook, testWebhook, withWebhooks } from "./webhooks.js";
+import { setWebhook, testWebhook, withWebhooks } from "./webhooks.js";
 import { openBoard, createProject, listProjects, renameProject, deleteProject } from "./projects.js";
 import { attachToDuty, listAttachments, deleteAttachment } from "./attachments.js";
 import {
@@ -151,7 +151,6 @@ const ROUTES = {
   "/tokens/revoke": revokeToken,
   "/tokens/update": updateToken,
   "/tokens/webhook": setWebhook,
-  "/tokens/webhook/rotate": rotateWebhookSecret,
   "/tokens/webhook/test": testWebhook,
   "/live/token": liveToken,
   "/live/me": liveMe,
@@ -313,19 +312,6 @@ export default {
       } catch (err) {
         console.log("scheduled run:", err && err.message);
         return json({ ok: false }, 500);
-      }
-    }
-
-    // The webhooks queue handing back one delivery to make (webhooks.js). Believed for the same
-    // reason the clock is: `x-ae-trigger` cannot be set from outside. What it carries is still only
-    // data — which token, which event — and the URL and secret are read fresh from the datastore.
-    if (request.headers.get("x-ae-trigger") === "task") {
-      try {
-        const cfg = configure(env);
-        return await deliverWebhook({ env, cfg, store: makeStore(env, cfg.datastoreInstance, cfg.datastoreNamespace) }, request);
-      } catch (err) {
-        console.log("webhook delivery:", err && err.message);
-        return json({ ok: false }, 503);
       }
     }
 

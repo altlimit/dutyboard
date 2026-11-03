@@ -4,7 +4,7 @@ import { useRoute, useRouter } from "vue-router";
 import { api, subscribeLive } from "../lib/altengine.js";
 import { user as me } from "../lib/session.js";
 import { config } from "../config.js";
-import { ago, exactTime, expiryChoices, statusLabel } from "../lib/duties.js";
+import { ago, expiryChoices, statusLabel } from "../lib/duties.js";
 import { agentLabel, newRepoDraft, profileDraft, profilePayload, requestNewRepo, runStateLabel } from "../lib/runners.js";
 import ProfileForm from "../components/ProfileForm.vue";
 import NewRepoFields from "../components/NewRepoFields.vue";
@@ -328,12 +328,10 @@ const scope = ref("agent");
 const reserveFor = ref("");
 /** Shown once, right after minting — the value is not stored anywhere it can be read back. */
 const fresh = ref(null);
-/** Hosts this deployment lets a webhook call; empty when webhooks are not set up here. */
-const webhookHosts = ref([]);
+/** Whether this deployment can deliver webhooks: one from before them has no task queue. */
+const webhooksOn = ref(false);
 /** The token whose webhook is being edited, and the draft URL. */
 const hookEdit = ref(null);
-/** A webhook secret, shown once after it is minted or rotated. */
-const hookSecret = ref(null);
 const hookNotice = ref("");
 const copied = ref(false);
 const confirmDelete = ref("");
@@ -468,7 +466,7 @@ async function load() {
       isOwner.value
         ? api("/tokens/list", { project_id: props.projectId }).then((l) => {
             tokens.value = l.tokens;
-            webhookHosts.value = l.webhook_hosts || [];
+            webhooksOn.value = l.webhooks === true;
           })
         : null,
     ]);
@@ -518,7 +516,6 @@ async function setPin(t, value) {
 
 function editHook(t) {
   hookNotice.value = "";
-  hookSecret.value = null;
   hookEdit.value = { token_id: t.token_id, name: t.name, url: (t.webhook && t.webhook.url) || "", had: !!t.webhook };
 }
 
@@ -528,9 +525,7 @@ async function hookCall(path, body, done) {
   error.value = "";
   hookNotice.value = "";
   try {
-    const res = await api(path, { project_id: props.projectId, token_id: hookEdit.value.token_id, ...body });
-    if (res.secret) hookSecret.value = { name: hookEdit.value.name, secret: res.secret };
-    done(res);
+    done(await api(path, { project_id: props.projectId, token_id: hookEdit.value.token_id, ...body }));
     await load();
   } catch (err) {
     error.value = err.message;
@@ -545,14 +540,10 @@ const saveHook = () =>
     hookNotice.value = "Saved. Every move of a duty this token files is sent there.";
   });
 const removeHook = () => {
-  if (!confirm(`Stop sending "${hookEdit.value.name}"'s duties to ${hookEdit.value.url}? Deliveries still queued are dropped.`)) return;
+  if (!confirm(`Stop sending "${hookEdit.value.name}"'s duties to ${hookEdit.value.url}? Deliveries already queued still go out.`)) return;
   hookCall("/tokens/webhook", { url: null }, () => (hookEdit.value = null));
 };
-const rotateHook = () => {
-  if (!confirm("Make a new signing secret? The receiver rejects deliveries until it has the new one.")) return;
-  hookCall("/tokens/webhook/rotate", {}, () => (hookNotice.value = "New secret made. The old one no longer signs anything."));
-};
-const testHook = () => hookCall("/tokens/webhook/test", {}, () => (hookNotice.value = "A ping is on its way. Its result shows in the list as the last delivery."));
+const testHook = () => hookCall("/tokens/webhook/test", {}, () => (hookNotice.value = "A ping is on its way."));
 
 const runnerName = (prefix) => {
   const r = runners.value.find((x) => x.agent_prefix === prefix);
@@ -569,7 +560,7 @@ const curlChanges = computed(
 );
 
 async function revoke(t) {
-  if (!confirm(`Revoke "${t.name}"? Anything using it stops working immediately${t.webhook ? ", and its webhook goes with it" : ""}.`)) return;
+  if (!confirm(`Revoke "${t.name}"? Anything using it stops working immediately${t.webhook ? ", and its webhook stops with it" : ""}.`)) return;
   busy.value = true;
   try {
     await api("/tokens/revoke", { project_id: props.projectId, token_id: t.token_id });
@@ -1213,15 +1204,10 @@ function tabKey(event) {
                   <span v-else>{{ t.reserve_for ? runnerName(t.reserve_for) : "any runner" }}</span>
                 </td>
                 <td>
-                  <template v-if="t.webhook">
-                    <span class="mono small">{{ t.webhook.url.replace(/^https:\/\//, "") }}</span>
-                    <span v-if="t.webhook.last_status" class="small muted" :title="t.webhook.last_at ? exactTime(t.webhook.last_at) : ''">
-                      · last {{ t.webhook.last_status }}
-                    </span>
-                  </template>
+                  <span v-if="t.webhook" class="mono small">{{ t.webhook.url.replace(/^https:\/\//, "") }}</span>
                   <span v-else class="muted">—</span>
                   <button
-                    v-if="!t.revoked && (t.webhook || webhookHosts.length)"
+                    v-if="!t.revoked && (t.webhook || webhooksOn)"
                     type="button"
                     class="link"
                     :disabled="busy"
@@ -1240,9 +1226,9 @@ function tabKey(event) {
             </tbody>
           </table>
         </div>
-        <p v-if="!loading && !webhookHosts.length" class="small muted">
-          Webhooks are off on this deployment. To turn them on, deploy it again with
-          <code class="mono">dutyboard --provision-only --webhook-hosts your.host.example</code>.
+        <p v-if="!loading && !webhooksOn" class="small muted">
+          Webhooks are off on this deployment: it has no task queue. Deploy it again with
+          <code class="mono">dutyboard --provision-only</code> to add one.
         </p>
       </section>
 
@@ -1256,27 +1242,21 @@ function tabKey(event) {
           <label for="hook-url">URL</label>
           <input id="hook-url" v-model="hookEdit.url" type="url" required maxlength="2000" placeholder="https://hooks.example.com/dutyboard" />
           <p class="hint">
-            HTTPS, on a host this deployment allows: <span class="mono">{{ webhookHosts.join(", ") || "none yet" }}</span>.
+            Deliveries are signed with this deployment's tasks secret. Find it in the altengine
+            console, on the <span class="mono">dutyboard-tasks</span> instance. Check that
+            <code class="mono">x-altengine-signature</code> is <code class="mono">v1=</code> followed by
+            the HMAC-SHA256 of <code class="mono">timestamp + "." + body</code>, keyed with that
+            secret, where the timestamp is <code class="mono">x-altengine-timestamp</code>.
           </p>
-        </div>
-        <div v-if="hookSecret" class="notice stack" role="status">
-          <p style="margin: 0">
-            The signing secret for {{ hookSecret.name }}. This is the only time it is shown. Check that
-            <code class="mono">x-dutyboard-signature</code> equals <code class="mono">v1=</code> plus the HMAC-SHA256 of
-            <code class="mono">timestamp + "." + body</code>, keyed with this secret.
-          </p>
-          <p class="token">{{ hookSecret.secret }}</p>
-          <div class="row"><button type="button" @click="copy(hookSecret.secret)">Copy secret</button></div>
         </div>
         <p v-if="hookNotice" class="small" role="status">{{ hookNotice }}</p>
         <div class="row">
           <button class="primary" type="submit" :disabled="busy || !hookEdit.url">Save</button>
           <template v-if="hookEdit.had">
             <button type="button" :disabled="busy" @click="testHook">Send a test</button>
-            <button type="button" :disabled="busy" @click="rotateHook">New secret</button>
             <button type="button" class="danger" :disabled="busy" @click="removeHook">Remove</button>
           </template>
-          <button type="button" :disabled="busy" @click="hookEdit = null; hookSecret = null">Close</button>
+          <button type="button" :disabled="busy" @click="hookEdit = null">Close</button>
         </div>
       </form>
     </div>

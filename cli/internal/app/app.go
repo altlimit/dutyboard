@@ -32,7 +32,6 @@ type Flags struct {
 	Source        string
 	Instance      string
 	Origins       string
-	WebhookHosts  string
 	ShowVersion   bool
 	Server        string
 	Name          string
@@ -65,7 +64,6 @@ func Main(args []string) int {
 	fs.StringVar(&f.Source, "source", "", "deploy the function and console from this DutyBoard checkout")
 	fs.StringVar(&f.Instance, "instance", "", "use, or create, the deployment on this functions instance without asking")
 	fs.StringVar(&f.Origins, "origins", "", "extra console origins to allow, comma-separated (default: $DUTYBOARD_ORIGINS)")
-	fs.StringVar(&f.WebhookHosts, "webhook-hosts", "", "hosts a token's webhook may call, comma-separated, added to those allowed before; *.example.com is any subdomain (default: $DUTYBOARD_WEBHOOK_HOSTS)")
 	fs.BoolVar(&f.ShowVersion, "version", false, "print the version")
 	fs.StringVar(&f.Server, "server", "", "the DutyBoard API URL to pair this machine with")
 	fs.StringVar(&f.Name, "name", "", "this machine's name, when pairing")
@@ -151,17 +149,7 @@ func Provision(ctx context.Context, u *ui.UI, f Flags) (*provision.Result, error
 			origins = append(origins, strings.TrimRight(o, "/"))
 		}
 	}
-	hooks := f.WebhookHosts
-	if hooks == "" {
-		hooks = os.Getenv("DUTYBOARD_WEBHOOK_HOSTS")
-	}
-	var webhookHosts []string
-	for _, h := range strings.Split(hooks, ",") {
-		if h = strings.ToLower(strings.TrimSpace(h)); h != "" {
-			webhookHosts = append(webhookHosts, h)
-		}
-	}
-	res, err := provision.Run(ctx, provision.Options{Client: client, Assets: bundle, UI: u, Instance: f.Instance, Origins: origins, WebhookHosts: webhookHosts})
+	res, err := provision.Run(ctx, provision.Options{Client: client, Assets: bundle, UI: u, Instance: f.Instance, Origins: origins})
 	if err != nil {
 		return nil, err
 	}

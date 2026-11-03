@@ -141,8 +141,8 @@ export async function listTokens(ctx, body) {
       webhook: hooks.get(t.key) || null,
     })),
     cursor,
-    // What a webhook URL may point at here, so the console can say before it is refused.
-    webhook_hosts: settings.ready ? settings.hosts : [],
+    // Whether a token's webhook can be set here: a deployment from before webhooks has no queue.
+    webhooks: settings.ready,
   };
 }
 

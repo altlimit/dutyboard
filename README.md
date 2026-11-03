@@ -141,12 +141,9 @@ before consoles had a site of their own kept its console under `/app` on the sta
 like its functions instance; that site is upgraded in place, and `/app` links are sent on to the
 root.
 
-**Webhooks are off until you name where they may go.** A token's webhook can only call a host the
-function is allowed to reach, so allow yours when you deploy:
-`dutyboard --provision-only --webhook-hosts hooks.example.com,*.ci.example.org` (or
-`$DUTYBOARD_WEBHOOK_HOSTS`). Hosts are added to those allowed before, so you name a new one once.
-Deliveries wait on a `webhooks` queue on `dutyboard-tasks`; an altengine without the tasks service
-gets everything else, and webhooks stay off.
+**Webhooks go out through altengine tasks.** The deploy makes `dutyboard-tasks` and a `webhooks`
+queue on it; each event is a task aimed at a token's URL, which the platform POSTs and retries.
+An altengine without the tasks service gets everything else, and webhooks stay off.
 
 **It takes dutyboard.com off your origins.** Once your console is up, `https://www.dutyboard.com`
 — and the console's previous origin, if it moved — are removed from the function's CORS list and
@@ -678,48 +675,51 @@ first, each with its `status` and, once finished, its `outcome_summary`. Keep th
 it answers and pass it back next time. `more: true` means there is another page now.
 
 Being told: on the Tokens page, give the token a webhook. Every time a duty it filed changes
-status — `queued`, `active`, `needs_decision`, `blocked`, `done`, `failed`, `deleted` — the
-function POSTs:
+status — `queued`, `active`, `needs_decision`, `blocked`, `done`, `failed`, `deleted` — that URL is
+sent the event, delivered by altengine tasks as `payload`, beside the task's own record:
 
 ```json
-{ "id": "duty_01J….1762180000000.done", "type": "duty.done", "created_at": 1762180000123,
-  "board": "nightly",
-  "duty": { "id": "duty_01J…", "title": "Nightly report", "status": "done", "priority": "next",
-            "external_ref": "report-2026-11-03", "metadata": {"run": 1182},
-            "outcome_summary": "Report built; attached as report.pdf.", "last_question": null,
-            "attachment_count": 1, "assigned_agent_id": "laptop/1", "reserved_for": null,
-            "created_at": 1762179000000, "updated_at": 1762180000000,
-            "url": "https://<console>/#/b/nightly/d/duty_01J…" } }
+{ "task": { "id": "0mw0…", "queue": "webhooks", "name": "duty_01J….1762180000000.done",
+            "attempt": 1, "maxAttempts": 10, … },
+  "payload": {
+    "id": "duty_01J….1762180000000.done", "type": "duty.done", "created_at": 1762180000123,
+    "board": "nightly",
+    "duty": { "id": "duty_01J…", "title": "Nightly report", "status": "done", "priority": "next",
+              "external_ref": "report-2026-11-03", "metadata": {"run": 1182},
+              "outcome_summary": "Report built; attached as report.pdf.", "last_question": null,
+              "attachment_count": 1, "assigned_agent_id": "laptop/1", "reserved_for": null,
+              "created_at": 1762179000000, "updated_at": 1762180000000,
+              "url": "https://<console>/#/b/nightly/d/duty_01J…" } } }
 ```
 
-with `x-dutyboard-event` (the `type`), `x-dutyboard-delivery` (the `id`, the same on every retry
-of one event), `x-dutyboard-timestamp` and `x-dutyboard-signature`. The signature is `v1=` and
-the hex HMAC-SHA256 of `<timestamp>.<raw body>`, keyed with the webhook's secret (`dbw_…`, shown
-once when the webhook is set or the secret rotated):
+`payload.id` is the same on every retry of one event; `task.attempt` counts them. It is signed the
+way every altengine webhook is: `x-altengine-signature` is `v1=` and the hex HMAC-SHA256 of
+`<x-altengine-timestamp>.<raw body>`, keyed with the **tasks instance's webhook secret** — one
+for the whole deployment, in the altengine console on `dutyboard-tasks` (or `tasks_reveal_webhook_secret`
+over altengine's MCP), where it can also be rotated:
 
 ```js
 import { createHmac, timingSafeEqual } from "node:crypto";
 
 function verify(req, rawBody, secret) {
-  const ts = req.headers["x-dutyboard-timestamp"];
+  const ts = req.headers["x-altengine-timestamp"];
   const want = "v1=" + createHmac("sha256", secret).update(`${ts}.${rawBody}`).digest("hex");
-  const got = String(req.headers["x-dutyboard-signature"] || "");
+  const got = String(req.headers["x-altengine-signature"] || "");
   const fresh = Math.abs(Date.now() - Number(ts)) < 5 * 60 * 1000;
   return fresh && got.length === want.length && timingSafeEqual(Buffer.from(got), Buffer.from(want));
 }
 ```
 
-Answer `2xx` once you have it. A `429`, a `5xx` or no answer in ten seconds is retried — ten
-attempts, backing off from ten seconds to an hour, for up to a day — and any other `4xx` or a
-redirect is not, since the same request would be refused the same way. Deliveries can arrive out
-of order and an event can arrive twice: deduplicate on the delivery id, and keep the duty's state
-from the newest `updated_at`. Attachments are not in the payload; fetch them with
-`/duty/attachments`, whose links expire. If a receiver was down longer than a day,
-`/duty/changes` still has everything.
+Answer `2xx` once you have it. A `408`, `429`, a `5xx` or no answer in thirty seconds is retried
+— ten attempts, backing off from ten seconds to an hour, for up to a day; a `Retry-After` is
+honoured — and any other `4xx` or a redirect is not, since the same request would be refused the
+same way. Deliveries can arrive out of order and an event can arrive twice: deduplicate on
+`payload.id`, and keep the duty's state from the newest `updated_at`. Attachments are not in the
+payload; fetch them with `/duty/attachments`, whose links expire. If a receiver was down longer
+than a day, `/duty/changes` still has everything.
 
-The URL must be `https` on a host the deployment allows (see
-[Run your own](#run-your-own) — `--webhook-hosts`); the Tokens page says which. Revoking the token
-removes its webhook, and anything still queued for it is dropped.
+The URL must be `https` with no credentials in it. Changing or removing a webhook, or revoking its
+token, stops new events; ones already queued still go to the URL they were queued for.
 
 ## The API
 
@@ -771,7 +771,7 @@ only when you first try it hosted.
 | `/me/access` | human | Repair this person's `boards` claim; says whether their token is behind. |
 | `/projects/*` | human | `create` (optionally with a `profile` and `runner`), `list` (owned and shared), `rename`, `profile` and `delete` (owner only). |
 | `/tokens/*` | owner | `mint` (with a `scope`: `agent`, or `submit` for an integration, and an optional runner to pin it to), `list`, `update` (its name and runner), `revoke`. |
-| `/tokens/webhook` · `/tokens/webhook/rotate` · `/tokens/webhook/test` | owner | Set or remove a token's webhook (its secret is returned once), make a new secret, queue a `ping`. |
+| `/tokens/webhook` · `/tokens/webhook/test` | owner | Set or remove a token's webhook; queue a `ping` to it. |
 | `/live/token` · `/live/me` | human | A subscribe-only channel token for one board; or for the person's own channel, where "needs you" events arrive. |
 | `/push/*` | human | `key` (the deployment's VAPID public key), `subscribe` and `unsubscribe` a device, `test`. |
 | `/connect/start` · `/connect/poll` | anyone | A `dutyboard` daemon pairing: start, then poll until approved for its `dbm_` machine key (handed over once). |

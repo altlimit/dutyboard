@@ -97,14 +97,14 @@ func runLocal(ctx context.Context, o Options) (*Result, error) {
 		return nil, err
 	}
 	// A functions instance comes into being on its first deploy, so its CORS list is set after.
-	if err := c.SetFunctionSettings(ctx, n.Functions, origins, mergeStrings(PushHosts, o.WebhookHosts)); err != nil {
+	if err := c.SetFunctionSettings(ctx, n.Functions, origins, PushHosts); err != nil {
 		return nil, fmt.Errorf("function CORS: %w", err)
 	}
 	queue := ""
 	if i, ok := inv.Find("tasks", n.Tasks); ok {
 		queue = webhookQueue(ctx, c, u, n, i.ID)
 	}
-	recordWebhooks(ctx, c, u, n, o.WebhookHosts, queue)
+	recordWebhooks(ctx, c, u, n, queue)
 	if secrets := n.secrets(); len(secrets) > 0 {
 		if err := c.SetFunctionSecrets(ctx, n.Functions, secrets); err != nil {
 			return nil, fmt.Errorf("function secrets: %w", err)

@@ -1688,79 +1688,65 @@ async function main() {
     check("a pin must name one of the board's runners", badPin.status === 400, badPin);
     await call("/tokens/update", { project_id: apiBoard, token_id: submitter.token_id, reserve_for: "" }, human);
 
-    // Webhooks. The emulator's fetch reaches no local server, so the delivery itself is not watched
-    // here; what is: a URL is held to the hosts the deploy allowed, every move of a duty the token filed
-    // becomes a task on the webhooks queue, and the queue hands each back to the function.
-    const offHost = await call("/tokens/webhook", { project_id: apiBoard, token_id: submitter.token_id, url: "https://not-allowed.example.org/hook" }, human, { expectStatus: true });
-    const hooksOn = offHost.status !== 403;
+    // Webhooks. Every move of a duty the token filed becomes a task on the webhooks queue, aimed at the
+    // token's URL, which the platform POSTs and retries. hooks.example.com answers nothing a delivery
+    // can land on, so the delivery itself is watched only as far as the retry it earns.
+    const plain = await call("/tokens/webhook", { project_id: apiBoard, token_id: submitter.token_id, url: "http://hooks.example.com/hook" }, human, { expectStatus: true });
+    check("a webhook URL that is not https is refused", plain.status === 400, plain);
+    const withCreds = await call("/tokens/webhook", { project_id: apiBoard, token_id: submitter.token_id, url: "https://u:p@hooks.example.com/hook" }, human, { expectStatus: true });
+    check("and one carrying credentials", withCreds.status === 400, withCreds);
+    const hook = await call("/tokens/webhook", { project_id: apiBoard, token_id: submitter.token_id, url: "https://hooks.example.com/dutyboard" }, human);
+    check("a webhook on any https host is set", hook.webhook_url === "https://hooks.example.com/dutyboard", hook);
+    await call("/tokens/webhook", { project_id: apiBoard, token_id: submitter.token_id, url: "https://hooks.example.com/v2" }, human);
+    const listed = await call("/tokens/list", { project_id: apiBoard }, human);
+    const row = listed.tokens.find((t) => t.token_id === submitter.token_id);
+    check("the token list shows where it goes and its scope", row.scope === "submit" && row.webhook && row.webhook.url === "https://hooks.example.com/v2", row);
+    check("and that this deployment can deliver webhooks", listed.webhooks === true, listed.webhooks);
+    const subSets = await call("/tokens/webhook", { project_id: apiBoard, token_id: submitter.token_id, url: "https://hooks.example.com/x" }, sub, { expectStatus: true });
+    check("only the owner sets a webhook, not the token itself", subSets.status === 403, subSets);
+
+    const watched = await call("/duty/enqueue", { title: "Watched", brief: "x", external_ref: "watched-1" }, sub);
+    const tasksInstance = ((await (await fetch(`${BASE}/admin/tasks`)).json()).instances || []).find((i) => i.name === "dutyboard-tasks");
+    const listTasks = async (name) =>
+      (await (await fetch(`${BASE}/admin/tasks/${tasksInstance.id}/queues/webhooks/tasks${name ? `?name=${encodeURIComponent(name)}` : ""}`)).json()).tasks || [];
+    const detail = async (t) => (await (await fetch(`${BASE}/admin/tasks/${tasksInstance.id}/tasks/${t.id}`)).json()).task;
+    let named = (await listTasks()).filter((t) => (t.name || "").startsWith(watched.duty_id));
+    check("filing a duty queues its webhook", named.some((t) => t.name.endsWith(".queued")), named.map((t) => t.name));
+    await call("/duty/claim", { duty_id: watched.duty_id }, worker);
+    await call("/duty/complete", { duty_id: watched.duty_id, outcome_summary: "watched and done" }, worker);
+    named = (await listTasks()).filter((t) => (t.name || "").startsWith(watched.duty_id));
     check(
-      hooksOn ? "a webhook URL on a host the deploy did not allow is refused" : "webhooks are refused on a deployment with none set up",
-      hooksOn ? offHost.status === 400 && /--webhook-hosts/.test(JSON.stringify(offHost.json)) : offHost.status === 403,
-      offHost,
+      "and every move after it, under its own id",
+      ["queued", "active", "done"].every((st) => named.some((t) => t.name.endsWith(`.${st}`))),
+      named.map((t) => t.name),
     );
-    if (hooksOn) {
-      const plain = await call("/tokens/webhook", { project_id: apiBoard, token_id: submitter.token_id, url: "http://hooks.example.com/hook" }, human, { expectStatus: true });
-      check("and one that is not https", plain.status === 400, plain);
-      const hook = await call("/tokens/webhook", { project_id: apiBoard, token_id: submitter.token_id, url: "https://hooks.example.com/dutyboard" }, human);
-      check("a webhook on an allowed host is set, with its secret shown once", /^dbw_/.test(hook.secret || ""), hook);
-      const moved = await call("/tokens/webhook", { project_id: apiBoard, token_id: submitter.token_id, url: "https://hooks.example.com/v2" }, human);
-      check("moving it keeps the secret, so it is not shown again", !moved.secret, moved);
-      const listed = await call("/tokens/list", { project_id: apiBoard }, human);
-      const row = listed.tokens.find((t) => t.token_id === submitter.token_id);
-      check("the token list shows where it goes and its scope", row.scope === "submit" && row.webhook && row.webhook.url === "https://hooks.example.com/v2", row);
-      check("and never the secret", !JSON.stringify(listed).includes(hook.secret), listed);
-      check("and which hosts a webhook may call here", listed.webhook_hosts.includes("hooks.example.com"), listed.webhook_hosts);
-      const rotated = await call("/tokens/webhook/rotate", { project_id: apiBoard, token_id: submitter.token_id }, human);
-      check("rotating gives a new secret", /^dbw_/.test(rotated.secret) && rotated.secret !== hook.secret, rotated);
-      const subSets = await call("/tokens/webhook", { project_id: apiBoard, token_id: submitter.token_id, url: "https://hooks.example.com/x" }, sub, { expectStatus: true });
-      check("only the owner sets a webhook, not the token itself", subSets.status === 403, subSets);
-
-      const watched = await call("/duty/enqueue", { title: "Watched", brief: "x", external_ref: "watched-1" }, sub);
-      const tasksInstance = ((await (await fetch(`${BASE}/admin/tasks`)).json()).instances || []).find((i) => i.name === "dutyboard-tasks");
-      const queued = async (name) =>
-        ((await (await fetch(`${BASE}/admin/tasks/${tasksInstance.id}/queues/webhooks/tasks?name=${encodeURIComponent(name)}`)).json()).tasks || [])[0];
-      const listTasks = async () => (await (await fetch(`${BASE}/admin/tasks/${tasksInstance.id}/queues/webhooks/tasks`)).json()).tasks || [];
-      let named = (await listTasks()).filter((t) => (t.name || "").startsWith(watched.duty_id));
-      check("filing a duty queues its webhook", named.some((t) => t.name.endsWith(".queued")), named.map((t) => t.name));
-      await call("/duty/claim", { duty_id: watched.duty_id }, worker);
-      await call("/duty/complete", { duty_id: watched.duty_id, outcome_summary: "watched and done" }, worker);
-      named = (await listTasks()).filter((t) => (t.name || "").startsWith(watched.duty_id));
-      check(
-        "and every move after it, under its own delivery id",
-        ["queued", "active", "done"].every((st) => named.some((t) => t.name.endsWith(`.${st}`))),
-        named.map((t) => t.name),
-      );
-      const humansMoves = (await listTasks()).filter((t) => (t.name || "").startsWith(humans.duty_id));
-      check("a duty the token did not file queues nothing", humansMoves.length === 0, humansMoves);
-      const detail = async (t) => (await (await fetch(`${BASE}/admin/tasks/${tasksInstance.id}/tasks/${t.id}`)).json()).task;
-      const doneTask = await detail(named.find((t) => t.name.endsWith(".done")));
-      const doneBody = JSON.parse(doneTask.payload.body);
-      check(
-        "the event carries the duty as it stood, with the caller's own ref",
-        doneBody.type === "duty.done" && doneBody.duty.status === "done" && doneBody.duty.external_ref === "watched-1" && /watched and done/.test(doneBody.duty.outcome_summary),
-        doneBody,
-      );
-      check("and not the secret", !JSON.stringify(doneTask.payload).includes("dbw_"), doneTask.payload);
-      // The queue hands each one back to the function. hooks.example.com answers nothing a delivery
-      // can land on, so the attempt fails — as a retry, which is what a receiver that is down gets.
-      let attempt = null;
-      for (let i = 0; i < 40 && !attempt; i++) {
-        const t = await queued(doneTask.name);
-        attempt = t && t.lastStatus ? t : null;
-        if (!attempt) await new Promise((r) => setTimeout(r, 500));
-      }
-      check(
-        "the queue hands the delivery back to the function, which retries a receiver it cannot reach",
-        attempt && attempt.lastStatus === "http:503" && attempt.state === "scheduled",
-        attempt && { state: attempt.state, lastStatus: attempt.lastStatus, lastError: attempt.lastError },
-      );
-
-      const ping = await call("/tokens/webhook/test", { project_id: apiBoard, token_id: submitter.token_id }, human);
-      check("a test ping is queued like any event", /^ping\./.test(ping.queued) && !!(await queued(ping.queued)), ping);
-      await call("/tokens/revoke", { project_id: apiBoard, token_id: submitter.token_id }, human);
-      const afterRevoke = (await call("/tokens/list", { project_id: apiBoard }, human)).tokens.find((t) => t.token_id === submitter.token_id);
-      check("revoking a token takes its webhook with it", afterRevoke.revoked && afterRevoke.webhook === null, afterRevoke);
+    const humansMoves = (await listTasks()).filter((t) => (t.name || "").startsWith(humans.duty_id));
+    check("a duty the token did not file queues nothing", humansMoves.length === 0, humansMoves);
+    const doneTask = await detail(named.find((t) => t.name.endsWith(".done")));
+    check("aimed at the token's URL", doneTask.target && doneTask.target.webhook === "https://hooks.example.com/v2", doneTask.target);
+    check(
+      "carrying the duty as it stood, with the caller's own ref",
+      doneTask.payload.type === "duty.done" && doneTask.payload.id === doneTask.name && doneTask.payload.duty.status === "done" &&
+        doneTask.payload.duty.external_ref === "watched-1" && /watched and done/.test(doneTask.payload.duty.outcome_summary),
+      doneTask.payload,
+    );
+    let attempt = null;
+    for (let i = 0; i < 40 && !attempt; i++) {
+      const [t] = await listTasks(doneTask.name);
+      attempt = t && t.lastStatus ? t : null;
+      if (!attempt) await new Promise((r) => setTimeout(r, 500));
     }
+    check(
+      "the platform tries the URL, and retries a receiver it cannot reach",
+      attempt && attempt.state === "scheduled" && attempt.attempts >= 1,
+      attempt && { state: attempt.state, lastStatus: attempt.lastStatus, lastError: attempt.lastError },
+    );
+
+    const ping = await call("/tokens/webhook/test", { project_id: apiBoard, token_id: submitter.token_id }, human);
+    check("a test ping is queued like any event", /^ping\./.test(ping.queued) && (await listTasks(ping.queued)).length === 1, ping);
+    await call("/tokens/revoke", { project_id: apiBoard, token_id: submitter.token_id }, human);
+    const afterRevoke = (await call("/tokens/list", { project_id: apiBoard }, human)).tokens.find((t) => t.token_id === submitter.token_id);
+    check("revoking a token takes its webhook with it", afterRevoke.revoked && afterRevoke.webhook === null, afterRevoke);
     const apiRemoved = await call("/projects/delete", { project_id: apiBoard, confirm: apiBoard }, human);
     check("deleting the board sweeps its webhooks too", typeof apiRemoved.removed.webhooks === "number", apiRemoved.removed);
   }
@@ -1840,7 +1826,6 @@ async function main() {
     "/tokens/revoke": () => ({ project_id: projectId, token_id: "tok_nope" }),
     "/tokens/update": () => ({ project_id: projectId, token_id: minted.token_id, name: "mine now" }),
     "/tokens/webhook": () => ({ project_id: projectId, token_id: minted.token_id, url: "https://hooks.example.com/stolen" }),
-    "/tokens/webhook/rotate": () => ({ project_id: projectId, token_id: minted.token_id }),
     "/tokens/webhook/test": () => ({ project_id: projectId, token_id: minted.token_id }),
     "/live/token": () => ({ project_id: projectId }),
     "/board/members/agents": () => ({ project_id: projectId, uid: other0.user.uid, can_run_agents: true }),

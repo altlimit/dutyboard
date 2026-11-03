@@ -127,9 +127,6 @@ type Options struct {
 	// Origins are console origins to allow besides the deployed console's own — the dev server's,
 	// locally.
 	Origins []string
-	// WebhookHosts are hosts a token's webhook may call, added to those allowed before. `*.example.com`
-	// is any subdomain of it.
-	WebhookHosts []string
 }
 
 // Result is what a run leaves behind.
@@ -214,7 +211,7 @@ func runHosted(ctx context.Context, o Options) (*Result, error) {
 	if res.APIURL, err = deployFunction(ctx, c, u, o.Assets, names); err != nil {
 		return nil, err
 	}
-	queue := webhookQueue(ctx, c, u, names, names.Tasks)
+	recordWebhooks(ctx, c, u, names, webhookQueue(ctx, c, u, names, names.Tasks))
 
 	u.Step("Console")
 	manual := false
@@ -260,9 +257,6 @@ func runHosted(ctx context.Context, o Options) (*Result, error) {
 		}
 	}
 	if err := allowOrigins(ctx, c, u, names, origins, drop, existing == nil, o.Assets); err != nil {
-		return nil, err
-	}
-	if err := allowWebhooks(ctx, c, u, names, o.WebhookHosts, queue); err != nil {
 		return nil, err
 	}
 	if res.ConsoleURL != "" {
@@ -497,9 +491,10 @@ func ensureTasks(ctx context.Context, c *altengine.Client, u *ui.UI, inv altengi
 	return name
 }
 
-// webhookQueue creates or updates the queue webhook deliveries wait on, pointed back at the function,
-// which signs and sends each one. `ref` is how the control plane addresses the tasks instance: its
-// name hosted, its id locally. Answers the instance's name when the queue is in place, else "".
+// webhookQueue creates or updates the queue webhook deliveries wait on. It has no target of its own:
+// each task names the URL of the token it is for, and the platform POSTs it there, signed with the
+// tasks instance's secret. `ref` is how the control plane addresses the tasks instance: its name
+// hosted, its id locally. Answers the instance's name when the queue is in place, else "".
 //
 // The retries are the queue's: ten attempts, from ten seconds apart to an hour, for at most a day.
 // A receiver down longer than that has missed those events; /duty/changes still has them.
@@ -507,54 +502,34 @@ func webhookQueue(ctx context.Context, c *altengine.Client, u *ui.UI, n Names, r
 	if n.Tasks == "" {
 		return ""
 	}
-	err := c.EnsureQueue(ctx, ref, WebhookQueue, map[string]any{
+	settings := map[string]any{
 		"mode":            "push",
-		"target":          map[string]any{"function": n.Functions + "/" + FunctionName},
+		"target":          nil,
 		"retry":           map[string]any{"maxAttempts": 10, "minBackoffSeconds": 10, "maxBackoffSeconds": 3600, "maxAgeSeconds": 86400},
 		"maxConcurrent":   10,
 		"deadlineSeconds": 30,
-	})
+	}
+	err := c.EnsureQueue(ctx, ref, WebhookQueue, settings)
+	if err != nil {
+		// A platform that will not take a null target keeps whatever the queue had: every task names
+		// its own, so a default is never used.
+		delete(settings, "target")
+		err = c.EnsureQueue(ctx, ref, WebhookQueue, settings)
+	}
 	if err != nil {
 		u.Warn("tasks queue %s/%s: %v — token webhooks stay off", n.Tasks, WebhookQueue, err)
 		return ""
 	}
-	u.OK("tasks queue %s/%s delivers webhooks through %s", n.Tasks, WebhookQueue, FunctionName)
+	u.OK("tasks queue %s/%s delivers token webhooks, signed with %s's secret", n.Tasks, WebhookQueue, n.Tasks)
 	return n.Tasks
 }
 
-// allowWebhooks adds the hosts a token's webhook may call to what the function may reach, keeping
-// every host allowed before, and records them — with the tasks instance — where the function reads
-// them (settings/webhooks): hosted, a function secret cannot be written with an API key. Every
-// allowed host that is not a push service counts, so hosts added on an earlier deploy stay allowed
-// without being named again.
-func allowWebhooks(ctx context.Context, c *altengine.Client, u *ui.UI, n Names, add []string, tasks string) error {
-	fnCfg, err := c.GetConfig(ctx, "functions", n.Functions)
-	if err != nil {
-		return err
-	}
-	have := stringList(fnCfg["allowedHosts"])
-	hosts := mergeStrings(mergeStrings(have, PushHosts), add)
-	if len(removed(hosts, have)) > 0 {
-		if err := c.SetFunctionSettings(ctx, n.Functions, stringList(fnCfg["corsOrigins"]), hosts); err != nil {
-			return fmt.Errorf("function outbound hosts: %w", err)
-		}
-	}
-	recordWebhooks(ctx, c, u, n, without(hosts, PushHosts, nil), tasks)
-	return nil
-}
-
-func recordWebhooks(ctx context.Context, c *altengine.Client, u *ui.UI, n Names, hosts []string, tasks string) {
-	if err := c.PutDocument(ctx, n.Datastore, "settings", "webhooks", map[string]any{"hosts": hosts, "tasks_instance": tasks}); err != nil {
+// recordWebhooks tells the function which tasks instance its queue is on, where it reads it
+// (settings/webhooks): hosted, a function secret cannot be written with an API key. "" turns
+// webhooks off.
+func recordWebhooks(ctx context.Context, c *altengine.Client, u *ui.UI, n Names, tasks string) {
+	if err := c.PutDocument(ctx, n.Datastore, "settings", "webhooks", map[string]any{"tasks_instance": tasks}); err != nil {
 		u.Warn("could not record the webhook settings with the deployment (%v) — token webhooks stay off", err)
-		return
-	}
-	switch {
-	case tasks == "":
-		u.Say("webhooks   off — no tasks queue")
-	case len(hosts) == 0:
-		u.Say("webhooks   no hosts allowed yet — deploy again with --webhook-hosts <host> to let a token's webhook call one")
-	default:
-		u.OK("webhooks may call: %s", strings.Join(hosts, ", "))
 	}
 }
 

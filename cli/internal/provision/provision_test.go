@@ -302,10 +302,9 @@ func TestHostedFromNothing(t *testing.T) {
 	f.secrets["dutyboard"] = map[string]any{"OTHER": map[string]any{"value": "keep me", "egress": true}}
 
 	res, err := Run(context.Background(), Options{
-		Client:       hosted(f.srv.URL),
-		Assets:       testAssets(t, "9.9.9"),
-		UI:           quietUI(),
-		WebhookHosts: []string{"hooks.example.com"},
+		Client: hosted(f.srv.URL),
+		Assets: testAssets(t, "9.9.9"),
+		UI:     quietUI(),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -372,34 +371,27 @@ func TestHostedFromNothing(t *testing.T) {
 		t.Errorf("the function cannot add webhook tasks: %v", f.functions["dutyboard"])
 	}
 	q := f.queues["dutyboard-tasks/webhooks"]
-	if q == nil || q["mode"] != "push" || q["target"].(map[string]any)["function"] != "dutyboard/board" {
-		t.Errorf("the webhooks queue should push to the board function: %v", f.queues)
+	if q == nil || q["mode"] != "push" || q["target"] != nil {
+		t.Errorf("the webhooks queue should push, with no target of its own — each task names its URL: %v", f.queues)
 	}
-	if b, _ := json.Marshal(f.configs["functions/dutyboard"]["allowedHosts"]); !strings.Contains(string(b), "hooks.example.com") || !strings.Contains(string(b), "fcm.googleapis.com") {
-		t.Errorf("the function cannot reach the webhook host as well as the push services: %s", b)
-	}
-	hooks := f.documents["dutyboard/settings/webhooks"]
-	if b, _ := json.Marshal(hooks["hosts"]); string(b) != `["hooks.example.com"]` || hooks["tasks_instance"] != "dutyboard-tasks" {
-		t.Errorf("the webhook settings recorded with the deployment are wrong: %v", hooks)
+	if hooks := f.documents["dutyboard/settings/webhooks"]; hooks["tasks_instance"] != "dutyboard-tasks" {
+		t.Errorf("the function should be told where its webhooks queue is: %v", hooks)
 	}
 }
 
-func TestHostedKeepsWebhookHostsAllowedBefore(t *testing.T) {
+func TestHostedUpdatesTheWebhooksQueueItMadeBefore(t *testing.T) {
 	f := newFake(t, "9.9.9")
 	c := hosted(f.srv.URL)
-	if _, err := Run(context.Background(), Options{Client: c, Assets: testAssets(t, "9.9.9"), UI: quietUI(), WebhookHosts: []string{"*.ci.example.com"}}); err != nil {
+	if _, err := Run(context.Background(), Options{Client: c, Assets: testAssets(t, "9.9.9"), UI: quietUI()}); err != nil {
 		t.Fatal(err)
 	}
-	// Deployed again, naming a different host and not the first.
-	if _, err := Run(context.Background(), Options{Client: c, Assets: testAssets(t, "9.9.9"), UI: quietUI(), Instance: "dutyboard", WebhookHosts: []string{"hooks.example.com"}}); err != nil {
+	// A queue made by an earlier version, pointed at the function.
+	f.queues["dutyboard-tasks/webhooks"]["target"] = map[string]any{"function": "dutyboard/board"}
+	if _, err := Run(context.Background(), Options{Client: c, Assets: testAssets(t, "9.9.9"), UI: quietUI(), Instance: "dutyboard"}); err != nil {
 		t.Fatal(err)
 	}
-	hooks := f.documents["dutyboard/settings/webhooks"]
-	if b, _ := json.Marshal(hooks["hosts"]); string(b) != `["*.ci.example.com","hooks.example.com"]` {
-		t.Errorf("a host allowed on an earlier deploy should stay allowed, without the push services: %s", b)
-	}
-	if len(f.queues) != 1 {
-		t.Errorf("deploying again should update the one queue, not make another: %v", f.queues)
+	if len(f.queues) != 1 || f.queues["dutyboard-tasks/webhooks"]["target"] != nil {
+		t.Errorf("deploying again should clear the one queue's target, not make another: %v", f.queues)
 	}
 }
 
@@ -407,7 +399,7 @@ func TestHostedWithoutTasksStillDeploys(t *testing.T) {
 	f := newFake(t, "9.9.9")
 	f.consoleOnly["tasks"] = true
 	out := &bytes.Buffer{}
-	res, err := Run(context.Background(), Options{Client: hosted(f.srv.URL), Assets: testAssets(t, "9.9.9"), UI: &ui.UI{Out: out}, WebhookHosts: []string{"hooks.example.com"}})
+	res, err := Run(context.Background(), Options{Client: hosted(f.srv.URL), Assets: testAssets(t, "9.9.9"), UI: &ui.UI{Out: out}})
 	if err != nil {
 		t.Fatalf("an altengine that will not make a tasks instance should cost webhooks, not the deploy: %v", err)
 	}
