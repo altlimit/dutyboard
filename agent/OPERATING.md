@@ -11,7 +11,8 @@ record of what was done — across sessions, and across whatever runs out of con
    through it. The claim returns the full brief.
 3. **Work.** If the duty comes back with `unblocked_context`, someone answered a question
    about it: `human_resolution` is a decision that has been made, not a suggestion.
-4. **`duty_complete`** with a real `outcome_summary`.
+4. **`duty_complete`** with a real `outcome_summary`. If a person wrote on the duty while you
+   worked, it is refused once with their notes: do what they ask, then complete again.
 5. Poll again.
 
 ## Work that comes back
@@ -151,6 +152,10 @@ twice.
 - Two runs must be at least 15 minutes apart, and a board holds ten schedules.
 - A run that comes round while its last duty is still open files nothing and leaves a note on
   the open one.
+- Work that is only sometimes needed — "reply to new emails", "look at new orders" — should get a
+  `check`: a shell command run before any agent is woken. Exit 0 and print nothing, and the run
+  ends there; print what was found, and that is what the woken agent starts from. Use
+  `$DUTYBOARD_STATE_DIR` to remember what was already seen.
 - **`duty_schedule_history`** shows what one has actually filed, newest first, with how each run
   went — a page at a time, so pass `cursor` from `next_cursor` for older ones rather than asking
   for everything.

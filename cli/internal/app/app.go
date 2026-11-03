@@ -335,51 +335,115 @@ func SetMCPSecrets(ctx context.Context, u *ui.UI) error {
 	if err != nil {
 		return err
 	}
-	asked := 0
+	// Every secret the boards name, so one already kept for a board can be offered to another
+	// board's server of the same name.
+	type secret struct {
+		board, server, note, kind, name, key, have string
+	}
+	var all []*secret
 	for _, b := range boards {
 		if !b.Linked || b.Profile == nil {
 			continue
 		}
 		for _, s := range b.Profile.MCPServers {
-			if len(s.Secrets) == 0 {
-				continue
-			}
-			u.Step("%s — MCP server %s", b.ProjectID, s.Name)
-			if s.Note != "" {
-				u.Say("%s", s.Note)
-			}
 			kind := "environment variable"
 			if s.URL != "" {
 				kind = "header (the whole value, e.g. \"Bearer …\")"
 			}
 			for _, name := range s.Secrets {
-				asked++
 				key := state.MCPSecret(b.ProjectID, s.Name, name)
 				have, _ := state.Credential(key)
-				status := "not set"
-				if have != "" {
-					status = "set — Enter keeps it, - removes it"
-				}
-				val, err := u.Secret(fmt.Sprintf("%s, %s (%s)", name, kind, status))
-				if err != nil {
-					return err
-				}
-				switch {
-				case val == "-":
-					_ = state.DeleteCredential(key)
-					u.OK("removed %s", name)
-				case val != "":
-					if err := state.SetCredential(key, val); err != nil {
-						return fmt.Errorf("storing %s: %w", name, err)
-					}
-					u.OK("stored %s", name)
-				}
+				all = append(all, &secret{board: b.ProjectID, server: s.Name, note: s.Note, kind: kind, name: name, key: key, have: have})
 			}
 		}
 	}
-	if asked == 0 {
+	if len(all) == 0 {
 		u.OK("no MCP server on the boards this machine works needs a secret")
 		return nil
+	}
+	elsewhere := func(x *secret) *secret {
+		for _, o := range all {
+			if o != x && o.have != "" && o.server == x.server && o.name == x.name {
+				return o
+			}
+		}
+		return nil
+	}
+	shown := ""
+	ask := func(x *secret, question string) (string, error) {
+		if head := x.board + " — MCP server " + x.server; head != shown {
+			shown = head
+			u.Step("%s", head)
+			if x.note != "" {
+				u.Say("%s", x.note)
+			}
+		}
+		return u.Secret(fmt.Sprintf("%s, %s (%s)", x.name, x.kind, question))
+	}
+	store := func(x *secret, val string) error {
+		if err := state.SetCredential(x.key, val); err != nil {
+			return fmt.Errorf("storing %s: %w", x.name, err)
+		}
+		x.have = val
+		u.OK("stored %s for %s", x.name, x.board)
+		return nil
+	}
+
+	// What is missing first: a secret already set is kept without asking, so running this again
+	// after adding a server to one board asks only about that server.
+	var kept []*secret
+	for _, x := range all {
+		if x.have != "" {
+			kept = append(kept, x)
+			continue
+		}
+		from := elsewhere(x)
+		question := "not set — Enter skips it"
+		if from != nil {
+			question = "not set — Enter uses the one set for " + from.board + ", - skips it"
+		}
+		val, err := ask(x, question)
+		if err != nil {
+			return err
+		}
+		switch {
+		case val != "" && val != "-":
+			err = store(x, val)
+		case val == "" && from != nil:
+			err = store(x, from.have)
+		}
+		if err != nil {
+			return err
+		}
+	}
+	if len(kept) > 0 {
+		names := make([]string, len(kept))
+		for i, x := range kept {
+			names[i] = x.board + "/" + x.server + " " + x.name
+		}
+		u.Say("Already set: %s.", strings.Join(names, ", "))
+		change, err := u.Confirm("Change any of them?", false)
+		if err != nil {
+			return err
+		}
+		for _, x := range kept {
+			if !change {
+				break
+			}
+			val, err := ask(x, "set — Enter keeps it, - removes it")
+			if err != nil {
+				return err
+			}
+			switch {
+			case val == "-":
+				_ = state.DeleteCredential(x.key)
+				u.OK("removed %s for %s", x.name, x.board)
+			case val != "":
+				if err := store(x, val); err != nil {
+					return err
+				}
+			}
+		}
 	}
 	return reloadDaemon(u)
 }

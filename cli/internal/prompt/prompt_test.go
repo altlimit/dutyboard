@@ -90,4 +90,14 @@ func TestEveryKindRenders(t *testing.T) {
 	if !strings.Contains(out, "resuming") || !strings.Contains(out, "Answer: Esc.") {
 		t.Errorf("a resumed duty should carry the answer:\n%s", out)
 	}
+
+	in.Duty.Notes = []board.Note{{From: "Sam", Message: "Make P pause too."}}
+	if out, _ := Duty(in); !strings.Contains(out, "- Sam: Make P pause too.") {
+		t.Errorf("people's notes on the duty are not handed to the session:\n%s", out)
+	}
+
+	in.Duty.Check, in.Check = "scripts/inbox.sh", "2 new emails from billing@"
+	if out, _ := Duty(in); !strings.Contains(out, "`scripts/inbox.sh`") || !strings.Contains(out, "2 new emails from billing@") {
+		t.Errorf("what the schedule's check found is not handed to the session:\n%s", out)
+	}
 }

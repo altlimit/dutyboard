@@ -498,7 +498,7 @@ Everyone on a board can read its profile, so no value there is private, and anyt
 a credential in the settings is refused. Each machine keeps the secrets' values itself:
 
 ```bash
-dutyboard --mcp-secrets     # asks for each secret the boards this machine works need; OS keyring
+dutyboard --mcp-secrets     # asks for the secrets the boards this machine works need and it lacks; OS keyring
 ```
 
 A session is connected to exactly the board's servers and DutyBoard's — nothing else from your own
@@ -534,6 +534,15 @@ so one occurrence files one duty.
 An agent holding a duty can also change a schedule — its title, brief, repeat or priority — with
 `duty_schedule_update`, so "rewrite the weekly post's brief so it stops repeating itself" is a duty
 like any other.
+
+**A schedule can check before it wakes anyone.** Give it a *check* — a shell command — and the
+machine that picks up each run executes it in the board's folder before any agent starts. Exit 0
+and print nothing, and there is nothing to do: no session, no tokens, and the run leaves no duty
+behind (the schedule counts it as a quiet run). Print anything, or exit non-zero, and an agent is
+woken with that output in its brief. So "every 15 minutes, look for new orders" costs a script run
+until there is an order. `$DUTYBOARD_STATE_DIR` is a folder kept between runs, where a script can
+remember what it has already seen; `$DUTYBOARD_BOARD` and `$DUTYBOARD_DUTY_ID` say what it is for.
+A check has ten minutes. A run a person has written a note on is worked even if its check is quiet.
 
 **Old runs can remove themselves.** A schedule (or any one duty) can say what happens once it is
 done: kept, or removed a day, three days, a week, two weeks, a month or three months later — with
@@ -641,8 +650,9 @@ only when you first try it hosted.
 | `/duty/claim` | agent | `queued` → `active`, for exactly one agent. |
 | `/duty/enqueue` | both | New work. `immediate_blocker` interrupts what the caller holds. |
 | `/duty/checkpoint` | both | Post to the thread; optionally park the duty. |
-| `/duty/complete` | agent | `active` → `done`. Requires an outcome summary. |
-| `/duty/fail` | agent | `→ failed`, with a reason. |
+| `/duty/complete` | agent | `active` → `done`. Requires an outcome summary. Refused once, with the notes, when a person wrote on the duty since the session was shown its notes. |
+| `/duty/fail` | agent | `→ failed`, with a reason. Refused for unread notes like complete. |
+| `/duty/quiet` | machine | A scheduled duty whose check found nothing to do: removed, and counted on its schedule. |
 | `/duty/thread` | both | The decision log for one duty. |
 | `/duty/search` | both | Finished duties matching a query, with their outcome summaries. |
 | `/duty/attach` | both | Reserve a file on a duty; answers with a URL to PUT the bytes to. |

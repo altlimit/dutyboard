@@ -173,6 +173,11 @@ func (d *Daemon) rulesFor(ctx context.Context, boardID string) (int, string) {
 // daemon's own context; rctx is the session's, which a person moving the duty cancels.
 func (d *Daemon) execute(dctx, rctx context.Context, run *Run, duty *board.Duty, resuming bool) {
 	v := d.view(run.Board)
+	if records, _ := state.RunRecords(); duty.Check != "" && records[run.DutyID].Check == "" {
+		if d.check(dctx, rctx, run, v, duty) {
+			return
+		}
+	}
 	spec := d.specFor(dctx, run.Board, run.DutyID, v)
 	run.Spec, run.Files = spec, v.Files()
 	run.set("working", "preparing its worktree")
@@ -252,7 +257,7 @@ func (d *Daemon) execute(dctx, rctx context.Context, run *Run, duty *board.Duty,
 			Duty: *duty, Board: v, Rules: rules, RulesAt: rulesAt, Branch: spec.Branch(), Worktree: path,
 			Mode: string(modeFor(dctx, v, spec)), Resuming: resume, Attempt: rec.Attempts,
 			ProjectRoot: spec.Repo, LocalDir: spec.CopyFrom, Tools: d.tools.Describe(), PrepFailed: prepFailed,
-			Repos: d.promptRepos(dctx, run, v),
+			Repos: d.promptRepos(dctx, run, v), Check: rec.Check,
 		}
 		if run.Files {
 			in.Files = &files
@@ -402,6 +407,7 @@ func (d *Daemon) execute(dctx, rctx context.Context, run *Run, duty *board.Duty,
 				return
 			case <-time.After(time.Duration(rec.Attempts) * retryDelay()):
 			}
+			fresh.Notes = duty.Notes // a claim hands them over; a read of the duty does not
 			duty, resume = fresh, true
 		default: // needs_decision, blocked, queued: the session parked it, or a person moved it
 			d.afterPark(dctx, run, rec)

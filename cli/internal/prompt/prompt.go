@@ -43,6 +43,7 @@ type Input struct {
 	MCPServers  []MCPServer
 	Repos       []Repo // the board's other repositories, when it has any
 	Files       *Files // set on a board of one-off tasks, which has no repository
+	Check       string // what the schedule's check said, when it is why the session was started
 }
 
 // Files is a duty's folder on a board of one-off tasks.

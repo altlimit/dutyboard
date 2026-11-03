@@ -224,7 +224,7 @@ const addNote = () =>
       if (res.entry) entries.value = [{ ...res.entry, key: res.entry.id }, ...entries.value];
       note.value = "";
     },
-    "Added to the log. The next agent to pick this up will read it.",
+    "Added to the log. An agent working on it now reads it before it can finish; the next one to pick it up starts with it.",
     { reload: false },
   );
 

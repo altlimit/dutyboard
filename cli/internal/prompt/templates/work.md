@@ -25,6 +25,25 @@ Read the note before the brief, and `duty_thread` before you change anything.
 
 {{.Duty.Brief}}
 
+{{- if .Check}}
+
+Its schedule runs a check before waking anyone. The check, `{{.Duty.Check}}`, said:
+
+```
+{{.Check}}
+```
+
+That is why you were started: work from what it found.
+{{- end}}
+
+{{- if .Duty.Notes}}
+
+People have written on this duty. Their notes are part of the brief, and a newer one wins over the brief where they disagree:
+{{- range .Duty.Notes}}
+- {{.From}}: {{.Message}}
+{{- end}}
+{{- end}}
+
 {{- if .Files}}
 
 {{if .Files.Inputs}}The files that came with it are in `in/`: {{join .Files.Inputs ", "}}.{{else}}No files came with it.{{end}}

@@ -236,6 +236,9 @@ export function scheduleView(row, now = Date.now()) {
     priority: row.priority,
     reserved_for: row.reserved_for || null,
     expire_after_days: row.expire_after_days || 0,
+    check: row.check || null,
+    quiet_runs: row.quiet_runs || 0,
+    last_quiet_at: row.last_quiet_at || null,
     cron: row.cron,
     tz: row.tz,
     offset_min: row.offset_min || 0,
@@ -318,6 +321,7 @@ export async function updateSchedule(ctx, body) {
     tz: has(body, "tz") ? body.tz : row.tz,
     offset_min: has(body, "offset_min") ? body.offset_min : row.offset_min,
     expire_after_days: has(body, "expire_after_days") ? body.expire_after_days : row.expire_after_days,
+    check: has(body, "check") ? body.check : row.check,
   };
   const fields = scheduleFields(ctx, wanted, now);
   Object.assign(next, fields.data, { updated_at: now });
@@ -464,6 +468,8 @@ function scheduleFields(ctx, body, now) {
       offset_checked_at: has(body, "offset_min") ? now : null,
       // How long each duty it files stays on the board once done; 0 keeps them.
       expire_after_days: expireDays(body.expire_after_days),
+      // A command the machine runs before waking an agent for the duty; see quietDuty.
+      check: str(body.check, "check", { max: 2000, fallback: "" }) || null,
     },
   };
 }
@@ -689,7 +695,13 @@ async function fireSchedule(ctx, row, now) {
       reservedFor: row.reserved_for || null,
       now,
       // The mutex: one occurrence, one duty, whichever tick gets there first.
-      fields: { fire_key: fireKey(row.key, due), schedule_id: row.key, expire_after_days: row.expire_after_days || 0, expires_at: null },
+      fields: {
+        fire_key: fireKey(row.key, due),
+        schedule_id: row.key,
+        expire_after_days: row.expire_after_days || 0,
+        expires_at: null,
+        check: row.check || null,
+      },
     },
   );
   await ctx.store.transaction([
@@ -758,6 +770,23 @@ export async function noteScheduleOutcome(ctx, duty, outcome) {
     // The schedule not learning what happened costs the next run some context. It is not worth
     // failing a completed duty over.
     console.log("schedules: could not record an outcome:", err && err.message);
+  }
+}
+
+/**
+ * A run whose check found nothing to do. Its duty is gone, so this count is the only trace of it —
+ * enough for the board to show the schedule is alive, without a done duty for every quiet run.
+ */
+export async function noteQuietRun(ctx, duty) {
+  if (!duty || !duty.schedule_id) return;
+  try {
+    const row = await ctx.store.get("schedules", duty.schedule_id);
+    if (!row) return;
+    const now = Date.now();
+    await ctx.store.putOne("schedules", duty.schedule_id, { ...strip(row), quiet_runs: (row.quiet_runs || 0) + 1, last_quiet_at: now, updated_at: now });
+    await ctx.publish(duty.project_id, null, { t: "board", what: "schedules" });
+  } catch (err) {
+    console.log("schedules: could not record a quiet run:", err && err.message);
   }
 }
 

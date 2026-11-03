@@ -32,7 +32,7 @@ func (d *Daemon) boardMCPServers(v board.BoardView) (servers []runner.MCPServer,
 			values[name] = val
 		}
 		if len(unset) > 0 {
-			missing = append(missing, fmt.Sprintf("MCP server %q needs %s on this machine — run `dutyboard --mcp-secrets`", s.Name, strings.Join(unset, ", ")))
+			missing = append(missing, fmt.Sprintf("MCP server %q needs %s for this board on this machine — run `dutyboard --mcp-secrets`", s.Name, strings.Join(unset, ", ")))
 			continue
 		}
 		if agentName(v) == "cursor" && s.URL != "" && len(s.Secrets) > 0 {

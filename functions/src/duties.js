@@ -48,7 +48,7 @@ import { resolveProject, projectOfDuty, requireHuman, authorOf, checkAgentId } f
 import { sweepAttachments, MAX_ATTACHMENTS } from "./attachments.js";
 import { indexFinished, unindexDuties } from "./searching.js";
 import { machinesPresent } from "./live.js";
-import { noteScheduleOutcome } from "./schedules.js";
+import { noteScheduleOutcome, noteQuietRun } from "./schedules.js";
 
 export const STATUSES = ["queued", "active", "needs_decision", "blocked", "done", "failed"];
 export const PRIORITIES = ["immediate_blocker", "next", "backlog"];
@@ -484,6 +484,9 @@ export async function claimDuty(ctx, body) {
     // Whoever claims it now has the work; a worktree left on another machine is that machine's
     // to clean up, and the daemon that parks it again sets this again.
     affinity: null,
+    // The claim hands over every note on the duty so far; finishing it is refused while there are
+    // newer ones the session has not been shown (see unreadNotes).
+    notes_seen_at: now,
     updated_at: now,
   };
   try {
@@ -527,10 +530,11 @@ export async function claimDuty(ctx, body) {
   });
   // `claimed` is the row that was just written, minus the envelope stripMeta removed — so
   // the key comes back from the duty it was built from rather than a re-read.
+  const notes = await peopleNotes(ctx, duty.key);
   return {
     status: "active",
     duty_id: duty.key,
-    duty: briefOf({ ...claimed, key: duty.key }, { full: true }),
+    duty: { ...briefOf({ ...claimed, key: duty.key }, { full: true }), notes },
     // So a daemon can tell, from the claim alone, whether the rules it has are current.
     rules_version: (board && board.rules_version) || 0,
   };
@@ -866,6 +870,7 @@ async function finishDuty(ctx, body, terminal) {
   if (duty.assigned_agent_id && agentId && duty.assigned_agent_id !== agentId) {
     throw forbidden(`duty '${duty.key}' is assigned to agent '${duty.assigned_agent_id}'`);
   }
+  if (ctx.caller.kind === "agent" && duty.status === "active") await unreadNotes(ctx, duty, terminal);
 
   const ops = [
     putOp("duties", duty.key, {
@@ -928,6 +933,76 @@ async function finishDuty(ctx, body, terminal) {
   await noteScheduleOutcome(ctx, duty, summary);
 
   return { ok: true, status: terminal, duty_id: duty.key, unblocked_duty_id: parent };
+}
+
+/**
+ * `POST /duty/quiet` — a scheduled duty whose check found nothing to do.
+ *
+ * The machine holding it ran the schedule's check, which exited cleanly and printed nothing, so no
+ * session is started and the duty is removed rather than finished: a check every fifteen minutes
+ * would otherwise fill the Done column with runs that did nothing. The schedule counts it instead.
+ * Refused once a person has written on the duty — they asked for something, so an agent wakes.
+ */
+export async function quietDuty(ctx, body) {
+  const agentId = agentIdFrom(ctx, body, { required: true });
+  const duty = await loadDuty(ctx, body.duty_id);
+  const project = await projectOfDuty(ctx.caller, duty, ctx.store);
+  if (!ctx.caller.machineId) throw forbidden("only the machine that ran a duty's check can say it found nothing");
+  if (!duty.check || duty.status !== "active" || duty.assigned_agent_id !== agentId) {
+    throw conflict(`duty '${duty.key}' is not a checked duty that '${agentId}' holds`, { status: duty.status });
+  }
+  if ((await peopleNotes(ctx, duty.key)).length) {
+    throw conflict(`a person wrote on duty '${duty.key}', so it is worked even though its check found nothing`, { notes: true });
+  }
+  await removeDuty(ctx, duty, project.key);
+  await noteQuietRun(ctx, duty);
+  return { ok: true, removed: duty.key };
+}
+
+/** How many of a duty's notes a claim carries: the newest, which are the ones still likely to matter. */
+const NOTES_ON_CLAIM = 10;
+
+/** The notes people have written on a duty, oldest first — what a session starting on it is shown. */
+async function peopleNotes(ctx, dutyKey) {
+  const { rows } = await ctx.store.query("threads", {
+    where: [{ field: "duty_id", op: "=", value: dutyKey }],
+    order: [{ field: "created_at", dir: "desc" }],
+    limit: MAX_THREAD_ENTRIES,
+  });
+  return rows
+    .filter((t) => t.author_type === "human" && t.kind === "note")
+    .slice(0, NOTES_ON_CLAIM)
+    .reverse()
+    .map((t) => ({ from: t.author_name || "a person", message: t.message, created_at: t.created_at }));
+}
+
+/**
+ * Refuses an agent's finish while people have written on the duty since its session was shown the
+ * notes — a person who adds "also do X" while the work is under way would otherwise watch it be
+ * marked done without X. The refusal carries the notes, and counts as showing them: the next
+ * finish goes through unless someone writes again.
+ */
+async function unreadNotes(ctx, duty, terminal) {
+  const { rows } = await ctx.store.query("threads", {
+    where: [
+      { field: "duty_id", op: "=", value: duty.key },
+      { field: "created_at", op: ">", value: duty.notes_seen_at || 0 },
+    ],
+    order: [{ field: "created_at", dir: "asc" }],
+    limit: MAX_THREAD_ENTRIES,
+  });
+  const notes = rows.filter((t) => t.author_type === "human" && t.kind === "note");
+  if (!notes.length) return;
+  const seen = notes[notes.length - 1].created_at;
+  await ctx.store.transaction([putOp("duties", duty.key, { ...stripMeta(duty), notes_seen_at: seen })]);
+  const listed = notes.map((t) => `- ${t.author_name || "A person"}: ${t.message}`).join("\n");
+  throw conflict(
+    `not ${terminal === "done" ? "completed" : "failed"} yet — a person wrote on this duty while you were working on it:\n` +
+      `${listed}\n` +
+      `Do what the note${notes.length > 1 ? "s ask" : " asks"} first. If that changes the work, land it again (commit and ` +
+      `duty_integrate, or put it in out/), then call duty_${terminal === "done" ? "complete" : "fail"} again — this refusal will not repeat for the same notes.`,
+    { notes: notes.length },
+  );
 }
 
 /**
@@ -1324,6 +1399,11 @@ function briefOf(duty, { full = false } = {}) {
       previous_outcome: duty.previous_outcome || null,
       times: duty.reopen_count || 1,
     };
+  }
+  // A scheduled duty with a check: the machine that claims it runs the check before any session.
+  if (duty.check) {
+    out.check = duty.check;
+    out.schedule_id = duty.schedule_id || null;
   }
   if (full) {
     out.status = duty.status;

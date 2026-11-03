@@ -523,6 +523,16 @@ type Duty struct {
 	Affinity *struct {
 		MachineID string `json:"machine_id"`
 	} `json:"affinity"`
+	Notes []Note `json:"notes"` // what people have written on it, as a claim hands them over
+	// Check is the command its schedule runs before waking an agent for it.
+	Check      string `json:"check"`
+	ScheduleID string `json:"schedule_id"`
+}
+
+// Note is a person's note on a duty.
+type Note struct {
+	From    string `json:"from"`
+	Message string `json:"message"`
 }
 
 // Claimed is /duty/claim's answer.
@@ -556,6 +566,11 @@ func (c *Client) Checkpoint(ctx context.Context, board, dutyID, agentID, kind, m
 		body["affinity"] = true
 	}
 	return c.Call(ctx, "/duty/checkpoint", board, body, nil)
+}
+
+// Quiet drops a scheduled duty whose check found nothing to do.
+func (c *Client) Quiet(ctx context.Context, board, dutyID, agentID string) error {
+	return c.Call(ctx, "/duty/quiet", board, map[string]any{"duty_id": dutyID, "agent_id": agentID}, nil)
 }
 
 // Enqueue files a duty on board.

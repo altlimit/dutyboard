@@ -146,7 +146,7 @@ const TOOLS = [
     name: "duty_complete",
     title: "Finish a duty",
     description:
-      "Mark the duty done. The outcome summary is permanent and is the only record of what happened — write what changed and where, not that you finished. If this duty was blocking a parent, the parent returns to the front of the queue.",
+      "Mark the duty done. The outcome summary is permanent and is the only record of what happened — write what changed and where, not that you finished. If this duty was blocking a parent, the parent returns to the front of the queue. Refused, once, if a person wrote a note on the duty while you worked: the refusal carries the note — act on it, then complete again.",
     inputSchema: {
       type: "object",
       properties: {
@@ -365,6 +365,7 @@ const TOOLS = [
         priority: s("How each filed duty schedules.", { enum: PRIORITIES, default: "next" }),
         reserved_for: s("A machine's agent prefix, if the work can only be done on that machine."),
         expire_after_days: { type: "integer", minimum: 0, maximum: 365, description: "Remove each duty it files from the board this many days after it is done, for runs nobody needs the record of. 0, the default, keeps them." },
+        check: s("Optional. A shell command the machine runs before waking an agent for each run, in the board's folder. Exit 0 printing nothing means there is nothing to do: no session starts and the run leaves no duty behind. Any output, or a failing exit, wakes an agent with that output in its brief. $DUTYBOARD_STATE_DIR is a folder kept between runs, for remembering what it has already seen."),
         agent_id: s("Which agent you are. Defaults to the id configured on this connection."),
       },
       required: ["title", "brief", "cron"],
@@ -402,6 +403,7 @@ const TOOLS = [
         priority: s("How each filed duty schedules.", { enum: PRIORITIES }),
         enabled: { type: "boolean", description: "False pauses it; true starts it again." },
         expire_after_days: { type: "integer", minimum: 0, maximum: 365, description: "Remove each duty it files this many days after it is done; 0 keeps them. Applies to the duties it files from now on." },
+        check: s("An empty string removes it. A shell command the machine runs before waking an agent for each run, in the board's folder. Exit 0 printing nothing means there is nothing to do: no session starts and the run leaves no duty behind. Any output, or a failing exit, wakes an agent with that output in its brief. $DUTYBOARD_STATE_DIR is a folder kept between runs, for remembering what it has already seen."),
 
         agent_id: s("Which agent you are. Defaults to the id configured on this connection."),
       },

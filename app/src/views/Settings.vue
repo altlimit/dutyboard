@@ -793,6 +793,9 @@ function tabKey(event) {
               <template v-if="s.last_fired_at">, last {{ ago(s.last_fired_at) }}</template>
               <template v-if="s.skipped">; {{ s.skipped }} run<template v-if="s.skipped !== 1">s</template> skipped while the one before was still open</template>.
             </span>
+            <span v-if="s.check" class="hint" style="margin: 0">
+              Checks first with <code>{{ s.check }}</code><template v-if="s.quiet_runs">; {{ s.quiet_runs }} run<template v-if="s.quiet_runs !== 1">s</template> found nothing to do, last {{ ago(s.last_quiet_at) }}</template>.
+            </span>
             <p v-if="s.tz && s.tz !== 'UTC' && !s.offset_checked_at" class="hint" style="margin: 0">
               No machine or browser has confirmed what {{ s.tz }} is worth yet, so this is running on UTC
               until one does.
@@ -886,6 +889,16 @@ function tabKey(event) {
             <p v-else class="hint" style="margin: 0">
               This browser's is <strong>{{ myZone }}</strong>. The hour you ask for is kept through a clock
               change: this page and every machine working the board tell it what the zone is worth.
+            </p>
+          </div>
+          <div class="field">
+            <label for="sch-check">Check first (optional)</label>
+            <textarea id="sch-check" v-model="scheduleForm.check" class="mono" rows="2" maxlength="2000" placeholder="scripts/new-orders.sh" />
+            <p class="hint" style="margin: 0">
+              A shell command the machine runs in the board's folder before waking an agent. If it exits 0
+              and prints nothing, there is nothing to do: no agent starts and the run leaves no duty behind.
+              Anything it prints, or a failing exit, wakes an agent with that output in its brief.
+              <code>$DUTYBOARD_STATE_DIR</code> is kept between runs, for remembering what it has already seen.
             </p>
           </div>
           <div class="field">

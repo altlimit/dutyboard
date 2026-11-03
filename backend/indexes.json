@@ -142,6 +142,13 @@
     },
     {
       "fields": [
+        "duty_id",
+        "created_at:desc"
+      ],
+      "for": "the function: a duty's newest notes, handed to the session that claims it"
+    },
+    {
+      "fields": [
         "owner_uid",
         "duty_id",
         "created_at"
