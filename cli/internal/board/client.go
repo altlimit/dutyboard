@@ -318,8 +318,9 @@ type BoardView struct {
 // repository.
 func (v BoardView) Files() bool { return v.Profile != nil && v.Profile.Workspace == "files" }
 
-// Request is a setup a person asked this machine for: "setup" to work a board, or "create_repo" to
-// make the board's repository on GitHub first.
+// Request is something a person asked this machine for from the console: "setup" to work a board,
+// "create_repo" to make the board's repository on GitHub first, or "install_tool" and "sign_in" for
+// the tools duties need.
 type Request struct {
 	RequestID string   `json:"request_id"`
 	ProjectID string   `json:"project_id"`
@@ -328,6 +329,10 @@ type Request struct {
 	RepoURL   string   `json:"repo_url"`
 	Repo      *NewRepo `json:"repo"`
 	Status    string   `json:"status"`
+	// Tool is what an install_tool or sign_in request is about: claude-code, codex, cursor or gh.
+	Tool string `json:"tool"`
+	// Input is what a person pasted back for a sign-in waiting on it.
+	Input string `json:"input"`
 }
 
 // NewRepo is the GitHub repository a create_repo request makes. An empty Owner is the account the
@@ -477,18 +482,34 @@ type Run struct {
 	Detail string `json:"detail,omitempty"`
 }
 
-// ReportState replaces what this machine says it is doing on a board, and what — if anything — stops
-// it working the board at all.
-func (c *Client) ReportState(ctx context.Context, projectID string, runs []Run, problem string) error {
+// ReportState replaces what this machine says it is doing on a board, what — if anything — stops it
+// working the board at all, and what the board's owner should fix that does not.
+func (c *Client) ReportState(ctx context.Context, projectID string, runs []Run, problem, notice string) error {
 	if runs == nil {
 		runs = []Run{}
 	}
-	return c.Call(ctx, "/machine/state", "", map[string]any{"project_id": projectID, "runs": runs, "problem": problem}, nil)
+	return c.Call(ctx, "/machine/state", "", map[string]any{"project_id": projectID, "runs": runs, "problem": problem, "notice": notice}, nil)
+}
+
+// ReportReadiness replaces what this machine says duties need from it: items is the readiness
+// checklist, checkedAt when it was made (Unix milliseconds).
+func (c *Client) ReportReadiness(ctx context.Context, items any, checkedAt int64) error {
+	return c.Call(ctx, "/machine/readiness", "", map[string]any{"items": items, "checked_at": checkedAt}, nil)
 }
 
 // ReportRequest reports a setup request's progress.
 func (c *Client) ReportRequest(ctx context.Context, requestID, status, result string) error {
 	return c.Call(ctx, "/machine/request/report", "", map[string]any{"request_id": requestID, "status": status, "result": result}, nil)
+}
+
+// ReportPrompt tells the person following a sign-in what to do: prompt is a setup.Prompt.
+func (c *Client) ReportPrompt(ctx context.Context, requestID string, prompt any) error {
+	return c.Call(ctx, "/machine/request/report", "", map[string]any{"request_id": requestID, "status": "running", "prompt": prompt}, nil)
+}
+
+// TakeInput says the value a person pasted for a sign-in has arrived, so the board forgets it.
+func (c *Client) TakeInput(ctx context.Context, requestID string) error {
+	return c.Call(ctx, "/machine/request/report", "", map[string]any{"request_id": requestID, "status": "running", "input_taken": true}, nil)
 }
 
 // ReportRepo reports the repository a create_repo request made, which becomes the board's.

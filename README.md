@@ -90,16 +90,39 @@ The prefix is what tells them apart. A token or key is shown once and never agai
 ## Run your own
 
 Install `dutyboard` with [alt](https://github.com/altlimit/alt) — no sudo, no package manager —
-and put DutyBoard on your altengine organization:
+and run it:
 
 ```bash
 alt install altlimit/dutyboard
+dutyboard
+```
+
+That is the whole setup, as a checklist that asks only about what is not done yet:
+
+1. **Your DutyBoard.** With none connected, choose *Set up my own on altengine*, which provisions it
+   (below). With one connected, it compares the version your DutyBoard runs with the one this binary
+   deploys, and offers to upgrade it when it is behind.
+2. **This machine**, paired with a code you approve in the console.
+3. **Starting by itself** — at login, or at boot on a server — and restarted when what is running is
+   not this binary.
+4. **What duties need from this machine**, printed: the agents and whether each is signed in, the
+   GitHub CLI, a commit author, a deploy key, MCP secrets.
+5. **Your console**, opened on this machine, where the same checklist is kept up to date and the
+   machine can install an agent or the GitHub CLI, and sign in to it, when you ask
+   ([below](#getting-a-machine-ready)).
+
+Run it again whenever you like — after `alt update altlimit/dutyboard`, say: what is done is a ✓.
+
+To set up or upgrade DutyBoard without putting the machine you run it on to work — from CI, or for an
+agent following [llms.txt](https://www.dutyboard.com/llms.txt) — provision only:
+
+```bash
 dutyboard --provision-only        # asks for an altengine API key, or reads $ALTENGINE_KEY
 ```
 
 (`alt run altlimit/dutyboard --provision-only` does the same without installing anything.)
 
-It finds a DutyBoard already in the organization and upgrades it, or provisions a new one:
+Provisioning finds a DutyBoard already in the organization and upgrades it, or provisions a new one:
 
 - the instances — `dutyboard` (datastore, functions), `dutyboard-auth`, `dutyboard-live`,
   `dutyboard-files`, `dutyboard-search`, `dutyboard-tasks`, and the static site `dutyboard-console`
@@ -117,8 +140,9 @@ also always in the altengine console, as the `dutyboard-console` static site. Ev
 idempotent, so running it again is how you upgrade. The binary carries the function and the
 console it deploys: the machine running it needs no Node and no checkout.
 
-**Upgrading has two halves.** The server and the console change only when `--provision-only` runs;
-`/health` reports the version they are at. Machines update themselves with
+**Upgrading has two halves.** The server and the console change only when they are provisioned
+again — `--provision-only`, or `dutyboard` itself, which offers it when your DutyBoard is older than
+the binary; `/health` reports the version they are at. Machines update themselves with
 `alt update altlimit/dutyboard && dutyboard --service`. A release that changes only the runner needs
 the second; one that changes the board, the API or the console needs the first too.
 
@@ -328,11 +352,7 @@ sharing, and the reason members are managed only through the owner-only endpoint
 
 ## Running agents on your machine
 
-`dutyboard` is also the runner. On the computer that should do the work, with the board's agent
-installed and signed in — [Claude Code](https://claude.com/claude-code),
-[Codex](https://github.com/openai/codex) (`npm i -g @openai/codex`, then `codex login`), or
-[Cursor's agent CLI](https://cursor.com/docs/cli/headless) (`curl https://cursor.com/install -fsS | bash`,
-then `cursor-agent login`); each board picks one in its settings:
+`dutyboard` is also the runner. On the computer that should do the work:
 
 ```bash
 dutyboard --root D:\dutyboard      # or any folder; ~/dutyboard by default
@@ -343,6 +363,40 @@ console, and the machine gets its own key. It offers to start itself — when yo
 on a server — and runs in the background from then on. Which boards it works you choose in the console — **Work it on …** on
 a board's settings, or on the Machines page. Run in a repository, it also offers the boards that
 name that repository, or to create one.
+
+### Getting a machine ready
+
+Each board picks the agent that works it — [Claude Code](https://claude.com/claude-code),
+[Codex](https://github.com/openai/codex) or [Cursor's agent CLI](https://cursor.com/docs/cli/headless) —
+and a machine needs that agent installed and signed in. The Machines page keeps a checklist for each
+machine, which the machine itself reports: every agent and whether it is signed in, the GitHub CLI
+(for boards that open pull requests or watch CI, and for making a board's repository), a commit
+author, a deploy key, and the secrets its boards' MCP servers need. What a board on it is waiting on
+comes first. It is checked at start, every half hour, and when you press **Check again**.
+
+From that checklist the machine's owner can have it:
+
+- **Install** an agent or the GitHub CLI, as the machine's user, with no admin: Claude Code and Cursor
+  with their own installers (into `~/.local/bin`), the GitHub CLI from its release archive checked
+  against the release's checksums, and Codex from npm into the tools folder (so Codex needs Node).
+  The folder is added to the PATH of the running `dutyboard` and every session it starts, and kept for
+  the next start — a service's PATH is the one it was installed with.
+- **Sign in** to one. The machine runs the tool's own sign-in and the console shows what it printed:
+  a link to open and, for the GitHub CLI and Codex, a code to enter there. Claude's sign-in page gives
+  you a code to paste back, and the console passes it to the command waiting for it on the machine;
+  it is cleared from the board as soon as the machine has it. You sign in on the tool's own site, and
+  the tool keeps its credentials on the machine — none of them passes through DutyBoard. The GitHub
+  CLI is also set up as git's credential helper (`gh auth setup-git`), so https clones of private
+  repositories work.
+
+Only the machine's owner can ask either, since both run software as them on their computer; a board's
+owner can't, even for a machine on their board. A machine set to wait for someone there (*Setups
+asked for here* → *Wait for someone at the machine*) holds these too, until someone runs `dutyboard`
+on it and accepts.
+
+A **deploy key** and **MCP secrets** are typed on the machine (`dutyboard --deploy-key`,
+`dutyboard --mcp-secrets`), never in the console: every member of a board can read what passes through
+it. The checklist says which are missing, and the command for each.
 
 A board worked by a machine names its **repository URL**, and the machine keeps its own clone of it
 at `<root>/<board>/`. It never works in, or adds branches to, a checkout you use. Point a board at

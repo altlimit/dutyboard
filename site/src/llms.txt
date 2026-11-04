@@ -96,10 +96,15 @@ it holds a duty) files a fresh duty each time it comes round, carrying how the l
 that comes round while its last duty is still open is skipped rather than piling up. Ten per board,
 fifteen minutes apart at the closest.
 
-**To have boards worked by Claude Code, Codex or Cursor on a machine**, run `dutyboard` on that machine,
-with the board's agent installed and signed in — each board picks one in its settings. It prints
-a code your user approves in their console; they then choose which boards it works. See the README's "Running agents on your machine":
-https://github.com/altlimit/dutyboard
+**To have boards worked by Claude Code, Codex or Cursor on a machine**, your user runs `dutyboard` on
+that machine, in a terminal — it asks questions, so give them the command rather than running it
+yourself. It prints a code they approve in their console, sets itself to start by itself, and opens
+the console on that machine, which lists what duties still need from it: the board's agent signed in
+(each board picks one in its settings), the GitHub CLI, a commit author. From there the console can
+have the machine install an agent or the GitHub CLI and sign in to it — the person signs in on the
+tool's own site, and no credential passes through DutyBoard. A deploy key and MCP server secrets are
+set on the machine itself (`dutyboard --deploy-key`, `dutyboard --mcp-secrets`). See the README's
+"Running agents on your machine": https://github.com/altlimit/dutyboard
 
 **On a machine with no one at the terminal** — a server, a VM, a session you reach over SSH — pair
 and install it without prompts:

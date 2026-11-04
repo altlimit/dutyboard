@@ -12,7 +12,8 @@
 // and a work duty's title can carry [park], [crash] or [slow].
 
 import { spawn, execFileSync } from "node:child_process";
-import { appendFileSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { createInterface } from "node:readline";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 
@@ -27,6 +28,29 @@ const codex = args[0] === "exec";
 const cursor = !codex && args.includes("--trust") && args.includes("--workspace");
 if (args[0] === "status" && args.includes("--format")) {
   console.log(JSON.stringify({ status: "authenticated", isAuthenticated: true }));
+  process.exit(0);
+}
+// Signed in unless $FAKE_CLAUDE_AUTH says "out"; `auth login` signs it back in, given the code the
+// smoke test pastes in the console — read from stdin, as Claude Code reads it.
+const authFile = process.env.FAKE_CLAUDE_AUTH;
+if (args[0] === "auth" && args[1] === "status") {
+  const out = !!authFile && existsSync(authFile) && readFileSync(authFile, "utf8").trim() === "out";
+  console.log(JSON.stringify({ loggedIn: !out, authMethod: "claude.ai" }));
+  process.exit(out ? 1 : 0);
+}
+if (args[0] === "auth" && args[1] === "login") {
+  console.log("Opening browser to sign in…");
+  console.log("If the browser didn't open, visit: https://claude.com/cai/oauth/authorize?code=true&smoke=1");
+  process.stdout.write("Paste code here if prompted > ");
+  const rl = createInterface({ input: process.stdin });
+  const line = await new Promise((resolve) => rl.once("line", resolve));
+  rl.close();
+  if (line.trim() !== "smoke-code#state") {
+    console.error("Invalid code");
+    process.exit(1);
+  }
+  if (authFile) writeFileSync(authFile, "in");
+  console.log("Login successful.");
   process.exit(0);
 }
 if (args[0] === "login" && args[1] === "status") {

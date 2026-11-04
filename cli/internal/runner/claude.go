@@ -26,11 +26,51 @@ func claudeBinary() string {
 	return "claude"
 }
 
-func (Claude) Check(context.Context) error {
-	if _, err := exec.LookPath(claudeBinary()); err != nil {
-		return fmt.Errorf("Claude Code is not installed on this machine (%v) — install it and sign in, or set DUTYBOARD_CLAUDE", err)
+func (c Claude) Check(ctx context.Context) error { return c.Status(ctx).Err() }
+
+// Status finds Claude Code and asks it whether it is signed in. A key in the environment counts as
+// signed in, and a Claude Code too old to have `claude auth status` is taken on trust.
+func (Claude) Status(ctx context.Context) Status {
+	return claudeStatus.get(ctx, func(ctx context.Context) Status {
+		s := Status{Agent: DefaultAgent, Label: "Claude Code"}
+		bin := claudeBinary()
+		if _, err := exec.LookPath(bin); err != nil {
+			s.Detail = fmt.Sprintf("Claude Code is not installed on this machine (%v) — install it and sign in, or set DUTYBOARD_CLAUDE", err)
+			s.Fix = "curl -fsSL https://claude.ai/install.sh | bash"
+			return s
+		}
+		s.Installed = true
+		if os.Getenv("ANTHROPIC_API_KEY") != "" || os.Getenv("CLAUDE_CODE_OAUTH_TOKEN") != "" {
+			s.SignedIn = yes()
+			return s
+		}
+		cctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+		defer cancel()
+		// Signed out, it exits non-zero and still says so on stdout.
+		out, _ := exec.CommandContext(cctx, bin, "auth", "status", "--json").Output()
+		var st struct {
+			LoggedIn *bool `json:"loggedIn"`
+		}
+		if json.Unmarshal(bytesTrim(out), &st) != nil || st.LoggedIn == nil {
+			return s
+		}
+		s.SignedIn = st.LoggedIn
+		if !*st.LoggedIn {
+			s.Detail = "Claude Code is not signed in on this machine — run `claude auth login`"
+			s.Fix = "claude auth login"
+		}
+		return s
+	})
+}
+
+// bytesTrim is the JSON in a CLI's output: from its first brace, so a warning printed before it does
+// not hide it.
+func bytesTrim(b []byte) []byte {
+	s := strings.TrimSpace(string(b))
+	if i := strings.IndexByte(s, '{'); i > 0 {
+		s = s[i:]
 	}
-	return nil
+	return []byte(s)
 }
 
 // claudeTools is what a session may use without asking when the board does not say. Headless, a

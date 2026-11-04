@@ -11,7 +11,6 @@ import (
 	"regexp"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -43,44 +42,38 @@ func cursorBinary() string {
 	return "agent"
 }
 
-var cursorLogin struct {
-	sync.Mutex
-	at  time.Time
-	err error
-}
+func (c Cursor) Check(ctx context.Context) error { return c.Status(ctx).Err() }
 
-// Check finds the CLI and asks it whether it is signed in (or has CURSOR_API_KEY), remembering the
-// answer for a few minutes.
-func (Cursor) Check(ctx context.Context) error {
-	bin := cursorBinary()
-	if _, err := exec.LookPath(bin); err != nil {
-		return fmt.Errorf("Cursor's agent CLI is not installed on this machine (%v) — install it (curl https://cursor.com/install -fsS | bash) and run `cursor-agent login`, or set DUTYBOARD_CURSOR", err)
-	}
-	if os.Getenv("CURSOR_API_KEY") != "" {
-		return nil
-	}
-	cursorLogin.Lock()
-	defer cursorLogin.Unlock()
-	if time.Since(cursorLogin.at) < 5*time.Minute {
-		return cursorLogin.err
-	}
-	cctx, cancel := context.WithTimeout(ctx, 20*time.Second)
-	defer cancel()
-	out, err := exec.CommandContext(cctx, bin, "status", "--format", "json").Output()
-	cursorLogin.at, cursorLogin.err = time.Now(), nil
-	var st struct {
-		IsAuthenticated bool `json:"isAuthenticated"`
-	}
-	if err != nil || json.Unmarshal(bytes.TrimSpace(out), &st) != nil || !st.IsAuthenticated {
-		cursorLogin.err = fmt.Errorf("Cursor's agent CLI is not signed in on this machine — run `cursor-agent login`, or set CURSOR_API_KEY")
-	}
-	return cursorLogin.err
-}
-
-func forgetCursorCheck() {
-	cursorLogin.Lock()
-	cursorLogin.at = time.Time{}
-	cursorLogin.Unlock()
+// Status finds the CLI and asks it whether it is signed in (or has CURSOR_API_KEY).
+func (Cursor) Status(ctx context.Context) Status {
+	return cursorStatus.get(ctx, func(ctx context.Context) Status {
+		s := Status{Agent: "cursor", Label: "Cursor"}
+		bin := cursorBinary()
+		if _, err := exec.LookPath(bin); err != nil {
+			s.Detail = fmt.Sprintf("Cursor's agent CLI is not installed on this machine (%v) — install it (curl https://cursor.com/install -fsS | bash) and run `cursor-agent login`, or set DUTYBOARD_CURSOR", err)
+			s.Fix = "curl https://cursor.com/install -fsS | bash"
+			return s
+		}
+		s.Installed = true
+		if os.Getenv("CURSOR_API_KEY") != "" {
+			s.SignedIn = yes()
+			return s
+		}
+		cctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+		defer cancel()
+		out, err := exec.CommandContext(cctx, bin, "status", "--format", "json").Output()
+		var st struct {
+			IsAuthenticated bool `json:"isAuthenticated"`
+		}
+		if err != nil || json.Unmarshal(bytes.TrimSpace(out), &st) != nil || !st.IsAuthenticated {
+			s.SignedIn = no()
+			s.Detail = "Cursor's agent CLI is not signed in on this machine — run `cursor-agent login`, or set CURSOR_API_KEY"
+			s.Fix = bin + " login"
+			return s
+		}
+		s.SignedIn = yes()
+		return s
+	})
 }
 
 func (c Cursor) Run(ctx context.Context, j Job) Outcome {

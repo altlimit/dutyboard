@@ -67,6 +67,9 @@ import {
   linkMachine,
   unlinkMachine,
   reportState,
+  reportReadiness,
+  getRequest,
+  requestInput,
   pollMachine,
   machineLive,
   requestSetup,
@@ -172,10 +175,13 @@ const ROUTES = {
   "/machine/link": linkMachine,
   "/machine/unlink": unlinkMachine,
   "/machine/state": reportState,
+  "/machine/readiness": reportReadiness,
   "/machine/poll": pollMachine,
   "/machine/live": machineLive,
   "/machine/request": requestSetup,
   "/machine/request/report": reportRequest,
+  "/machine/request/get": getRequest,
+  "/machine/request/input": requestInput,
 };
 
 /**

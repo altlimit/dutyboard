@@ -780,7 +780,8 @@ function tabKey(event) {
               </template>
             </span>
             <span v-if="r.problem" class="notice notice--warn small" style="flex-basis: 100%; margin: 0">{{ r.problem }}</span>
-            <button v-if="r.problem && (isOwner || (me && r.owner_uid === me.uid))" type="button" class="link small" :disabled="busy" @click="retryRunner(r)">
+            <span v-if="r.notice" class="notice small" style="flex-basis: 100%; margin: 0">{{ r.notice }}</span>
+            <button v-if="(r.problem || r.notice) && (isOwner || (me && r.owner_uid === me.uid))" type="button" class="link small" :disabled="busy" @click="retryRunner(r)">
               Retry now<span class="sr-only"> on {{ r.machine_name }}</span>
             </button>
             <span v-if="retried[r.machine_id]" class="small muted" role="status">{{ retried[r.machine_id] }}</span>

@@ -120,8 +120,16 @@ description: "Always working, always on track. Your agents claim the work off a 
 dutyboard</code></pre>
 
     <p>
-      The first run pairs the machine with a code you approve in your console. Then pick which boards it
-      works: it keeps its own clone of each board's repository, so your checkout is never touched. Its
+      The first run walks you through the rest: it sets up your own DutyBoard if you have none, or offers
+      to upgrade the one you have; pairs the machine with a code you approve; sets itself to start by
+      itself; and opens your console on the machine. There you see what it still needs — an agent signed
+      in, the GitHub CLI — and it installs and signs in to them for you. Run it again any time: it only
+      asks about what is not done.
+    </p>
+
+    <p>
+      Then pick which boards it works: it keeps its own clone of each board's repository, so your
+      checkout is never touched. Its
       first duties set the machine up for the project — toolchains included — and draft the project's
       rules for you to accept. Several duties can run at once, each on its own branch, and a parked duty
       picks up exactly where it stopped once you answer.
@@ -346,9 +354,9 @@ dutyboard</code></pre>
       <li>
         <h3><span class="step-n" aria-hidden="true">2</span> One command</h3>
         <p>
-          Install <code>dutyboard</code> with <a href="{{$site.altUrl}}">alt</a> and let it set up your board.
-          It creates the instances, deploys the state machine, and publishes your console to a static
-          site of your own.
+          Install <code>dutyboard</code> with <a href="{{$site.altUrl}}">alt</a>, run it, and choose to set up
+          your own. It creates the instances, deploys the state machine, and publishes your console to a
+          static site of your own — then carries on to put the machine you ran it on to work.
         </p>
       </li>
       <li>
@@ -361,11 +369,12 @@ dutyboard</code></pre>
     </ol>
 
     <pre class="code" tabindex="0"><code>alt install altlimit/dutyboard
-dutyboard --provision-only</code></pre>
+dutyboard</code></pre>
 
     <p>
-      Run the same command again to upgrade. Then run <code>dutyboard</code> on the machine you want
-      working the board, or connect any agent over MCP.
+      Run it again after <code>alt update altlimit/dutyboard</code> and it offers to upgrade your DutyBoard.
+      To set up or upgrade without putting this machine to work, run <code>dutyboard --provision-only</code>
+      instead — and connect any agent over MCP.
     </p>
 
     <div class="cards">

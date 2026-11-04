@@ -80,7 +80,7 @@ export const RUN_STATES = ["working", "integrating", "parked", "limited", "waiti
 const REMOTE_SETUP = ["auto", "ask"];
 const UNFINISHED = ["queued", "active", "needs_decision", "blocked"];
 
-const machineView = (m, { online = null, links = [], requests = [] } = {}) => ({
+const machineView = (m, { online = null, links = [], requests = [], readiness = null } = {}) => ({
   machine_id: m.machine_id,
   name: m.name,
   agent_prefix: m.agent_prefix,
@@ -96,6 +96,9 @@ const machineView = (m, { online = null, links = [], requests = [] } = {}) => ({
   online,
   links,
   requests,
+  // What duties need from the machine — agents signed in, the GitHub CLI, a commit author — as it
+  // last said. null from a machine too old to report it.
+  readiness,
 });
 
 const linkView = (l) => ({
@@ -106,6 +109,9 @@ const linkView = (l) => ({
   path_hint: l.path_hint || "",
   runs: l.runs || [],
   problem: l.problem || "",
+  // What the board's owner should fix that does not stop the machine working it: a deploy key that
+  // cannot reach a target, an MCP server missing a secret.
+  notice: l.notice || "",
   runs_at: l.runs_at || null,
   created_at: l.created_at,
 });
@@ -121,9 +127,16 @@ const requestView = (r) => ({
   repo: r.repo || null,
   status: r.status,
   result: r.result || "",
+  // For install_tool and sign_in: which tool, and what the machine needs the person to do — open a
+  // link, enter a code, paste back what the page shows.
+  tool: r.tool || "",
+  prompt: r.prompt || null,
   created_at: r.created_at,
   updated_at: r.updated_at,
 });
+
+/** A request as its machine sees it: with the value a person pasted, which only the machine reads. */
+const machineRequestView = (r) => ({ ...requestView(r), input: r.input || "" });
 
 /** `m_01J…` → `faisal-wsl-7k2q`. The suffix is what keeps two people's "laptop" apart on one board,
  *  where agent ids have to be unique. */
@@ -329,7 +342,12 @@ export async function listMachines(ctx) {
     limit: MAX_MACHINES,
   });
   const ids = rows.map((m) => m.machine_id);
-  const [links, requests, present] = await Promise.all([linksOfMachines(ctx, ids), openRequests(ctx, ids), machinesPresent(ctx, ids)]);
+  const [links, requests, present, readiness] = await Promise.all([
+    linksOfMachines(ctx, ids),
+    openRequests(ctx, ids),
+    machinesPresent(ctx, ids),
+    ids.length ? ctx.store.getMany("machine_readiness", ids) : new Map(),
+  ]);
   const projects = await ctx.store.getMany("projects", [...new Set(links.map((l) => l.project_id))]);
   return {
     machines: rows.map((m) =>
@@ -339,6 +357,7 @@ export async function listMachines(ctx) {
           .filter((l) => l.machine_id === m.machine_id)
           .map((l) => linkView({ ...l, problem: tooOldFor(projects.get(l.project_id), m.cli_version, m.name) || l.problem })),
         requests: requests.filter((r) => r.machine_id === m.machine_id).map(requestView),
+        readiness: readinessView(readiness.get(m.machine_id)),
       }),
     ),
     max_machines: MAX_MACHINES,
@@ -373,6 +392,7 @@ export async function revokeMachine(ctx, body) {
   const links = await sweep(ctx, "machine_links", [{ field: "machine_id", op: "=", value: row.machine_id }]);
   await sweep(ctx, "machine_requests", [{ field: "machine_id", op: "=", value: row.machine_id }]);
   await ctx.store.delete("machines", [row.key]);
+  await ctx.store.delete("machine_readiness", [row.machine_id]);
   await publishMachine(ctx, row.machine_id, { t: "revoked" });
   for (const projectId of links) await ctx.publish(projectId, null, { t: "runner", machine_id: row.machine_id, state: "unlinked" });
   return { ok: true, machine_id: row.machine_id, unlinked: links.length };
@@ -515,7 +535,7 @@ export async function machineMe(ctx) {
         role: p && p.owner_uid === caller.ownerUid ? "owner" : "member",
       };
     }),
-    requests: requests.map(requestView),
+    requests: requests.map(machineRequestView),
     live: liveConfigured(ctx),
   };
 }
@@ -662,7 +682,7 @@ export async function unlinkMachine(ctx, body) {
 }
 
 /**
- * `POST /machine/state` — `{ project_id, runs: [{ duty_id, state, detail? }] }`.
+ * `POST /machine/state` — `{ project_id, runs: [{ duty_id, state, detail? }], problem?, notice? }`.
  *
  * The whole list for one board, replacing the last one: a daemon reports what it is doing there
  * now, not a stream of changes the server would have to fold. Sent when something changes, never
@@ -686,9 +706,62 @@ export async function reportState(ctx, body) {
   // old for the board says something else, which is not the problem; it is told what is.
   const project = await ctx.store.get("projects", projectId);
   const problem = runnerTooOld(ctx, project, caller.machineRow.name) || str(body.problem, "problem", { max: 300 });
-  await ctx.store.putOne("machine_links", link.key, { ...stripMeta(link), runs, problem, runs_at: now, updated_at: now });
+  const notice = str(body.notice, "notice", { max: 300 });
+  await ctx.store.putOne("machine_links", link.key, { ...stripMeta(link), runs, problem, notice, runs_at: now, updated_at: now });
   await ctx.publish(projectId, null, { t: "runner", machine_id: caller.machineId, runs: runs.length });
   return { ok: true, runs: runs.length };
+}
+
+// --- readiness ---------------------------------------------------------------------------
+
+const READINESS_STATES = ["ok", "todo", "unknown"];
+const READINESS_ACTIONS = ["install", "sign_in"];
+const MAX_READINESS_ITEMS = 20;
+
+/** A readiness report as stored, for the console. */
+function readinessView(r) {
+  if (!r) return null;
+  return { items: r.items || [], checked_at: r.checked_at || null, reported_at: r.reported_at || null };
+}
+
+/**
+ * `POST /machine/readiness` — `{ items: [{ key, label, state, needed?, boards?, detail?, fix?, actions? }], checked_at? }`.
+ *
+ * What duties need from this machine, machine-wide: the agents and whether each is signed in, the
+ * GitHub CLI, a commit author, a deploy key, its boards' MCP secrets. The whole list, replacing the
+ * last. Kept in a row of its own rather than on the machine's, which other calls rewrite whole.
+ *
+ * Only names and states — never a secret: the machine says a deploy key is missing, not what it is.
+ */
+export async function reportReadiness(ctx, body) {
+  const caller = requireMachine(ctx.caller);
+  if (!Array.isArray(body.items)) throw badRequest("'items' must be an array");
+  if (body.items.length > MAX_READINESS_ITEMS) throw badRequest(`'items' may have at most ${MAX_READINESS_ITEMS} entries`);
+  const items = body.items.map((it, i) => {
+    if (it == null || typeof it !== "object") throw badRequest(`items[${i}] must be an object`);
+    const boards = Array.isArray(it.boards) ? it.boards.slice(0, 25).map((b, j) => str(b, `items[${i}].boards[${j}]`, { max: 60 })) : [];
+    const actions = Array.isArray(it.actions) ? it.actions.filter((a) => READINESS_ACTIONS.includes(a)) : [];
+    return {
+      key: str(it.key, `items[${i}].key`, { required: true, max: 40 }),
+      label: str(it.label, `items[${i}].label`, { max: 60 }),
+      state: oneOf(it.state, `items[${i}].state`, READINESS_STATES),
+      needed: it.needed === true,
+      boards,
+      detail: str(it.detail, `items[${i}].detail`, { max: 400 }),
+      fix: str(it.fix, `items[${i}].fix`, { max: 300 }),
+      actions,
+    };
+  });
+  const now = Date.now();
+  const checkedAt = Number.isFinite(body.checked_at) && body.checked_at > 0 && body.checked_at <= now + 60_000 ? body.checked_at : now;
+  await ctx.store.putOne("machine_readiness", caller.machineId, {
+    machine_id: caller.machineId,
+    owner_uid: caller.ownerUid,
+    items,
+    checked_at: checkedAt,
+    reported_at: now,
+  });
+  return { ok: true, items: items.length };
 }
 
 /**
@@ -829,7 +902,8 @@ function newRepo(v, description) {
  */
 export async function requestSetup(ctx, body) {
   const machine = await ownMachine(ctx, body);
-  const kind = oneOf(body.kind, "kind", ["setup", "create_repo"], "setup");
+  const kind = oneOf(body.kind, "kind", ["setup", "create_repo", "install_tool", "sign_in"], "setup");
+  if (kind === "install_tool" || kind === "sign_in") return requestToolWork(ctx, machine, kind, body);
   const project = await resolveProject(ctx.caller, body.project_id, ctx.store, { ownerOnly: kind === "create_repo" });
   if (!(await mayRunAgents(ctx, project, ctx.caller.uid))) throw forbidden("the board's owner has not let you run agents on it");
   const hasRepo = !!(project.profile && project.profile.repo_url);
@@ -880,6 +954,98 @@ export async function requestSetup(ctx, body) {
   return { ok: true, request: requestView({ ...row, key: id }) };
 }
 
+// The tools a machine can install or sign in to when its owner asks from the console.
+const TOOLS = ["claude-code", "codex", "cursor", "gh"];
+
+/**
+ * `install_tool` and `sign_in` requests: `{ machine_id, kind, tool }`. The machine's owner's alone —
+ * `ownMachine` has already said so — because they run software on that person's computer. Offered
+ * only for what the machine itself said it can do about a tool, which also keeps them from a
+ * dutyboard too old to know them: it would read one as a setup and fail.
+ */
+async function requestToolWork(ctx, machine, kind, body) {
+  const tool = oneOf(body.tool, "tool", TOOLS);
+  const action = kind === "install_tool" ? "install" : "sign_in";
+  const ready = await ctx.store.get("machine_readiness", machine.machine_id);
+  const item = ready && (ready.items || []).find((it) => it.key === tool);
+  if (!item || !(item.actions || []).includes(action)) {
+    throw conflict(
+      item
+        ? `${machine.name} did not offer to ${action === "install" ? "install" : "sign in to"} ${item.label || tool} — check it again, or do it on the machine`
+        : `${machine.name} has not said what it needs yet — it must be online and on a dutyboard that does (update it on the machine)`,
+    );
+  }
+  const open = await ctx.store.query("machine_requests", { where: [{ field: "machine_id", op: "=", value: machine.machine_id }], limit: 50 });
+  if (open.rows.some((r) => r.tool === tool && underWay(r))) throw conflict(`${machine.name} is already working on ${item.label || tool}`);
+
+  const now = Date.now();
+  const id = requestId();
+  const row = {
+    machine_id: machine.machine_id,
+    project_id: "",
+    owner_uid: machine.owner_uid,
+    kind,
+    tool,
+    path: "",
+    repo_url: "",
+    status: "pending",
+    result: "",
+    prompt: null,
+    input: "",
+    requested_by: ctx.caller.uid,
+    created_at: now,
+    updated_at: now,
+  };
+  await ctx.store.putOne("machine_requests", id, row);
+  await publishMachine(ctx, machine.machine_id, { t: "setup", request_id: id });
+  return { ok: true, request: requestView({ ...row, key: id }) };
+}
+
+/** `POST /machine/request/get` — `{ request_id }`. One request on one of your machines, to follow a
+ *  sign-in as it goes: the link to open, the code to enter. */
+export async function getRequest(ctx, body) {
+  const caller = requireHuman(ctx.caller);
+  const id = str(body.request_id, "request_id", { required: true, max: 40 });
+  const row = await ctx.store.get("machine_requests", id);
+  if (!row || row.owner_uid !== caller.uid) throw notFound(`request '${id}' not found`);
+  if (row.status === "running" && !underWay(row)) return { request: requestView({ ...row, status: "failed", result: "the machine stopped part way through — ask again" }) };
+  return { request: requestView(row) };
+}
+
+/**
+ * `POST /machine/request/input` — `{ request_id, value }`. What a sign-in asked the person to paste
+ * back — the code Claude's sign-in page shows — passed to the machine waiting for it. The machine's
+ * owner's alone. It is single-use and bound to the sign-in the machine started, and it is cleared as
+ * soon as the machine has it.
+ */
+export async function requestInput(ctx, body) {
+  const caller = requireHuman(ctx.caller);
+  const id = str(body.request_id, "request_id", { required: true, max: 40 });
+  const value = str(body.value, "value", { required: true, max: 2000 }).trim();
+  const row = await ctx.store.get("machine_requests", id);
+  if (!row || row.owner_uid !== caller.uid) throw notFound(`request '${id}' not found`);
+  if (row.kind !== "sign_in" || !underWay(row) || !(row.prompt && row.prompt.needs_input)) {
+    throw conflict("that sign-in is not waiting for anything");
+  }
+  await ctx.store.putOne("machine_requests", id, { ...stripMeta(row), input: value, updated_at: Date.now() });
+  await publishMachine(ctx, row.machine_id, { t: "input", request_id: id });
+  return { ok: true };
+}
+
+/** What a machine says a person must do for a sign-in. */
+function promptOf(v) {
+  if (v == null) return null;
+  if (typeof v !== "object" || Array.isArray(v)) throw badRequest("'prompt' must be an object");
+  const url = str(v.url, "prompt.url", { max: 2000 });
+  if (url && !/^https:\/\//.test(url)) throw badRequest("'prompt.url' must be an https URL");
+  return {
+    url,
+    code: str(v.code, "prompt.code", { max: 40 }),
+    message: str(v.message, "prompt.message", { max: 300 }),
+    needs_input: v.needs_input === true,
+  };
+}
+
 /**
  * `POST /machine/request/report` — `{ request_id, status: running|done|failed, result?, repo_url? }`.
  *
@@ -898,6 +1064,10 @@ export async function reportRequest(ctx, body) {
     result: str(body.result, "result", { max: 2000 }),
     updated_at: now,
   };
+  if (body.prompt !== undefined) next.prompt = promptOf(body.prompt);
+  // A pasted value is kept only until the machine has it, and never past the end of the sign-in.
+  if (body.input_taken === true || next.status !== "running") next.input = "";
+  if (next.status !== "running" && next.prompt) next.prompt = { ...next.prompt, needs_input: false };
   let adopted = false;
   if (body.repo_url != null) {
     if (row.kind !== "create_repo") throw badRequest("only a create_repo request reports a repository");
@@ -914,7 +1084,7 @@ export async function reportRequest(ctx, body) {
   }
   await ctx.store.putOne("machine_requests", id, next);
   if (adopted) await ctx.publish(row.project_id, null, { t: "board", what: "profile" });
-  await ctx.publish(row.project_id, null, { t: "runner", machine_id: caller.machineId, request: next.status });
+  if (row.project_id) await ctx.publish(row.project_id, null, { t: "runner", machine_id: caller.machineId, request: next.status });
   return { ok: true, adopted, request: requestView({ ...next, key: id }) };
 }
 

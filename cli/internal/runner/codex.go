@@ -11,7 +11,6 @@ import (
 	"regexp"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -57,40 +56,31 @@ func isScript(p string) bool {
 	return ext == ".cmd" || ext == ".bat"
 }
 
-var codexLogin struct {
-	sync.Mutex
-	at  time.Time
-	err error
-}
+func (c Codex) Check(ctx context.Context) error { return c.Status(ctx).Err() }
 
-// ForgetChecks drops remembered answers about the agents on this machine, so the next check asks again.
-func ForgetChecks() {
-	codexLogin.Lock()
-	codexLogin.at = time.Time{}
-	codexLogin.Unlock()
-	forgetCursorCheck()
-}
-
-// Check finds Codex and asks it whether it is signed in, remembering the answer for a few minutes: a
-// daemon checks every board on every tick.
-func (Codex) Check(ctx context.Context) error {
-	bin := codexBinary()
-	if _, err := exec.LookPath(bin); err != nil {
-		return fmt.Errorf("Codex is not installed on this machine (%v) — install it (npm i -g @openai/codex) and run `codex login`, or set DUTYBOARD_CODEX", err)
-	}
-	codexLogin.Lock()
-	defer codexLogin.Unlock()
-	if time.Since(codexLogin.at) < 5*time.Minute {
-		return codexLogin.err
-	}
-	cctx, cancel := context.WithTimeout(ctx, 20*time.Second)
-	defer cancel()
-	out, err := exec.CommandContext(cctx, bin, "login", "status").CombinedOutput()
-	codexLogin.at, codexLogin.err = time.Now(), nil
-	if err != nil {
-		codexLogin.err = fmt.Errorf("Codex is not signed in on this machine — run `codex login` (%s)", strings.TrimSpace(lastLine(string(out))))
-	}
-	return codexLogin.err
+// Status finds Codex and asks it whether it is signed in.
+func (Codex) Status(ctx context.Context) Status {
+	return codexStatus.get(ctx, func(ctx context.Context) Status {
+		s := Status{Agent: "codex", Label: "Codex"}
+		bin := codexBinary()
+		if _, err := exec.LookPath(bin); err != nil {
+			s.Detail = fmt.Sprintf("Codex is not installed on this machine (%v) — install it (npm i -g @openai/codex) and run `codex login`, or set DUTYBOARD_CODEX", err)
+			s.Fix = "npm i -g @openai/codex"
+			return s
+		}
+		s.Installed = true
+		cctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+		defer cancel()
+		out, err := exec.CommandContext(cctx, bin, "login", "status").CombinedOutput()
+		if err != nil {
+			s.SignedIn = no()
+			s.Detail = fmt.Sprintf("Codex is not signed in on this machine — run `codex login` (%s)", strings.TrimSpace(lastLine(string(out))))
+			s.Fix = "codex login"
+			return s
+		}
+		s.SignedIn = yes()
+		return s
+	})
 }
 
 func (c Codex) Run(ctx context.Context, j Job) Outcome {

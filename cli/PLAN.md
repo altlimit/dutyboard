@@ -48,8 +48,18 @@ Tools: <projects root>/_tools   Projects: ~/dutyboard
 Watching 0 boards · live
 ```
 
-- **Running it is the daemon.** First run pairs (and optionally provisions), offers to install
-  itself as a login service, and stays up. Afterwards it starts on its own.
+- **Running it is a checklist, then the daemon** (2026-11, `internal/app/setup.go`). Run by a person,
+  each step checks before it asks: the DutyBoard is there and as new as this binary (else it offers
+  to upgrade it), the machine is paired, it starts by itself and what runs is this binary, and what
+  duties need from the machine is printed (`internal/readiness`). Then it opens the console on the
+  machine (`#/machines?setup=<id>`) and exits, leaving the service running. A second run on a ready
+  machine is all ✓ and no questions. Declining the service runs the daemon in that terminal.
+- **The console finishes setting a machine up.** The daemon reports the same checklist to
+  `/machine/readiness`, machine-wide, and the Machines page shows it. The machine's owner can ask it
+  to install an agent or the GitHub CLI, or sign in to one (`install_tool` / `sign_in` requests,
+  `internal/setup`): the tool's own sign-in runs unattended, and the console shows its link and code,
+  and returns the code Claude's page gives to its stdin (`/machine/request/input`). Secrets — the
+  deploy key, MCP secrets — stay terminal-only: the board is readable by every member.
 - **Run inside an unlinked repo** and it offers to link that folder to a board, or to create a
   board (asking the profile questions in the terminal).
 - **Everything else is in the console**: set a project up on a machine, pause/resume, what it

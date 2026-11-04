@@ -161,7 +161,7 @@ async function main() {
   const fakeCodex = join(work, "fake-codex");
   const fakeCursor = join(work, "fake-cursor");
   const daemon = spawn(bin, ["--no-service"], {
-    env: { ...process.env, DUTYBOARD_HOME: home, DUTYBOARD_NO_KEYRING: "1", DUTYBOARD_CLAUDE: fake, DUTYBOARD_CODEX: fakeCodex, DUTYBOARD_CURSOR: fakeCursor, FAKE_CLAUDE_LOG: log, DUTYBOARD_RETRY_SECONDS: "1", DUTYBOARD_ACTIVITY_SECONDS: "1" },
+    env: { ...process.env, DUTYBOARD_HOME: home, DUTYBOARD_NO_KEYRING: "1", DUTYBOARD_CLAUDE: fake, DUTYBOARD_CODEX: fakeCodex, DUTYBOARD_CURSOR: fakeCursor, FAKE_CLAUDE_LOG: log, FAKE_CLAUDE_AUTH: join(work, "claude-auth"), DUTYBOARD_RETRY_SECONDS: "1", DUTYBOARD_ACTIVITY_SECONDS: "1" },
     stdio: ["ignore", "pipe", "pipe"],
   });
   let daemonOut = "";
@@ -221,9 +221,10 @@ async function main() {
     check("and is told what the server is for", /\*\*helper\*\* — A helper for the smoke test/.test(startEvent?.instructions || ""));
     const absentNoted = await until("mcp notice", async () => {
       const r = await call("/board/runners", { project_id: boardId }, human);
-      return /"absent" needs Authorization/.test(r.runners[0]?.problem || "") && r.runners[0];
+      return /"absent" needs Authorization/.test(r.runners[0]?.notice || "") && r.runners[0];
     }, 20_000);
     check("a server whose secret this machine lacks is left out, and the Machines page says why", !!absentNoted, absentNoted);
+    check("as a notice, not a problem — the machine still works the board", absentNoted && !absentNoted.problem, absentNoted);
     check(
       "and the bridge refused claiming, another duty, and completing before integrating",
       doneEvent && doneEvent.guards.claim && doneEvent.guards.notMine && doneEvent.guards.early,
@@ -464,6 +465,48 @@ async function main() {
 
     const machines = await call("/machines/list", {}, human);
     check("the console sees the machine online", machines.machines[0]?.online === true, machines.machines[0]);
+    // What duties need from the machine, from the daemon itself: the stand-in agents all answer that
+    // they are signed in, and the board it works names the agent it needs.
+    const reported = await until("readiness reported", async () => {
+      const m = (await call("/machines/list", {}, human)).machines[0];
+      return m && m.readiness && m.readiness.items.length && m;
+    }, 30_000);
+    const claude = ((reported && reported.readiness.items) || []).find((it) => it.key === "claude-code") || {};
+    check(
+      "the machine reports what duties need from it, and that the agent its board uses is signed in",
+      claude.state === "ok" && claude.needed === true && (claude.boards || []).includes(boardId),
+      reported && reported.readiness,
+    );
+
+    // Signing in from the console: the machine's agent signs out, the console sees it and asks the
+    // machine to sign in, the person is shown the link, pastes the code the page gave them, and the
+    // machine is signed in again — with the code reaching nothing but the command waiting for it.
+    writeFileSync(join(work, "claude-auth"), "out");
+    await call("/machines/retry", { machine_id: paired.machine_id }, human);
+    const signedOut = await until("signed out seen", async () => {
+      const m = (await call("/machines/list", {}, human)).machines[0];
+      const it = ((m.readiness && m.readiness.items) || []).find((i) => i.key === "claude-code");
+      return it && it.state === "todo" && it.actions.includes("sign_in") && it;
+    }, 30_000);
+    check("a signed-out agent is on the machine's checklist, with a way to sign in", !!signedOut, signedOut);
+    const signIn = await call("/machine/request", { machine_id: paired.machine_id, kind: "sign_in", tool: "claude-code" }, human);
+    const waiting = await until("sign-in prompt", async () => {
+      const r = (await call("/machine/request/get", { request_id: signIn.request.request_id }, human)).request;
+      return r.prompt && r.prompt.needs_input && r;
+    }, 30_000);
+    check("the console is shown the sign-in link, and asked for the code", !!waiting && waiting.prompt.url.startsWith("https://claude.com/"), waiting);
+    await call("/machine/request/input", { request_id: signIn.request.request_id, value: "smoke-code#state" }, human);
+    const signedIn = await until("signed in", async () => {
+      const r = (await call("/machine/request/get", { request_id: signIn.request.request_id }, human)).request;
+      return (r.status === "done" || r.status === "failed") && r;
+    }, 30_000);
+    check("the pasted code signs the machine in", signedIn && signedIn.status === "done", signedIn);
+    const backIn = await until("signed in seen", async () => {
+      const m = (await call("/machines/list", {}, human)).machines[0];
+      const it = ((m.readiness && m.readiness.items) || []).find((i) => i.key === "claude-code");
+      return it && it.state === "ok" && it;
+    }, 30_000);
+    check("and its checklist says so", !!backIn, backIn);
   } finally {
     daemon.kill("SIGTERM");
     await sleep(500);

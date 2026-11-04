@@ -69,6 +69,10 @@ onMounted(() => {
 
     <div v-if="done" class="notice stack" role="status">
       <p style="margin: 0">{{ done }}</p>
+      <p style="margin: 0">
+        Back in its terminal, it sets itself to start by itself and opens your machines page on it, where you see
+        what it still needs — an agent signed in, the GitHub CLI — and put boards on it.
+      </p>
       <p style="margin: 0"><router-link :to="{ name: 'runners' }">See your machines</router-link></p>
     </div>
 

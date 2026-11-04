@@ -1237,6 +1237,54 @@ async function main() {
     ownerView.online === true && ownerView.links.length === 1 && ownerView.links[0].runs[0].state === "parked",
     ownerView,
   );
+  await call(
+    "/machine/readiness",
+    {
+      items: [
+        { key: "claude-code", label: "Claude Code", state: "ok", needed: true, boards: [mBoard], detail: "installed and signed in" },
+        { key: "gh", label: "GitHub CLI", state: "todo", needed: false, detail: "installed, not signed in", fix: "gh auth login", actions: ["sign_in", "rm -rf"] },
+      ],
+    },
+    mkey,
+  );
+  const readyView = (await call("/machines/list", {}, human)).machines.find((m) => m.machine_id === paired.machine_id) || {};
+  const gh = ((readyView.readiness || {}).items || []).find((it) => it.key === "gh") || {};
+  check(
+    "the owner sees what the machine still needs, with only the actions the console knows",
+    readyView.readiness && readyView.readiness.items.length === 2 && gh.state === "todo" && gh.actions.join() === "sign_in",
+    readyView.readiness,
+  );
+  const badReady = await call("/machine/readiness", { items: [{ key: "x", state: "great" }] }, mkey, { expectStatus: true });
+  check("a readiness state it does not know is refused", badReady.status === 400, badReady.json);
+  // Install and sign in, from the console: only what the machine offered, and a pasted code reaches
+  // only the machine, once.
+  const notOffered = await call("/machine/request", { machine_id: paired.machine_id, kind: "install_tool", tool: "gh" }, human, { expectStatus: true });
+  check("the console cannot ask a machine to install what it did not offer to", notOffered.status === 409, notOffered.json);
+  var signIn = await call("/machine/request", { machine_id: paired.machine_id, kind: "sign_in", tool: "gh" }, human);
+  check("but can ask it to sign in where it offered to", signIn.request.status === "pending" && signIn.request.tool === "gh", signIn.request);
+  const signInTwice = await call("/machine/request", { machine_id: paired.machine_id, kind: "sign_in", tool: "gh" }, human, { expectStatus: true });
+  check("and not twice at once", signInTwice.status === 409, signInTwice.json);
+  const early = await call("/machine/request/input", { request_id: signIn.request.request_id, value: "abc" }, human, { expectStatus: true });
+  check("nothing is pasted to a sign-in that is not waiting for it", early.status === 409, early.json);
+  const badPrompt = await call("/machine/request/report", { request_id: signIn.request.request_id, status: "running", prompt: { url: "javascript:alert(1)" } }, mkey, { expectStatus: true });
+  check("a machine's sign-in link must be https", badPrompt.status === 400, badPrompt.json);
+  await call("/machine/request/report", { request_id: signIn.request.request_id, status: "running", prompt: { url: "https://example.com/device", code: "ABCD-1234", needs_input: true } }, mkey);
+  const following = await call("/machine/request/get", { request_id: signIn.request.request_id }, human);
+  check("the owner follows the sign-in: the link and the code", following.request.prompt.url === "https://example.com/device" && following.request.prompt.code === "ABCD-1234", following.request);
+  check("and sees no pasted value in it", !("input" in following.request), following.request);
+  await call("/machine/request/input", { request_id: signIn.request.request_id, value: " pasted-code#state " }, human);
+  const meWaiting = (await call("/machine/me", {}, mkey)).requests.find((r) => r.request_id === signIn.request.request_id) || {};
+  check("the machine reads what was pasted", meWaiting.input === "pasted-code#state", meWaiting);
+  await call("/machine/request/report", { request_id: signIn.request.request_id, status: "running", input_taken: true }, mkey);
+  const meTaken = (await call("/machine/me", {}, mkey)).requests.find((r) => r.request_id === signIn.request.request_id) || {};
+  check("and once it has it, it is gone", meTaken.input === "", meTaken);
+  await call("/machine/request/report", { request_id: signIn.request.request_id, status: "done", result: "signed in" }, mkey);
+  const finished = await call("/machine/request/get", { request_id: signIn.request.request_id }, human);
+  check("a finished sign-in waits for nothing", finished.request.status === "done" && finished.request.prompt.needs_input === false, finished.request);
+  await call("/machine/state", { project_id: mBoard, runs: [], notice: "MCP server \"docs\" needs DOCS_TOKEN" }, mkey);
+  const noticed = ((await call("/machines/list", {}, human)).machines.find((m) => m.machine_id === paired.machine_id) || {}).links || [];
+  check("a notice is kept apart from a problem, so it does not read as one", noticed[0] && noticed[0].problem === "" && /DOCS_TOKEN/.test(noticed[0].notice), noticed[0]);
+  await call("/machine/state", { project_id: mBoard, runs: [{ duty_id: pauseMenu.duty_id, state: "parked", detail: "waiting on Esc" }] }, mkey);
   const onBoard = await call("/board/runners", { project_id: mBoard }, human);
   check(
     "the board shows who is working it, online, and on what",
@@ -1856,10 +1904,13 @@ async function main() {
     "/machine/link": () => ({ project_id: projectId }),
     "/machine/unlink": () => ({ project_id: projectId }),
     "/machine/state": () => ({ project_id: projectId, runs: [] }),
+    "/machine/readiness": () => ({ items: [] }),
     "/machine/poll": () => ({}),
     "/machine/live": () => ({}),
     "/machine/request": () => ({ machine_id: paired.machine_id, project_id: projectId }),
     "/machine/request/report": () => ({ request_id: "mr_nope", status: "done" }),
+    "/machine/request/get": () => ({ request_id: signIn.request.request_id }),
+    "/machine/request/input": () => ({ request_id: signIn.request.request_id, value: "not yours" }),
     // Public by design: a daemon starting a pairing has no credential to check yet.
     "/connect/start": null,
     // Acts on whoever is calling: an outsider gets their own, empty, list.

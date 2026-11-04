@@ -22,8 +22,10 @@ import (
 type Agent interface {
 	// Name is how a board names it in `runner.agent`.
 	Name() string
-	// Check says whether this machine can run it: installed, and findable. Being signed in is found
-	// out by the first session.
+	// Status says whether this machine has it installed and signed in, remembering the answer for a
+	// few minutes. ForgetChecks makes the next call ask again.
+	Status(ctx context.Context) Status
+	// Check is Status as an error: nil when this machine can run it.
 	Check(ctx context.Context) error
 	// Run works one session to its end.
 	Run(ctx context.Context, j Job) Outcome

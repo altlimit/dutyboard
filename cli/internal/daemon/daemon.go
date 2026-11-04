@@ -47,6 +47,8 @@ type Options struct {
 	Config  *state.Config
 	Key     string
 	Out     io.Writer
+	// Accepted are setup requests a person at this machine has agreed to, on a machine set to ask.
+	Accepted []string
 }
 
 // Daemon is one machine's worker.
@@ -70,16 +72,21 @@ type Daemon struct {
 	reported     map[string]string
 	reportedAt   map[string]time.Time
 	reportDue    map[string]bool
-	requests     map[string]bool   // setup requests being handled
-	problems     map[string]string // board → what stops this machine working it
-	notices      map[string]string // board → what the owner should fix, which does not stop work
+	requests     map[string]bool          // setup requests being handled
+	accepted     map[string]bool          // setup requests a person here agreed to
+	held         map[string]board.Request // setup requests waiting for a person here to agree
+	inputs       map[string]chan struct{} // sign-ins waiting on something pasted in the console
+	problems     map[string]string        // board → what stops this machine working it
+	notices      map[string]string        // board → what the owner should fix, which does not stop work
 	access       map[string]accessCheck
 	ghOK         bool
 	ghCheckedAt  time.Time
 	zoneChecked  map[string]time.Time
+	readiness    readinessState
 	limitedUntil time.Time
 	paused       bool
 
+	ctx    context.Context // Run's, for work a person starts from the control socket
 	wg     sync.WaitGroup
 	wakeCh chan struct{}
 	relink chan struct{}
@@ -100,6 +107,12 @@ func New(opt Options) (*Daemon, error) {
 	if err != nil {
 		return nil, err
 	}
+	// What the console installed, where the PATH the service was installed with would not find it.
+	for _, dir := range opt.Config.ToolPath {
+		if fi, err := os.Stat(dir); err == nil && fi.IsDir() {
+			prependPath(dir)
+		}
+	}
 	// "_tools" is no board's folder: board ids are lowercase letters, digits and dashes.
 	tools.UseDir(filepath.Join(ProjectsRoot(opt.Config), "_tools"))
 	reg, err := tools.Load()
@@ -112,6 +125,10 @@ func New(opt Options) (*Daemon, error) {
 	// one it first paired with.
 	api.Version = opt.Version
 	logger := log.New(opt.Out, "", log.LstdFlags)
+	accepted := map[string]bool{}
+	for _, id := range opt.Accepted {
+		accepted[id] = true
+	}
 	return &Daemon{
 		opt:         opt,
 		api:         api,
@@ -131,6 +148,9 @@ func New(opt Options) (*Daemon, error) {
 		reportDue:   map[string]bool{},
 		zoneChecked: map[string]time.Time{},
 		requests:    map[string]bool{},
+		accepted:    accepted,
+		held:        map[string]board.Request{},
+		inputs:      map[string]chan struct{}{},
 		problems:    map[string]string{},
 		notices:     map[string]string{},
 		access:      map[string]accessCheck{},
@@ -155,6 +175,7 @@ var ErrRevoked = errors.New("this machine was revoked in the console — run `du
 func (d *Daemon) Run(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	d.stop = cancel
+	d.ctx = ctx
 	defer cancel()
 
 	if err := d.refresh(ctx); err != nil {
@@ -170,7 +191,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 	}
 
 	serveErr := make(chan error, 1)
-	go func() { serveErr <- localmcp.Serve(ctx, d) }()
+	go func() { serveErr <- localmcp.Serve(ctx, d, d.opt.Version) }()
 	interval := pollNoLive
 	if d.me.Live {
 		interval = fallbackPoll
@@ -260,6 +281,7 @@ func (d *Daemon) Reload() {
 	defer cancel()
 	d.mu.Lock()
 	d.access = map[string]accessCheck{} // a reload is often a new deploy key: check again now
+	d.readiness.due = true
 	d.mu.Unlock()
 	if err := d.refresh(ctx); err != nil {
 		d.log.Printf("reload: %v", err)
@@ -353,6 +375,7 @@ func (d *Daemon) onEvent(ev live.Event) {
 			d.mu.Lock()
 			d.access = map[string]accessCheck{}
 			d.ghCheckedAt = time.Time{}
+			d.readiness.due = true
 			d.mu.Unlock()
 			runner.ForgetChecks()
 			go func() {
@@ -363,6 +386,10 @@ func (d *Daemon) onEvent(ev live.Event) {
 				}
 				d.wake()
 			}()
+		case "input":
+			if id, _ := ev.Data["request_id"].(string); id != "" {
+				d.inputArrived(id)
+			}
 		default: // setup, pause, resume, config
 			d.wake()
 		}
@@ -437,6 +464,9 @@ func (d *Daemon) tick(ctx context.Context) error {
 	// Every linked board gets its clone here, before anything is claimed on it — a board linked from
 	// the console, or whose repository just changed, is ready by the time its duties are.
 	d.ensureWorkspaces(ctx)
+	// What duties need from this machine, for the console's checklist — in the background, since it
+	// asks every agent's CLI.
+	d.checkReadiness(ctx)
 	// And its recurring duties keep the hour they were set for: this machine has a timezone
 	// database and the board does not.
 	d.syncZones(ctx, p.Boards)
@@ -588,13 +618,10 @@ func (d *Daemon) report(ctx context.Context, boardID string) {
 			runs = append(runs, board.Run{DutyID: r.DutyID, State: r.state(), Detail: r.detail()})
 		}
 	}
-	problem := d.problems[boardID]
-	if problem == "" {
-		problem = d.notices[boardID]
-	}
+	problem, notice := d.problems[boardID], d.notices[boardID]
 	d.mu.Unlock()
 	sort.Slice(runs, func(i, j int) bool { return runs[i].DutyID < runs[j].DutyID })
-	key := fmt.Sprint(runs, problem)
+	key := fmt.Sprint(runs, problem, notice)
 	d.mu.Lock()
 	same := d.reported[boardID] == key
 	d.reported[boardID] = key
@@ -605,7 +632,7 @@ func (d *Daemon) report(ctx context.Context, boardID string) {
 	if same {
 		return
 	}
-	if err := d.api.ReportState(ctx, boardID, runs, problem); err != nil {
+	if err := d.api.ReportState(ctx, boardID, runs, problem, notice); err != nil {
 		d.log.Printf("reporting state on %s: %v", boardID, err)
 	}
 }

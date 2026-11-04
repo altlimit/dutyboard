@@ -22,19 +22,30 @@ import (
 	"github.com/altlimit/dutyboard/cli/internal/worktree"
 )
 
-// Start is `dutyboard` with no job flag: pair if this machine is not paired, link the repository it
-// is run in if that is not linked, then run the daemon — or hand the new link to the one already
-// running.
+// Start is `dutyboard` with no job flag. Run by a person, it is the checklist (setup.go): the
+// deployment is current, the machine is paired, the repository it is run in is offered, dutyboard
+// starts by itself and is this binary, and the console takes it from there. Run by a service or a
+// supervisor, it pairs only with --server, and then works.
 func Start(ctx context.Context, u *ui.UI, f Flags) error {
 	cfg, err := state.LoadConfig()
 	if err != nil {
 		return err
 	}
+	guided := u.Interactive && !f.Service
 	key, _ := state.Credential(state.MachineKey)
-	if key == "" || cfg.Server == "" {
+	paired := key != "" && cfg.Server != ""
+	if guided && paired {
+		u.Step("Your DutyBoard")
+		if err := checkDeployment(ctx, u, cfg, f); err != nil {
+			return err
+		}
+	}
+	if !paired {
 		if key, err = pairMachine(ctx, u, cfg, f); err != nil {
 			return err
 		}
+	} else if guided {
+		u.OK("this machine is paired as %q", cfg.MachineName)
 	}
 	if f.Root != "" {
 		cfg.ProjectsRoot = f.Root
@@ -45,7 +56,7 @@ func Start(ctx context.Context, u *ui.UI, f Flags) error {
 	api := board.New(cfg.Server, key)
 	api.Version = Version
 
-	if u.Interactive && !f.Service {
+	if guided {
 		if err := offerLink(ctx, u, api); err != nil {
 			return err
 		}
@@ -55,7 +66,14 @@ func Start(ctx context.Context, u *ui.UI, f Flags) error {
 		return installService(u, cfg)
 	}
 
-	if localmcp.Running() {
+	var accepted []string
+	if guided {
+		if accepted, err = acceptRequests(ctx, u, api); err != nil {
+			return err
+		}
+	}
+
+	if localmcp.Running() && (!guided || f.NoService) {
 		if !u.Interactive {
 			return nil // started by cron or a supervisor while one is running: nothing to do, and nothing to log
 		}
@@ -63,31 +81,36 @@ func Start(ctx context.Context, u *ui.UI, f Flags) error {
 		if err == nil {
 			defer c.Close()
 			if err := c.Reload(); err == nil {
+				for _, id := range accepted {
+					_ = c.Accept(id)
+				}
 				u.OK("dutyboard is already running on this machine, and has picked up any change")
 				return nil
 			}
 		}
 	}
 
-	if u.Interactive && !f.NoService && !service.Installed() {
-		yes, err := u.Confirm("Start dutyboard by itself — when you log in, or at boot on a server?", true)
+	if guided && !f.NoService {
+		background, err := ensureService(u, cfg, accepted)
 		if err != nil {
 			return err
 		}
-		if yes {
-			if err := installService(u, cfg); err == nil {
-				return nil
-			} else {
-				u.Warn("%v; running here instead", err)
-			}
+		if background {
+			showReadiness(ctx, u, api)
+			handOff(u, cfg)
+			return nil
 		}
 	}
 
-	d, err := daemon.New(daemon.Options{Version: Version, Config: cfg, Key: key})
+	d, err := daemon.New(daemon.Options{Version: Version, Config: cfg, Key: key, Accepted: accepted})
 	if err != nil {
 		return err
 	}
-	if cfg.Console != "" {
+	if guided {
+		showReadiness(ctx, u, api)
+		handOff(u, cfg)
+		u.Step("Working in this terminal")
+	} else if cfg.Console != "" {
 		u.Say("Your board: %s", cfg.Console)
 	}
 	u.Say("Working. Ctrl+C stops it; the duties it holds are resumed next time.")

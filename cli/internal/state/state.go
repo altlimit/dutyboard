@@ -54,6 +54,22 @@ type Config struct {
 
 	// ProjectsRoot is the only folder a setup requested from the console may clone into.
 	ProjectsRoot string `json:"projects_root,omitempty"`
+
+	// ToolPath are folders the tools installed from the console put their commands in — ~/.local/bin
+	// for Claude Code, the tools folder for the GitHub CLI. The daemon puts them on its PATH, and so on
+	// every session's: a service's PATH is the one it was installed with.
+	ToolPath []string `json:"tool_path,omitempty"`
+}
+
+// AddToolPath records dir in ToolPath, once.
+func (c *Config) AddToolPath(dir string) bool {
+	for _, d := range c.ToolPath {
+		if d == dir {
+			return false
+		}
+	}
+	c.ToolPath = append(c.ToolPath, dir)
+	return true
 }
 
 // LoadConfig reads config.json; a missing file is an empty config.

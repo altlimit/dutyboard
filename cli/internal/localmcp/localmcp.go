@@ -39,6 +39,9 @@ type Handler interface {
 	// Stop shuts the daemon down as Ctrl+C would: sessions end, and the duties they held are resumed
 	// when it starts again.
 	Stop()
+	// Accept is a person at this machine agreeing to a setup the console asked for, on a machine set
+	// to ask first.
+	Accept(requestID string)
 }
 
 // Endpoint is run/daemon.json.
@@ -46,6 +49,9 @@ type Endpoint struct {
 	Addr   string `json:"addr"`
 	Secret string `json:"secret"`
 	PID    int    `json:"pid"`
+	// Version is the dutyboard that is running, so running a newer one can say it is not this one.
+	// Empty from a dutyboard older than the field.
+	Version string `json:"version,omitempty"`
 }
 
 func endpointPath() string { return state.Path("run", "daemon.json") }
@@ -56,6 +62,7 @@ type request struct {
 	RunToken string          `json:"run_token,omitempty"`
 	Cwd      string          `json:"cwd,omitempty"`
 	Message  json.RawMessage `json:"message,omitempty"`
+	ID       string          `json:"id,omitempty"`
 }
 
 type response struct {
@@ -63,8 +70,8 @@ type response struct {
 	Error string          `json:"error,omitempty"`
 }
 
-// Serve listens until ctx ends.
-func Serve(ctx context.Context, h Handler) error {
+// Serve listens until ctx ends. version is the running dutyboard's, written where Dial reads it.
+func Serve(ctx context.Context, h Handler, version string) error {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return err
@@ -73,7 +80,7 @@ func Serve(ctx context.Context, h Handler) error {
 	if _, err := rand.Read(secretBytes); err != nil {
 		return err
 	}
-	ep := Endpoint{Addr: ln.Addr().String(), Secret: hex.EncodeToString(secretBytes), PID: os.Getpid()}
+	ep := Endpoint{Addr: ln.Addr().String(), Secret: hex.EncodeToString(secretBytes), PID: os.Getpid(), Version: version}
 	if err := os.MkdirAll(state.Path("run"), 0o700); err != nil {
 		return err
 	}
@@ -125,6 +132,9 @@ func serveConn(ctx context.Context, c net.Conn, h Handler, secret string) {
 		case "stop":
 			_ = enc.Encode(response{})
 			h.Stop()
+		case "accept":
+			h.Accept(req.ID)
+			_ = enc.Encode(response{})
 		case "ping":
 			_ = enc.Encode(response{})
 		default:
@@ -208,6 +218,21 @@ func (c *Client) do(req request) (*response, error) {
 // Reload tells the daemon its links changed.
 func (c *Client) Reload() error {
 	res, err := c.do(request{Op: "reload"})
+	if err != nil {
+		return err
+	}
+	if res.Error != "" {
+		return errors.New(res.Error)
+	}
+	return nil
+}
+
+// Version is the running dutyboard's version; "" for one too old to say.
+func (c *Client) Version() string { return c.ep.Version }
+
+// Accept tells the daemon a person here agreed to the setup request id.
+func (c *Client) Accept(id string) error {
+	res, err := c.do(request{Op: "accept", ID: id})
 	if err != nil {
 		return err
 	}
