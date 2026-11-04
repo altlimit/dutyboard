@@ -491,7 +491,7 @@ func (d *Daemon) tick(ctx context.Context) error {
 				return nil
 			}
 			// A board is ready once it has its clone — or, with no repository, as soon as it is linked.
-			if (d.folder(b.ProjectID) == "" && !d.view(b.ProjectID).Files()) || d.problem(b.ProjectID) != "" {
+			if (d.folder(b.ProjectID) == "" && !d.view(b.ProjectID).Folder()) || d.problem(b.ProjectID) != "" {
 				continue
 			}
 			if d.startOne(ctx, b, started, tried) {

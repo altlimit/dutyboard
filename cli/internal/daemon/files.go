@@ -19,12 +19,23 @@ import (
 //	<worktrees>/<board>/<duty>/out/   what the session makes, put on the duty when it completes
 //
 // Nothing is committed or integrated; the folder goes when the duty is done.
+//
+// A board that runs an account through its MCP servers is worked the same way, and also keeps a folder
+// between duties — <root>/<board>/local/ — for what its sessions build on from one duty to the next:
+// the sources of the files they publish, notes on where things stand. It is this machine's only; what
+// another machine needs goes into the account itself.
 
 // inputWait is how long a duty waits for files the person filing it was still attaching. Past it, the
 // session starts with what arrived, and is told what is missing.
 var inputWait = 10 * time.Minute
 
 const inputPoll = 3 * time.Second
+
+// keptFolder makes, and answers, the folder a board run through its MCP servers keeps between duties.
+func (d *Daemon) keptFolder(boardID string) (string, error) {
+	dir := d.localDir(boardID)
+	return dir, os.MkdirAll(dir, 0o755)
+}
 
 // filesFolder answers the duty's folder and its in/ and out/.
 func (d *Daemon) filesFolder(run *Run) (dir, in, out string) {
@@ -136,10 +147,10 @@ func (d *Daemon) attachOutputs(ctx context.Context, run *Run) ([]string, error) 
 	if err != nil {
 		return nil, fmt.Errorf("listing the duty's files: %w", err)
 	}
-	attached := map[string]int64{}
+	attached := map[string][]board.Attachment{}
 	for _, a := range existing {
 		if a.AuthorType == "agent" {
-			attached[a.Name] = a.Size
+			attached[a.Name] = append(attached[a.Name], a)
 		}
 	}
 	var names []string
@@ -150,9 +161,16 @@ func (d *Daemon) attachOutputs(ctx context.Context, run *Run) ([]string, error) 
 		if err != nil {
 			return names, err
 		}
-		if size, ok := attached[name]; !ok || size != info.Size() {
+		if before := attached[name]; len(before) != 1 || before[0].Size != info.Size() {
 			if err := d.api.AttachFile(ctx, run.Board, run.DutyID, run.Agent, name, p); err != nil {
 				return names, fmt.Errorf("attaching %s: %w", name, err)
+			}
+			// The file changed since an earlier session attached it: the new one replaces it, so the duty
+			// holds one copy of each file — the one the outcome describes.
+			for _, a := range before {
+				if err := d.api.DeleteAttachment(ctx, run.Board, a.ID); err != nil {
+					d.log.Printf("%s: removing the earlier %s from %s: %v", run.Board, name, run.DutyID, err)
+				}
 			}
 		}
 		names = append(names, name)

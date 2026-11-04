@@ -58,10 +58,16 @@ func (d *Daemon) ensureWorkspaces(ctx context.Context) {
 	d.mu.Unlock()
 	for _, v := range views {
 		problem := ""
+		_, missing := d.boardMCPServers(v)
 		if err := d.agentReady(ctx, v); err != nil {
 			problem = err.Error()
-		} else if v.Files() {
-			// A board of one-off tasks has no repository to clone: each duty gets a folder of its own.
+		} else if v.Service() && len(missing) > 0 {
+			// A board run through its MCP servers has nothing to work with without them: a session started
+			// anyway could only fail, or go looking for another way into the account.
+			problem = strings.Join(missing, "; ")
+			missing = nil
+		} else if v.Folder() {
+			// A board with no repository has nothing to clone: each duty gets a folder of its own.
 		} else if dir, err := d.ensureClone(ctx, v); err != nil {
 			problem = err.Error()
 		} else if err := commitIdentity(ctx, dir); err != nil {
@@ -74,7 +80,6 @@ func (d *Daemon) ensureWorkspaces(ctx context.Context) {
 		if n := d.deployNotice(ctx, v); n != "" {
 			notices = append(notices, n)
 		}
-		_, missing := d.boardMCPServers(v)
 		notices = append(notices, missing...)
 		d.setNotice(ctx, v.ProjectID, strings.Join(notices, "; "))
 	}

@@ -32,6 +32,11 @@ func (c *Client) Attachments(ctx context.Context, board, dutyID string) ([]Attac
 	return out.Attachments, c.Call(ctx, "/duty/attachments", board, map[string]any{"duty_id": dutyID}, &out)
 }
 
+// DeleteAttachment removes a file from a duty.
+func (c *Client) DeleteAttachment(ctx context.Context, board, attachmentID string) error {
+	return c.Call(ctx, "/duty/attachment/delete", board, map[string]any{"attachment_id": attachmentID}, nil)
+}
+
 // transfers move file bodies, which can take longer than an API call is allowed; the caller's context
 // bounds them instead.
 var transfers = &http.Client{}

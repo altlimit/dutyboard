@@ -3,7 +3,7 @@ import { nextTick, onMounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { api, refresh } from "../lib/altengine.js";
 import { ago } from "../lib/duties.js";
-import { newRepoDraft, profileDraft, profilePayload, requestNewRepo } from "../lib/runners.js";
+import { newRepoDraft, noRepo, profileDraft, profilePayload, requestNewRepo } from "../lib/runners.js";
 import ProfileForm from "../components/ProfileForm.vue";
 import NewRepoFields from "../components/NewRepoFields.vue";
 
@@ -71,7 +71,7 @@ async function create() {
   creating.value = true;
   error.value = "";
   try {
-    const makeRepo = forRunner.value && creatingRepo.value && profile.value.workspace !== "files";
+    const makeRepo = forRunner.value && creatingRepo.value && !noRepo(profile.value.workspace);
     const payload = forRunner.value ? profilePayload(profile.value) : {};
     if (makeRepo) payload.profile.repo_url = "";
     const res = await api("/projects/create", {
@@ -156,7 +156,7 @@ onMounted(load);
         </template>
       </ProfileForm>
       <div>
-        <button class="primary" type="submit" :disabled="creating || !name || (forRunner && creatingRepo && profile.workspace !== 'files' && !(newRepo.machine_id && newRepo.name))">
+        <button class="primary" type="submit" :disabled="creating || !name || (forRunner && creatingRepo && !noRepo(profile.workspace) && !(newRepo.machine_id && newRepo.name))">
           {{ creating ? "Creating…" : "Create board" }}
         </button>
       </div>

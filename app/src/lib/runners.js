@@ -49,6 +49,9 @@ export const CURSOR_PERMISSION_MODES = [
   { key: "acceptEdits", label: "Runs commands, with its sandbox as configured (recommended)" },
   { key: "bypassPermissions", label: "No sandbox (sandboxed machines only)" },
 ];
+/** A board whose duties are worked in a folder of their own, with no repository: one-off tasks, or an
+ * account run through its MCP servers. */
+export const noRepo = (workspace) => workspace === "files" || workspace === "service";
 export const agentLabel = (key) => (AGENTS.find((a) => a.key === key) || AGENTS[0]).label;
 export const PERMISSION_MODES = [
   { key: "acceptEdits", label: "Accept edits (recommended)" },

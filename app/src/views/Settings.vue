@@ -5,7 +5,7 @@ import { api, subscribeLive } from "../lib/altengine.js";
 import { user as me } from "../lib/session.js";
 import { config } from "../config.js";
 import { ago, expiryChoices, statusLabel } from "../lib/duties.js";
-import { agentLabel, newRepoDraft, profileDraft, profilePayload, requestNewRepo, runStateLabel } from "../lib/runners.js";
+import { agentLabel, newRepoDraft, noRepo, profileDraft, profilePayload, requestNewRepo, runStateLabel } from "../lib/runners.js";
 import ProfileForm from "../components/ProfileForm.vue";
 import NewRepoFields from "../components/NewRepoFields.vue";
 import { DAYS, REPEATS, allZones, browserZone, knownZone, repeatText, runText, scheduleDraft, schedulePayload, zoneOffsets } from "../lib/schedules.js";
@@ -203,8 +203,8 @@ const runners = ref([]);
 // about that comes with the runners, and so does the repository once it is made.
 const repoRequest = ref(null);
 const newRepo = ref(newRepoDraft(props.projectId));
-/** A board of one-off tasks needs no repository; any other needs one before a machine can work it. */
-const needsRepo = computed(() => profile.value.workspace !== "files" && !profile.value.repo_url);
+/** A board with no repository (one-off tasks, an account) needs none; any other needs one before a machine can work it. */
+const needsRepo = computed(() => !noRepo(profile.value.workspace) && !profile.value.repo_url);
 const repoBusy = computed(() => !!repoRequest.value && ["pending", "running"].includes(repoRequest.value.status));
 const repoFailure = computed(() => (repoRequest.value ? (repoRequest.value.status === "failed" ? repoRequest.value.result : "") : route.query.repo_error || ""));
 const repoMaker = computed(() => (repoRequest.value && (myMachines.value.find((m) => m.machine_id === repoRequest.value.machine_id) || {}).name) || "Your machine");
@@ -306,7 +306,7 @@ async function workOn(m) {
   try {
     await api("/machine/request", { machine_id: m.machine_id, project_id: props.projectId });
     profileNotice.value =
-      profile.value.workspace === "files"
+      noRepo(profile.value.workspace)
         ? `Asked ${m.name} to work this board. If it is online it takes its tasks within a minute.`
         : `Asked ${m.name} to work this board. If it is online it clones the repository and starts within a minute.`;
   } catch (err) {
@@ -753,7 +753,7 @@ function tabKey(event) {
         </div>
         <p class="small muted" style="margin: 0">
           It pairs the machine; then choose it here.
-          <template v-if="profile.workspace === 'files'">It takes the board's tasks as they are filed, each in a folder of its own.</template>
+          <template v-if="noRepo(profile.workspace)">It takes the board's tasks as they are filed, each in a folder of its own.</template>
           <template v-else>Its first duties get the machine ready for the project and draft this board's rules for you to accept.</template>
         </p>
       </section>

@@ -26,9 +26,17 @@ import { putOp } from "./store.js";
  * Where a board's duties are worked. `repo`: in a worktree of the board's repository, landed with git.
  * `files`: in a plain folder per duty, for one-off tasks — the files a person attached come in, the
  * files the agent makes go back on the duty, and there is no repository at all.
+ * `service`: an account run through the board's MCP servers — a shop, a mailbox. No repository
+ * either, and a duty is done when the change is made there: nothing has to come back as a file.
  */
-export const WORKSPACES = ["repo", "files"];
-export const isFilesBoard = (project) => !!(project && project.profile && project.profile.workspace === "files");
+export const WORKSPACES = ["repo", "files", "service"];
+const workspaceOf = (project) => (project && project.profile && project.profile.workspace) || "repo";
+/** A board whose duties are worked in a folder of their own, with no repository to clone. */
+export const isFolderBoard = (project) => ["files", "service"].includes(workspaceOf(project));
+export const isServiceBoard = (project) => workspaceOf(project) === "service";
+
+/** A board's description is its whole brief when there is no repository, so it has room for one. */
+const MAX_DESCRIPTION = 8000;
 
 export const PROJECT_TYPES = ["game", "website", "webapp", "mobile", "desktop", "api", "cli-lib", "other"];
 export const DEPLOY_METHODS = ["ci", "ci-dispatch", "altengine", "command", "none"];
@@ -199,7 +207,7 @@ export function mergeProfile(stored, input) {
   if (has(p, "workspace")) next.workspace = oneOf(p.workspace, "profile.workspace", WORKSPACES, "repo");
   if (has(p, "type")) next.type = oneOf(p.type, "profile.type", PROJECT_TYPES);
   if (has(p, "type_other")) next.type_other = str(p.type_other, "profile.type_other", { max: 60 });
-  if (has(p, "description")) next.description = str(p.description, "profile.description", { max: 2000 });
+  if (has(p, "description")) next.description = str(p.description, "profile.description", { max: MAX_DESCRIPTION });
   if (has(p, "repo_url")) next.repo_url = repoUrl(p.repo_url, "profile.repo_url");
   if (has(p, "default_branch")) next.default_branch = branch(p.default_branch, "profile.default_branch");
   if (has(p, "stack")) next.stack = list(p.stack, "profile.stack", { max: 30, item: plain(40) });
@@ -302,6 +310,9 @@ export function mergeProfile(stored, input) {
       names.add(r.name);
     }
     next.repos = repos;
+  }
+  if (next.workspace === "service" && !(next.mcp_servers || []).length) {
+    throw badRequest("a board run through its MCP servers needs at least one — add the server for the account it runs");
   }
   return next;
 }

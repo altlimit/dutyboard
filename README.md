@@ -425,6 +425,16 @@ completes, ready to download. There is no setup or rules duty, nothing is commit
 is removed once the duty is done. A tool a task needs is installed and registered once, for every
 later task on that machine.
 
+A board can also **run an account** — a shop, a mailbox, anything with an MCP server — with no
+repository either. Choose *An account run through its MCP servers* and add the account's server
+(it needs at least one). Its duties are done in the account: the agent works through the server's
+tools, checks the result there, and completes with an outcome that says what changed — no files
+required. It attaches a file only when you need to download one or look at one to answer a question.
+Each duty still gets a scratch folder that goes when it is done, and the board keeps
+`<root>/<board>/local/` on each machine between duties, for the sources of what it publishes and
+notes on where things stand. A machine missing one of the board's MCP secrets takes none of its
+duties until `dutyboard --mcp-secrets` sets them.
+
 Git runs as the machine's user, with its keys and credentials. A board can set the **commit author**
 and an **SSH command** (another key or account) — written into the machine's clone of that board,
 never your global config. A board that opens **pull requests** needs the GitHub CLI signed in on the

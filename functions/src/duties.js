@@ -1160,7 +1160,7 @@ async function unreadNotes(ctx, duty, terminal) {
     `not ${terminal === "done" ? "completed" : "failed"} yet — a person wrote on this duty while you were working on it:\n` +
       `${listed}\n` +
       `Do what the note${notes.length > 1 ? "s ask" : " asks"} first. If that changes the work, land it again (commit and ` +
-      `duty_integrate, or put it in out/), then call duty_${terminal === "done" ? "complete" : "fail"} again — this refusal will not repeat for the same notes.`,
+      `duty_integrate, put it in out/, or make it through the board's MCP servers), then call duty_${terminal === "done" ? "complete" : "fail"} again — this refusal will not repeat for the same notes.`,
     { notes: notes.length },
   );
 }

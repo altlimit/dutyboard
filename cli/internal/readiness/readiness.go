@@ -106,7 +106,7 @@ func Check(ctx context.Context, linked []board.BoardView) Report {
 		if b.Profile.Git.Mode == "pr" || b.Profile.Deploy.Method == "ci" || b.Profile.Deploy.Method == "ci-dispatch" {
 			gh.Boards = append(gh.Boards, b.ProjectID)
 		}
-		if !b.Files() && b.Profile.Git.AuthorName == "" {
+		if !b.Folder() && b.Profile.Git.AuthorName == "" {
 			git.Boards = append(git.Boards, b.ProjectID)
 		}
 	}

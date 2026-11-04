@@ -44,7 +44,15 @@ People have written on this duty. Their notes are part of the brief, and a newer
 {{- end}}
 {{- end}}
 
-{{- if .Files}}
+{{- if and .Files .Files.Service}}
+{{- if .Files.Inputs}}
+
+The files that came with it are in `in/`: {{join .Files.Inputs ", "}}.
+{{- end}}
+{{- if .Files.Missing}} {{.Files.Missing}} more were still being uploaded when it started and are not there; if the task needs them, ask on the board.{{end}}
+
+When it is done: check it in the account, then `duty_complete` with an outcome summary naming what changed there. Then stop.
+{{- else if .Files}}
 
 {{if .Files.Inputs}}The files that came with it are in `in/`: {{join .Files.Inputs ", "}}.{{else}}No files came with it.{{end}}
 {{- if .Files.Missing}} {{.Files.Missing}} more were still being uploaded when it started and are not there; if the task needs them, ask on the board.{{end}}

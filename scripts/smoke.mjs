@@ -1230,6 +1230,28 @@ async function main() {
   check("a duty says how many files its filer is still attaching, for a runner to wait for", printableRow.expect_files === 2, printableRow);
   await call("/machine/unlink", { project_id: errands }, mkey);
   await call("/projects/delete", { project_id: errands, confirm: errands }, human);
+
+  // A board that runs an account through its MCP servers: no repository either, and the servers are the point.
+  const shop = `smoke-shop-${Date.now().toString(36)}`;
+  const serverless = await call("/projects/create", { name: "Shop", project_id: shop, profile: { workspace: "service", description: "Run the shop." } }, human, { expectStatus: true });
+  check("a board run through its MCP servers is refused without one", serverless.status === 400 && /MCP servers needs at least one/.test(serverless.json.error?.message || ""), serverless.json);
+  const shopServer = { name: "shop", url: "https://shop.example/mcp", secrets: ["authorization"] };
+  const madeShop = await call("/projects/create", { name: "Shop", project_id: shop, profile: { workspace: "service", description: "x".repeat(5000), mcp_servers: [shopServer] } }, human);
+  check("and made with one, it has room for a long brief and starts with no rules to write", madeShop.rules_duty_id === null, madeShop);
+  const oldShopRunner = await call("/machine/link", { project_id: shop }, mkey, { expectStatus: true, version: "2.21.0" });
+  check(
+    "a machine too old to work it is told to update itself",
+    oldShopRunner.status === 400 && /cannot work a board run through its MCP servers.*update it to 2\.22\.0 or later/.test(oldShopRunner.json.error?.message || ""),
+    oldShopRunner.json,
+  );
+  const shopLink = await call("/machine/link", { project_id: shop }, mkey, { version: "smoke" });
+  check("a machine works it without a repository, and with no setup duty", shopLink.created === true && shopLink.setup_duty_id === null, shopLink);
+  const shopRepo = await call("/machine/request", { machine_id: paired.machine_id, project_id: shop, kind: "create_repo", repo: { name: shop } }, human, { expectStatus: true });
+  check("and is not given a repository to make", shopRepo.status === 409, shopRepo.json);
+  const stripped = await call("/projects/profile", { project_id: shop, profile: { mcp_servers: [] } }, human, { expectStatus: true });
+  check("its last MCP server cannot be taken away", stripped.status === 400, stripped.json);
+  await call("/machine/unlink", { project_id: shop }, mkey);
+  await call("/projects/delete", { project_id: shop, confirm: shop }, human);
   await call("/machine/state", { project_id: mBoard, runs: [{ duty_id: pauseMenu.duty_id, state: "parked", detail: "waiting on Esc" }] }, mkey);
   const ownerView = (await call("/machines/list", {}, human)).machines.find((m) => m.machine_id === paired.machine_id) || {};
   check(

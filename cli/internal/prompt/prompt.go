@@ -42,15 +42,18 @@ type Input struct {
 	PrepFailed  string // the board's prep command failed in this worktree: what ran and what it said
 	MCPServers  []MCPServer
 	Repos       []Repo // the board's other repositories, when it has any
-	Files       *Files // set on a board of one-off tasks, which has no repository
+	Files       *Files // set on a board with no repository
 	Check       string // what the schedule's check said, when it is why the session was started
 }
 
-// Files is a duty's folder on a board of one-off tasks.
+// Files is a duty's folder on a board with no repository: one of one-off tasks, or one that runs an
+// account through its MCP servers (Service).
 type Files struct {
 	Dir, In, Out string   // the folder, the files that came with the duty, and where what it makes goes
 	Inputs       []string // what is in In
 	Missing      int      // files the person filing it was still attaching when it started
+	Service      bool     // the work is done in the account, through the board's MCP servers
+	Keep         string   // the folder the board keeps between duties on this machine, when Service
 }
 
 // System is the part appended to the agent's own system prompt.

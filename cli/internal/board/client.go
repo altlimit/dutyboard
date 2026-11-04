@@ -197,7 +197,8 @@ func (c *Client) WaitForApproval(ctx context.Context, p *Pairing) (*Paired, erro
 
 // Profile is a board's profile, as the daemon uses it. Unknown fields are ignored.
 type Profile struct {
-	// Workspace is "files" for a board of one-off tasks with no repository; "" or "repo" otherwise.
+	// Workspace is "files" for a board of one-off tasks with no repository, "service" for an account
+	// run through the board's MCP servers (no repository either); "" or "repo" otherwise.
 	Workspace     string   `json:"workspace"`
 	Type          string   `json:"type"`
 	Description   string   `json:"description"`
@@ -314,9 +315,15 @@ type BoardView struct {
 	RulesVersion int      `json:"rules_version"`
 }
 
-// Files reports whether the board's duties are one-off tasks worked in a folder of files, with no
-// repository.
-func (v BoardView) Files() bool { return v.Profile != nil && v.Profile.Workspace == "files" }
+// Folder reports whether the board's duties are worked in a folder of their own, with no repository:
+// one-off tasks, or an account run through the board's MCP servers.
+func (v BoardView) Folder() bool {
+	return v.Profile != nil && (v.Profile.Workspace == "files" || v.Profile.Workspace == "service")
+}
+
+// Service reports whether the board runs an account through its MCP servers: its duties are done when
+// the change is made there, and the servers are what it works with.
+func (v BoardView) Service() bool { return v.Profile != nil && v.Profile.Workspace == "service" }
 
 // Request is something a person asked this machine for from the console: "setup" to work a board,
 // "create_repo" to make the board's repository on GitHub first, or "install_tool" and "sign_in" for

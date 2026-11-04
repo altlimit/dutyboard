@@ -26,7 +26,7 @@ import { putOp, deleteOp } from "./store.js";
 import { requireHuman, requireMachine, resolveProject, memberKey, linkKey } from "./identity.js";
 import { liveConfigured, mintMachineLive, machinesPresent, publishMachine } from "./live.js";
 import { runnableDuties, activeDuties, seedDuty, stripMeta, blockBehindSetup } from "./duties.js";
-import { isFilesBoard, mergeRunner, profileView, repoUrl } from "./profile.js";
+import { isFolderBoard, isServiceBoard, mergeRunner, profileView, repoUrl } from "./profile.js";
 import { createProjectFor } from "./projects.js";
 import { runDueSchedules } from "./schedules.js";
 
@@ -54,6 +54,12 @@ const TOUCH_EVERY_MS = 60_000;
  */
 const FILES_RUNNER = "2.18.0";
 
+/**
+ * The first `dutyboard` that can work a board run through its MCP servers. An older one reads it as a
+ * repository whose URL is missing, the same way.
+ */
+const SERVICE_RUNNER = "2.22.0";
+
 /** Whether release `a` is older than release `b`. A build with no release number is never older. */
 function olderRelease(a, b) {
   const parse = (v) => (/^v?(\d+)\.(\d+)\.(\d+)/.exec(String(v || "")) || []).slice(1).map(Number);
@@ -71,9 +77,12 @@ function runnerTooOld(ctx, project, machineName) {
 
 /** Why a machine running `version` cannot work `project`; "" when it can. */
 function tooOldFor(project, version, machineName) {
-  if (!isFilesBoard(project) || !olderRelease(version, FILES_RUNNER)) return "";
-  return `${machineName || "this machine"} runs dutyboard ${version}, which cannot work a board without a repository — ` +
-    `update it to ${FILES_RUNNER} or later: on it, run \`alt update altlimit/dutyboard && dutyboard --service\``;
+  if (!isFolderBoard(project)) return "";
+  const service = isServiceBoard(project);
+  const needs = service ? SERVICE_RUNNER : FILES_RUNNER;
+  if (!olderRelease(version, needs)) return "";
+  return `${machineName || "this machine"} runs dutyboard ${version}, which cannot work a board ${service ? "run through its MCP servers" : "without a repository"} — ` +
+    `update it to ${needs} or later: on it, run \`alt update altlimit/dutyboard && dutyboard --service\``;
 }
 
 export const RUN_STATES = ["working", "integrating", "parked", "limited", "waiting", "error"];
@@ -557,7 +566,7 @@ export async function linkMachine(ctx, body) {
     if (!member) throw notFound(`project '${projectId}' not found`);
     throw forbidden("the board's owner has not let you run agents on it");
   }
-  const files = isFilesBoard(project);
+  const files = isFolderBoard(project);
   const tooOld = runnerTooOld(ctx, project, caller.machineRow.name);
   if (tooOld) throw badRequest(tooOld);
   if (!files && !(project.profile && project.profile.repo_url)) {
@@ -604,8 +613,9 @@ export async function linkMachine(ctx, body) {
     runnerSet = true;
   }
 
-  // A board of one-off tasks has no project to set a machine up for, or to write rules about: each
-  // task installs what it needs, and registers it for the next.
+  // A board with no repository — one-off tasks, or an account run through its MCP servers — has no
+  // project to set a machine up for, or to write rules about: each duty installs what it needs, and
+  // registers it for the next.
   const setup =
     body.setup === false || files || (await hasUnfinished(ctx, project.key, [{ field: "reserved_for", op: "=", value: caller.agentPrefix }, { field: "kind", op: "=", value: "setup" }]))
       ? null
@@ -909,14 +919,14 @@ export async function requestSetup(ctx, body) {
   const hasRepo = !!(project.profile && project.profile.repo_url);
   let repo = null;
   if (kind === "create_repo") {
-    if (isFilesBoard(project)) throw conflict("this board works without a repository — change that in its settings first");
+    if (isFolderBoard(project)) throw conflict("this board works without a repository — change that in its settings first");
     if (hasRepo) throw conflict("this board already has a repository — change it in its settings instead");
     repo = newRepo(body.repo, project.profile && project.profile.description);
     const creating = await ctx.store.query("machine_requests", { where: [{ field: "project_id", op: "=", value: project.key }], limit: 50 });
     if (creating.rows.some((r) => r.kind === "create_repo" && underWay(r))) {
       throw conflict("a machine is already making this board's repository");
     }
-  } else if (!hasRepo && !isFilesBoard(project)) {
+  } else if (!hasRepo && !isFolderBoard(project)) {
     throw badRequest("this board has no repository URL — set one in its settings first: the machine clones it");
   }
   const path = str(body.path, "path", { max: 200 });

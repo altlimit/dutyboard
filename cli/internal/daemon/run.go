@@ -40,8 +40,10 @@ type Run struct {
 	Token                             string
 	Spec                              worktree.Spec
 	Worktree                          string
-	// Files is a duty on a board of one-off tasks: worked in a folder of files, with no repository.
-	Files bool
+	// Files is a duty worked in a folder of its own, with no repository: on a board of one-off tasks,
+	// or on one that runs an account through its MCP servers (Service).
+	Files   bool
+	Service bool
 
 	mu         sync.Mutex
 	st, det    string
@@ -179,7 +181,7 @@ func (d *Daemon) execute(dctx, rctx context.Context, run *Run, duty *board.Duty,
 		}
 	}
 	spec := d.specFor(dctx, run.Board, run.DutyID, v)
-	run.Spec, run.Files = spec, v.Files()
+	run.Spec, run.Files, run.Service = spec, v.Folder(), v.Service()
 	run.set("working", "preparing its worktree")
 	d.report(dctx, run.Board)
 
@@ -200,6 +202,13 @@ func (d *Daemon) execute(dctx, rctx context.Context, run *Run, duty *board.Duty,
 		}
 		files.Dir = path
 		_, files.In, files.Out = d.filesFolder(run)
+		if run.Service {
+			files.Service = true
+			if files.Keep, err = d.keptFolder(run.Board); err != nil {
+				d.park(dctx, run, v, fmt.Sprintf("The runner on this machine could not make the board's kept folder, so this duty has not started:\n\n%v", err))
+				return
+			}
+		}
 	} else {
 		path, created, err = d.wt.Ensure(rctx, spec)
 		var prepErr *worktree.PrepError
@@ -416,7 +425,8 @@ func (d *Daemon) execute(dctx, rctx context.Context, run *Run, duty *board.Duty,
 	}
 }
 
-// removeWork removes a finished duty's worktrees — or, on a board of one-off tasks, its folder.
+// removeWork removes a finished duty's worktrees — or, on a board with no repository, its folder. The
+// folder a board run through its MCP servers keeps between duties stays.
 func (d *Daemon) removeWork(ctx context.Context, run *Run, v board.BoardView, keepBranch bool) {
 	if run.Files {
 		dir, _, _ := d.filesFolder(run)
@@ -506,6 +516,11 @@ func (d *Daemon) job(run *Run, v board.BoardView, path, system, task string, rec
 	}
 	if run.Kind == "setup" && !run.Files {
 		j.AddDirs = append(j.AddDirs, run.Spec.CopyFrom)
+	}
+	if run.Service {
+		// What a board run through its MCP servers keeps between duties on this machine.
+		j.AddDirs = append(j.AddDirs, d.localDir(run.Board))
+		j.Writable = append(j.Writable, d.localDir(run.Board))
 	}
 	var loggedAt time.Time
 	j.OnActivity = func(line string) {

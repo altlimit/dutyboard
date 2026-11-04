@@ -33,7 +33,7 @@ func (d *Daemon) check(dctx, rctx context.Context, run *Run, v board.BoardView, 
 	}
 	_ = os.MkdirAll(stateDir, 0o755)
 	dir := d.folder(run.Board)
-	if dir == "" || v.Files() {
+	if dir == "" || v.Folder() {
 		dir = stateDir
 	}
 	env := append(d.tools.SessionEnv(), "DUTYBOARD_STATE_DIR="+stateDir, "DUTYBOARD_BOARD="+run.Board, "DUTYBOARD_DUTY_ID="+run.DutyID)

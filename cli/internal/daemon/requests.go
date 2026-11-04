@@ -96,7 +96,7 @@ func (d *Daemon) work(ctx context.Context, req board.Request) {
 			return
 		}
 		done := "cloned into " + path
-		if v := d.view(req.ProjectID); v.Files() {
+		if v := d.view(req.ProjectID); v.Folder() {
 			done = "ready: its duties are worked in folders under " + path
 		}
 		d.log.Printf("%s: %s", req.ProjectID, done)
@@ -134,7 +134,7 @@ func (d *Daemon) setUp(ctx context.Context, req board.Request) (string, error) {
 	if !ok {
 		return "", fmt.Errorf("board %s did not appear among this machine's links", req.ProjectID)
 	}
-	if v.Files() {
+	if v.Folder() {
 		// Nothing to clone: each of its duties gets a folder of its own when it starts.
 		return filepath.Join(d.wt.Root, v.ProjectID), nil
 	}

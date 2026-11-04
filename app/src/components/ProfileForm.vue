@@ -1,6 +1,6 @@
 <script setup>
 import { computed } from "vue";
-import { AGENTS, CODEX_PERMISSION_MODES, CURSOR_PERMISSION_MODES, DEPLOY_METHODS, EFFORTS, GIT_MODES, PERMISSION_MODES, PROJECT_TYPES, agentLabel, mcpServerDraft } from "../lib/runners.js";
+import { AGENTS, CODEX_PERMISSION_MODES, CURSOR_PERMISSION_MODES, DEPLOY_METHODS, EFFORTS, GIT_MODES, PERMISSION_MODES, PROJECT_TYPES, agentLabel, mcpServerDraft, noRepo } from "../lib/runners.js";
 
 // The questions a board is created with, and edited with later: what the project is, how its work
 // lands, and how agents run on it. The model is a draft from lib/runners.js `profileDraft`; the
@@ -18,7 +18,9 @@ const modes = computed(() =>
   draft.value.agent === "codex" ? CODEX_PERMISSION_MODES : draft.value.agent === "cursor" ? CURSOR_PERMISSION_MODES : PERMISSION_MODES,
 );
 const agentName = computed(() => agentLabel(draft.value.agent));
-const files = computed(() => draft.value.workspace === "files");
+// `files`: no repository — one-off tasks, or an account run through its MCP servers (`service`).
+const files = computed(() => noRepo(draft.value.workspace));
+const service = computed(() => draft.value.workspace === "service");
 const agentNeeds = computed(() => (AGENTS.find((a) => a.key === draft.value.agent) || AGENTS[0]).install);
 
 const addRepo = () => {
@@ -63,14 +65,29 @@ const removeServer = (i) => {
         </span>
       </span>
     </label>
+    <label class="choice choice--block">
+      <input v-model="draft.workspace" type="radio" :name="`${idPrefix}-workspace`" value="service" />
+      <span>
+        An account run through its MCP servers
+        <span class="hint" style="display: block; margin: 0">
+          A shop, a mailbox — anything with an MCP server. No repository: each duty is done in the account, and its outcome
+          says what changed there. Files come back only when you need to download one.
+        </span>
+      </span>
+    </label>
   </fieldset>
 
   <fieldset v-if="files" class="stack" :disabled="disabled">
     <legend class="label">What it is for</legend>
     <div class="field">
       <label :for="`${idPrefix}-desc`">About it <span class="muted">(optional)</span></label>
-      <textarea :id="`${idPrefix}-desc`" v-model="draft.description" maxlength="2000" placeholder="Office errands: PDFs to print, photos to resize, spreadsheets to tidy." />
-      <p class="hint">Every agent on the board reads this.</p>
+      <textarea
+        :id="`${idPrefix}-desc`"
+        v-model="draft.description"
+        maxlength="8000"
+        :placeholder="service ? 'Run our online shop: add products, answer customers, keep prices above cost.' : 'Office errands: PDFs to print, photos to resize, spreadsheets to tidy.'"
+      />
+      <p class="hint">Every agent on the board reads this{{ service ? " — it is the whole brief, so say what the account is for and what is theirs to do" : "" }}.</p>
     </div>
   </fieldset>
 
@@ -88,7 +105,7 @@ const removeServer = (i) => {
     </div>
     <div class="field">
       <label :for="`${idPrefix}-desc`">About it <span class="muted">(optional)</span></label>
-      <textarea :id="`${idPrefix}-desc`" v-model="draft.description" maxlength="2000" placeholder="A music theory game for kids, built in Godot, web first." />
+      <textarea :id="`${idPrefix}-desc`" v-model="draft.description" maxlength="8000" placeholder="A music theory game for kids, built in Godot, web first." />
       <p class="hint">Every agent on the board reads this, and it shapes the rules and setup it writes.</p>
     </div>
   </fieldset>
@@ -241,7 +258,8 @@ const removeServer = (i) => {
     <div class="field">
       <label :for="`${idPrefix}-parallel`">Duties at once</label>
       <input :id="`${idPrefix}-parallel`" v-model.number="draft.parallel" type="number" min="1" max="10" />
-      <p v-if="files" class="hint">Each task works in a folder of its own, so several can run side by side.</p>
+      <p v-if="service" class="hint">Each duty works in a folder of its own, but they all change the same account: raise it only for duties that do not touch the same things.</p>
+      <p v-else-if="files" class="hint">Each task works in a folder of its own, so several can run side by side.</p>
       <p v-else class="hint">
         Each duty works in its own git worktree, so several can run side by side. Start with 1, and raise it
         once the board has rules and a test command to check merges against.
@@ -274,7 +292,11 @@ const removeServer = (i) => {
   </fieldset>
 
   <fieldset class="stack" :disabled="disabled">
-    <legend class="label">MCP servers <span class="muted">(optional)</span></legend>
+    <legend class="label">MCP servers <span v-if="!service" class="muted">(optional)</span></legend>
+    <p v-if="service" class="hint">
+      <strong>The account's server goes here</strong> — it is how the board's sessions reach it, and the board needs at least
+      one. A machine missing a server's secrets takes none of this board's duties until they are set.
+    </p>
     <p class="hint">
       More tools for this board's sessions — a browser to take screenshots with, an issue tracker, docs. Each machine
       starts or connects to them for every duty it works here. Only what you list is connected, and only the tools

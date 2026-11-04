@@ -79,7 +79,19 @@ func TestEveryKindRenders(t *testing.T) {
 	if !strings.Contains(task, "`in/`: menu.pdf") || !strings.Contains(task, "1 more were still being uploaded") || !strings.Contains(task, "put what it produces in `out/`") || strings.Contains(task, "duty_integrate") {
 		t.Errorf("a task names its files and where what it makes goes:\n%s", task)
 	}
-	in.Files = nil
+
+	in.Files = &Files{Dir: "/w/duty_01ABC", In: "/w/duty_01ABC/in", Out: "/w/duty_01ABC/out", Service: true, Keep: "/p/shop/local"}
+	in.MCPServers = []MCPServer{{Name: "shop"}}
+	sys, _ = System(in)
+	task, _ = Duty(in)
+	if !strings.Contains(sys, "`/p/shop/local`") || !strings.Contains(sys, "Never attach a screenshot") || !strings.Contains(sys, "not around them") ||
+		strings.Contains(sys, "what you make goes in `out/`") || strings.Contains(sys, "duty_integrate") {
+		t.Errorf("a session on an account works through its servers, keeps its sources, and attaches only what a person uses:\n%s", sys)
+	}
+	if strings.Contains(task, "No files came with it") || strings.Contains(task, "put what it produces in `out/`") || !strings.Contains(task, "check it in the account") {
+		t.Errorf("a duty on an account is done in the account, not in out/:\n%s", task)
+	}
+	in.Files, in.MCPServers = nil, nil
 
 	in.Duty.Kind, in.Resuming = "work", true
 	in.Duty.UnblockedContext = &struct {
