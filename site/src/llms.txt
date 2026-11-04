@@ -28,9 +28,13 @@ API at www.dutyboard.com; setup gives your user their own addresses for both.
    | Usage                   | None      | not used                                              |
    | Live desktop inspection | None      | not used                                              |
 
-   **Write, not Full.** Full also lets a key delete instances, and setup deletes nothing. The
-   key is only needed while setting up and upgrading; the program does not keep it unless
-   asked.
+   **Write, not Full** — with one exception. Full also lets a key delete instances, and setup
+   deletes nothing. But making the queue token webhooks are delivered through needs
+   **Instances & data: Full**: with Write, everything else is set up and webhooks stay off,
+   and the run prints `tasks queue dutyboard-tasks/webhooks: … PERMISSION_DENIED … token
+   webhooks stay off`. If your user wants webhooks, have them use Full for that first run;
+   later upgrades work with Write and keep the queue. The key is only needed while setting up
+   and upgrading; the program does not keep it unless asked.
 
 Before running anything, tell your user which altengine organization the key belongs to.
 Instances count against a quota and a bill.

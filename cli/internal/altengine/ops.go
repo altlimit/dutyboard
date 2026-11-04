@@ -218,6 +218,31 @@ func (c *Client) SetFunctionSettings(ctx context.Context, instance string, cors,
 // EnsureQueue creates a tasks queue, or brings the one already there to these settings — only the
 // settings passed change. Locally the emulator's admin API addresses the instance by id, so the
 // caller passes the id there. A push queue's target must exist when this is called.
+// HasQueue reports whether a tasks instance has the queue name. It only reads, so a key that may not
+// change a queue can still say whether one is there.
+func (c *Client) HasQueue(ctx context.Context, instance, name string) (bool, error) {
+	var out struct {
+		Queues []struct {
+			Name string `json:"name"`
+		} `json:"queues"`
+	}
+	var err error
+	if c.Local() {
+		err = c.Do(ctx, http.MethodGet, "/admin/tasks/"+Esc(instance)+"/queues", nil, &out)
+	} else {
+		err = c.Tool(ctx, "tasks_list_queues", map[string]any{"instance": instance}, &out)
+	}
+	if err != nil {
+		return false, err
+	}
+	for _, q := range out.Queues {
+		if q.Name == name {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func (c *Client) EnsureQueue(ctx context.Context, instance, name string, settings map[string]any) error {
 	if c.Local() {
 		p := "/admin/tasks/" + Esc(instance) + "/queues"

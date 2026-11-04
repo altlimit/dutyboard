@@ -153,8 +153,12 @@ and updated separately, and when one lags the symptom is a feature that is simpl
 than broken, which is slow to work out any other way.
 
 **The key** needs the **MCP / AI agent access** toggles on the key form, which are off by default:
-`Instances & data: Write` and `Functions: Write`. Not Full — nothing here deletes an instance.
-It is only needed to set up and upgrade, so the provisioner does not keep it unless you say so;
+`Instances & data: Write` and `Functions: Write`. Not Full — nothing here deletes an instance —
+with one exception: making the webhooks queue on `dutyboard-tasks` needs `Instances & data: Full`,
+because altengine counts creating or changing a queue as full access. Without it everything else is
+set up, and token webhooks stay off (the run says so). So use Full the first time, or the first time
+after an upgrade that brings webhooks; later upgrades can use Write, and the queue already there
+keeps delivering. Only webhooks need this. It is only needed to set up and upgrade, so the provisioner does not keep it unless you say so;
 projects the runner deploys use a narrower key of their own (see
 [Running agents on your machine](#running-agents-on-your-machine)).
 

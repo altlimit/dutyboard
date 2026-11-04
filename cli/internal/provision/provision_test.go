@@ -42,6 +42,7 @@ type fakeHosted struct {
 	documents   map[string]map[string]any // "datastore/collection/key" → data
 	noSecrets   bool                      // secrets are console-only, as on hosted altengine
 	queues      map[string]map[string]any // "tasks instance/queue" → settings
+	queueDenied bool                      // the key lacks Full on instances, which queues need
 }
 
 func newFake(t *testing.T, version string) *fakeHosted {
@@ -139,7 +140,19 @@ func (f *fakeHosted) serve(w http.ResponseWriter, r *http.Request) {
 		case "auth_set_rules":
 			f.rules = a["access"].(map[string]any)
 			toolOK(w, msg.ID, map[string]any{"ok": true})
+		case "tasks_list_queues":
+			list := []any{}
+			for key := range f.queues {
+				if inst, name, _ := strings.Cut(key, "/"); inst == str("instance") {
+					list = append(list, map[string]any{"name": name})
+				}
+			}
+			toolOK(w, msg.ID, map[string]any{"instance": str("instance"), "queues": list})
 		case "tasks_set_queue":
+			if f.queueDenied {
+				toolErr(w, msg.ID, "PERMISSION_DENIED: this credential lacks 'full' access to instances")
+				return
+			}
 			key := str("instance") + "/" + str("name")
 			_, exists := f.queues[key]
 			if a["create"] == true && exists {
@@ -392,6 +405,33 @@ func TestHostedUpdatesTheWebhooksQueueItMadeBefore(t *testing.T) {
 	}
 	if len(f.queues) != 1 || f.queues["dutyboard-tasks/webhooks"]["target"] != nil {
 		t.Errorf("deploying again should clear the one queue's target, not make another: %v", f.queues)
+	}
+}
+
+// A key with Write on instances cannot make or change a queue. Without a queue, webhooks are off and
+// the run says what key would make one; with a queue an earlier run made, they stay on.
+func TestHostedWebhooksQueueWithANarrowKey(t *testing.T) {
+	f := newFake(t, "9.9.9")
+	f.queueDenied = true
+	out := &bytes.Buffer{}
+	c := hosted(f.srv.URL)
+	if _, err := Run(context.Background(), Options{Client: c, Assets: testAssets(t, "9.9.9"), UI: &ui.UI{Out: out}}); err != nil {
+		t.Fatal(err)
+	}
+	if f.documents["dutyboard/settings/webhooks"]["tasks_instance"] != "" {
+		t.Errorf("with no queue, webhooks should be off: %v", f.documents["dutyboard/settings/webhooks"])
+	}
+	if !strings.Contains(out.String(), "Instances & data: Full") {
+		t.Errorf("the run should say which key makes the queue:\n%s", out)
+	}
+
+	f.queues["dutyboard-tasks/webhooks"] = map[string]any{"mode": "push"} // made once, with a Full key
+	out.Reset()
+	if _, err := Run(context.Background(), Options{Client: c, Assets: testAssets(t, "9.9.9"), UI: &ui.UI{Out: out}, Instance: "dutyboard"}); err != nil {
+		t.Fatal(err)
+	}
+	if f.documents["dutyboard/settings/webhooks"]["tasks_instance"] != "dutyboard-tasks" {
+		t.Errorf("an upgrade that cannot change the queue should leave webhooks on: %v\n%s", f.documents["dutyboard/settings/webhooks"], out)
 	}
 }
 

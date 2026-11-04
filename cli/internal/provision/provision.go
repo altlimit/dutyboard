@@ -517,7 +517,17 @@ func webhookQueue(ctx context.Context, c *altengine.Client, u *ui.UI, n Names, r
 		err = c.EnsureQueue(ctx, ref, WebhookQueue, settings)
 	}
 	if err != nil {
+		// Making or changing a queue needs Full on instances, which nothing else here does. A queue an
+		// earlier run made with such a key still delivers: an upgrade with a narrower key must not
+		// turn webhooks off because it could not touch the queue's settings.
+		if ok, lerr := c.HasQueue(ctx, ref, WebhookQueue); lerr == nil && ok {
+			u.Warn("tasks queue %s/%s is there, but its settings could not be updated (%v) — token webhooks stay on as it is", n.Tasks, WebhookQueue, err)
+			return n.Tasks
+		}
 		u.Warn("tasks queue %s/%s: %v — token webhooks stay off", n.Tasks, WebhookQueue, err)
+		if strings.Contains(err.Error(), "PERMISSION_DENIED") {
+			u.Say("Making the webhooks queue needs a key with Instances & data: Full — once; later upgrades can use Write.")
+		}
 		return ""
 	}
 	u.OK("tasks queue %s/%s delivers token webhooks, signed with %s's secret", n.Tasks, WebhookQueue, n.Tasks)
