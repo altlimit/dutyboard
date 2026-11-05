@@ -49,11 +49,20 @@ jobs:
       - run: for f in scripts/*.mjs functions/build.mjs; do node --check "$f"; done
 
   cli:
-    runs-on: ubuntu-latest
+    # Windows too: the release ships a Windows binary, and paths, shells and git all differ there.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     defaults:
       run:
         working-directory: cli
+        shell: bash # Git Bash on Windows
     steps:
+      # The Windows runner's git checks out with CRLF; the sources and the test repositories are LF.
+      - run: git config --global core.autocrlf false
+        working-directory: .
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
@@ -65,4 +74,4 @@ jobs:
       - run: go test ./...
       # Nothing is staged, so this is the build `go install` produces: it must compile with an
       # empty embed directory.
-      - run: go build -o /dev/null ./cmd/dutyboard
+      - run: go build -o "$RUNNER_TEMP/dutyboard" ./cmd/dutyboard
