@@ -225,7 +225,9 @@ func TestSnapshotResumesOnAnotherMachine(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if read(t, filepath.Join(path2, "draft.txt")) != "not committed yet" || read(t, filepath.Join(path2, "app.txt")) != "edited\n" {
+	// Line endings aside: git checks the snapshot out as this machine is set to, CRLF on many Windows ones.
+	lf := func(p string) string { return strings.ReplaceAll(read(t, p), "\r\n", "\n") }
+	if lf(filepath.Join(path2, "draft.txt")) != "not committed yet" || lf(filepath.Join(path2, "app.txt")) != "edited\n" {
 		t.Fatal("the other machine did not get the uncommitted state back")
 	}
 	if read(t, filepath.Join(path2, "done.txt")) != "committed" {

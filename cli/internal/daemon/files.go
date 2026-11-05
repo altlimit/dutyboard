@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -181,7 +182,8 @@ func (d *Daemon) attachOutputs(ctx context.Context, run *Run) ([]string, error) 
 // safeFileName is an attachment's name as a file in one folder: no path, nothing a shell or Windows
 // reads as something else.
 func safeFileName(name string) string {
-	name = filepath.Base(strings.ReplaceAll(name, "\\", "/"))
+	// path, not filepath: on Windows filepath.Base takes "a:" in "a:b.txt" for a drive and drops it.
+	name = path.Base(strings.ReplaceAll(name, "\\", "/"))
 	name = strings.Map(func(r rune) rune {
 		if r < 32 || strings.ContainsRune(`<>:"/\|?*`, r) {
 			return '_'

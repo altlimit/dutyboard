@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -124,6 +125,11 @@ func (m *Manager) Integrate(ctx context.Context, s Spec, lock *Lock, o Integrate
 		base = DefaultBranch(ctx, s.Repo, remote)
 	}
 	head, _ := git(ctx, path, "rev-parse", "HEAD")
+	// Those probes answer "" once ctx has ended, which reads as a clean worktree with no remote — and
+	// would report a cancelled integration as work kept on its branch, done.
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 
 	if mode == ModeBranch {
 		baseHead, _ := git(ctx, path, "rev-parse", base)
@@ -237,8 +243,10 @@ func (m *Manager) openPR(ctx context.Context, s Spec, path, remote, base string,
 func rebasing(ctx context.Context, path string) bool {
 	for _, p := range []string{"rebase-merge", "rebase-apply"} {
 		if dir, err := git(ctx, path, "rev-parse", "--git-path", p); err == nil {
-			if !strings.HasPrefix(dir, "/") {
-				dir = path + string(os.PathSeparator) + dir
+			// Absolute where the git dir is elsewhere, as a worktree's is — and on Windows that is
+			// C:/…, not /….
+			if dir = filepath.FromSlash(dir); !filepath.IsAbs(dir) {
+				dir = filepath.Join(path, dir)
 			}
 			if _, err := os.Stat(dir); err == nil {
 				return true
