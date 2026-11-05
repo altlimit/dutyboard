@@ -320,7 +320,7 @@ func TestAnotherRepositoryGetsItsOwnWorktreeBeside(t *testing.T) {
 	if branch := must(t, ctx, otherPath, "symbolic-ref", "--short", "HEAD"); branch != "duty/duty_M" {
 		t.Fatalf("on branch %q", branch)
 	}
-	if m.RepoOfSpec(ctx, otherSpec) != other {
+	if !samePath(m.RepoOfSpec(ctx, otherSpec), other) {
 		t.Fatalf("RepoOfSpec = %q", m.RepoOfSpec(ctx, otherSpec))
 	}
 	commitIn(t, otherPath, "cli.txt", "cli", "cli change")
@@ -332,4 +332,12 @@ func TestAnotherRepositoryGetsItsOwnWorktreeBeside(t *testing.T) {
 	if err := m.Remove(ctx, otherSpec, false); err != nil || m.Exists(otherSpec) || !m.Exists(mainSpec) {
 		t.Fatal("removing the other repository's worktree should leave the main one")
 	}
+}
+
+// samePath is whether a and b are one folder however each is spelled — on a Windows runner the temp
+// folder is C:\Users\RUNNER~1\…, and git answers it long.
+func samePath(a, b string) bool {
+	fa, errA := os.Stat(a)
+	fb, errB := os.Stat(b)
+	return errA == nil && errB == nil && os.SameFile(fa, fb)
 }
