@@ -5,6 +5,7 @@ import { STATUS_COLUMNS, PRIORITIES, EXPIRY_CHOICES, ago, columnOrder, sortColum
 import BoardColumn from "../components/BoardColumn.vue";
 import { activityByDuty, runnerSummary } from "../lib/runners.js";
 import { pastedFiles } from "../lib/paste.js";
+import { plain } from "../lib/markdown.js";
 
 const props = defineProps({ projectId: { type: String, required: true } });
 
@@ -742,7 +743,7 @@ onUnmounted(() => {
               <span v-if="h.finished_at" class="nowrap">{{ ago(h.finished_at) }}</span>
             </span>
             <span v-if="h.outcome_summary" class="duty__ask" style="border-left-color: var(--ok)">
-              {{ h.outcome_summary }}
+              {{ plain(h.outcome_summary) }}
             </span>
           </router-link>
         </li>

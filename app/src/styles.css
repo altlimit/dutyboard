@@ -523,7 +523,7 @@ video.file__shot { width: 7rem; }
 .entry--checkpoint { border-left: 3px solid var(--accent); }
 .entry__head { display: flex; gap: 0.5rem; align-items: baseline; flex-wrap: wrap; margin-bottom: 0.3rem; }
 .entry__who { font-weight: 600; font-size: 0.9rem; }
-.entry__body { white-space: pre-wrap; }
+.entry__body { margin-top: 0.1rem; }
 .options { display: flex; gap: 0.4rem; flex-wrap: wrap; margin-top: 0.5rem; }
 .entry--note { border-left: 3px solid var(--border-strong); }
 /* Sent back: the same red as `failed`, because that is what it says about the work. */
@@ -539,6 +539,35 @@ video.file__shot { width: 7rem; }
 .panel__head { display: flex; gap: 0.5rem; align-items: baseline; justify-content: space-between; margin-bottom: 0.5rem; }
 .panel__head h2 { margin: 0; }
 .prose { white-space: pre-wrap; margin: 0; overflow-wrap: anywhere; }
+
+/* What people and agents write, rendered (lib/markdown.js). Tight, because it sits in a thread:
+   a report should read as a short list, not a page. */
+.md { overflow-wrap: anywhere; line-height: 1.5; }
+.md .md-raw { white-space: pre-wrap; }
+.md > :first-child { margin-top: 0; }
+.md > :last-child { margin-bottom: 0; }
+.md p, .md ul, .md ol, .md pre, .md blockquote, .md .md-table, .md hr { margin: 0 0 0.55rem; }
+.md ul, .md ol { padding-left: 1.3rem; }
+/* The thread is itself a list, so a browser would mark these as nested. */
+.md ul { list-style: disc; }
+.md ul ul { list-style: circle; }
+.md ol { list-style: decimal; }
+.md li { margin: 0.12rem 0; }
+.md li > ul, .md li > ol { margin: 0.12rem 0 0.2rem; }
+.md li::marker { color: var(--text-dim); }
+.md li.md-task { list-style: none; margin-left: -1.1rem; }
+.md .md-check { display: inline-block; width: 1.1rem; }
+.md .md-h { font-weight: 650; margin: 0.75rem 0 0.3rem; }
+.md code { font-family: var(--mono); font-size: 0.86em; background: var(--surface-2); border-radius: 4px; padding: 0.05em 0.3em; }
+.md pre { font-family: var(--mono); font-size: 0.82rem; background: var(--surface-2); border-radius: 8px; padding: 0.6rem 0.75rem; overflow-x: auto; white-space: pre; }
+.md pre code { background: none; padding: 0; font-size: inherit; }
+.md blockquote { border-left: 3px solid var(--border-strong); padding-left: 0.7rem; color: var(--text-dim); }
+.md hr { border: 0; border-top: 1px solid var(--border); }
+.md a { overflow-wrap: anywhere; }
+.md .md-table { overflow-x: auto; }
+.md table { border-collapse: collapse; font-size: 0.88rem; width: auto; }
+.md th, .md td { border: 1px solid var(--border); padding: 0.25rem 0.55rem; text-align: left; vertical-align: top; }
+.md th { background: var(--surface-2); font-weight: 600; }
 /* A heading that owns the spacing above it rather than borrowing the stack's. */
 .section-h { margin: 0.5rem 0 0; }
 /* "Spawned from…", "Blocked behind…" — a footnote to the panel above, so it is indented

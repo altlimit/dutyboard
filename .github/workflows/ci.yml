@@ -43,6 +43,9 @@ jobs:
       - run: node scripts/cron-check.mjs
       # The console's session: a single-use refresh token, spent by several calls at once.
       - run: node scripts/session-check.mjs
+      # What agents write, rendered in the console: reports read as reports, and nothing in the
+      # text becomes markup the renderer did not build.
+      - run: node scripts/markdown-check.mjs
 
       # Every script parses. They are not imported by either build, so a syntax error in one
       # would otherwise surface the first time someone ran a release step.

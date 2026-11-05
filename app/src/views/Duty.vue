@@ -5,6 +5,7 @@ import { api, getDocs, query, subscribeLive } from "../lib/altengine.js";
 import { ALL_STATUSES, PRIORITIES, THREAD_KIND_LABELS, ago, exactTime, expiryChoices, originLabel, priorityLabel, statusLabel } from "../lib/duties.js";
 import { activityByDuty, activityLine } from "../lib/runners.js";
 import Attachments from "../components/Attachments.vue";
+import { markdown, plain } from "../lib/markdown.js";
 import { user } from "../lib/session.js";
 
 const props = defineProps({ projectId: { type: String, required: true }, dutyId: { type: String, required: true } });
@@ -309,7 +310,7 @@ onUnmounted(() => {
           <button v-if="!editing" type="button" class="btn" @click="startEdit">Edit</button>
         </div>
 
-        <p v-if="!editing" class="prose">{{ duty.brief }}</p>
+        <div v-if="!editing" class="md" v-html="markdown(duty.brief)"></div>
 
         <form v-else class="stack" @submit.prevent="saveEdits">
           <div class="field">
@@ -357,7 +358,7 @@ onUnmounted(() => {
 
       <div v-if="duty.outcome_summary" class="panel" style="border-left: 3px solid var(--ok)">
         <div class="panel__head"><h2>Outcome</h2></div>
-        <p class="prose">{{ duty.outcome_summary }}</p>
+        <div class="md" v-html="markdown(duty.outcome_summary)"></div>
       </div>
 
       <!-- Why it came back. Shown while it is unfinished again — once it is completed a
@@ -368,10 +369,10 @@ onUnmounted(() => {
           <h2>Sent back</h2>
           <span v-if="duty.reopen_count > 1" class="badge">{{ duty.reopen_count }} times</span>
         </div>
-        <p class="prose">{{ duty.reopen_note }}</p>
+        <div class="md" v-html="markdown(duty.reopen_note)"></div>
         <p v-if="duty.previous_outcome" class="muted small" style="margin: 0">
           Previously reported as {{ duty.reopened_from === "failed" ? "failed" : "done" }}:
-          “{{ duty.previous_outcome }}”
+          “{{ plain(duty.previous_outcome) }}”
         </p>
       </div>
 
@@ -467,7 +468,7 @@ onUnmounted(() => {
               <span class="badge">{{ THREAD_KIND_LABELS[e.kind] || e.kind }}</span>
               <span class="muted small" :title="exactTime(e.created_at)">{{ ago(e.created_at) }}</span>
             </div>
-            <p class="entry__body prose">{{ e.message }}</p>
+            <div class="entry__body md" v-html="markdown(e.message)"></div>
             <div v-if="e.metadata && e.metadata.suggested_options" class="options">
               <span v-for="o in e.metadata.suggested_options" :key="o" class="badge">{{ o }}</span>
             </div>

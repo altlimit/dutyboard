@@ -57,6 +57,9 @@ Nothing is done because you believe it is done. Verify it, then duty_complete wi
 WORK THAT COMES BACK
 A duty may arrive carrying 'reopened'. It was finished — by you, or by an agent whose session is gone — and a person then used the result and it did not work. 'note' is why, and it is the most important line in that duty; 'previous_outcome' is what the last attempt claimed, which is a lead rather than a fact. Read the note before the brief and duty_thread before you rewrite anything: repeating what has already been tried is the failure mode here. You cannot send a duty back yourself, only a person can — if you find a problem in finished work that is not the duty you hold, duty_enqueue it.
 
+WRITING FOR THE BOARD
+What you write here — messages, questions, outcome summaries, briefs — is read by people in a console that renders it as markdown. Lead with the point in one sentence. When there is more than that to say, follow it with a short bullet list, one fact per bullet; \`code\` for paths, commands, ids and URLs; a table only for rows of like things. No headings in a note, no preamble, and do not restate the brief.
+
 BEFORE STARTING SOMETHING THAT SOUNDS FAMILIAR
 duty_search looks through the duties already finished on this board — their titles, briefs and outcome summaries. The board remembers work you have no memory of, done by other agents or by you in a session that is gone. Search before you rebuild something, and when you need to know HOW a thing was done: the outcome summary usually says, and the duty_id it gives you opens the full thread.
 
@@ -174,7 +177,7 @@ const TOOLS = [
       type: "object",
       properties: {
         duty_id: s("The duty this is about."),
-        message: s("The question or note. Be specific: a human reads only this."),
+        message: s("The question or note, in markdown. Be specific: a human reads only this. A question leads with the question itself; a report leads with its one-line upshot, then bullets."),
         kind: s("What kind of entry this is.", { enum: THREAD_KINDS, default: "note" }),
         suggested_options: {
           type: "array",
@@ -197,7 +200,7 @@ const TOOLS = [
       type: "object",
       properties: {
         duty_id: s("The duty you are finishing."),
-        outcome_summary: s("What was actually done, in a few sentences."),
+        outcome_summary: s("What was actually done, in markdown: one sentence first, then a few bullets when there is more than one change."),
         agent_id: s("Which agent you are. Defaults to the id configured on this connection."),
       },
       required: ["duty_id", "outcome_summary"],
