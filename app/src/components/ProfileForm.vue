@@ -1,5 +1,6 @@
 <script setup>
 import { computed } from "vue";
+import { expiryChoices } from "../lib/duties.js";
 import { AGENTS, CODEX_PERMISSION_MODES, CURSOR_PERMISSION_MODES, DEPLOY_METHODS, EFFORTS, GIT_MODES, PERMISSION_MODES, PROJECT_TYPES, agentLabel, mcpServerDraft, noRepo } from "../lib/runners.js";
 
 // The questions a board is created with, and edited with later: what the project is, how its work
@@ -243,6 +244,20 @@ const removeServer = (i) => {
     <div v-if="draft.deploy_method === 'command'" class="field">
       <label :for="`${idPrefix}-cmd`">Deploy command</label>
       <input :id="`${idPrefix}-cmd`" v-model="draft.deploy_command" class="mono" placeholder="npm run deploy" />
+    </div>
+  </fieldset>
+
+  <fieldset class="stack" :disabled="disabled">
+    <legend class="label">New duties</legend>
+    <div class="field">
+      <label :for="`${idPrefix}-expire`">Once it is done</label>
+      <select :id="`${idPrefix}-expire`" v-model.number="draft.expire_after_days">
+        <option v-for="c in expiryChoices(draft.expire_after_days)" :key="c.days" :value="c.days">{{ c.label }}</option>
+      </select>
+      <p class="hint">
+        What a new duty starts with. Whoever files one can still choose otherwise, and duties already on the board keep
+        what they have.
+      </p>
     </div>
   </fieldset>
 

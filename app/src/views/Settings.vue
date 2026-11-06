@@ -85,7 +85,7 @@ async function loadSchedules() {
 }
 
 function newSchedule() {
-  scheduleForm.value = scheduleDraft();
+  scheduleForm.value = { ...scheduleDraft(), expire_after_days: Number(profile.value.expire_after_days) || 0 };
   scheduleNotice.value = "";
 }
 

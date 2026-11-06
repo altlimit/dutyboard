@@ -149,6 +149,7 @@ export function profileDraft(profile, runner) {
     default_branch: p.default_branch || "",
     stack: (p.stack || []).join(", "),
     test_command: p.test_command || "",
+    expire_after_days: p.expire_after_days || 0,
     deploy_method: (p.deploy && p.deploy.method) || "none",
     deploy_workflow: (p.deploy && p.deploy.workflow) || "",
     deploy_command: (p.deploy && p.deploy.command) || "",
@@ -210,6 +211,7 @@ export function profilePayload(d) {
         .map((s) => s.trim())
         .filter(Boolean),
       test_command: d.test_command.trim(),
+      expire_after_days: Number(d.expire_after_days) || 0,
       deploy,
       // Replaced whole on the function, so always the complete list.
       mcp_servers: (d.mcp_servers || []).map(mcpServerPayload),

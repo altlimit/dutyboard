@@ -1,7 +1,7 @@
 <script setup>
 import { computed, onUnmounted, reactive, ref, watch } from "vue";
 import { aggregate, api, putSigned, query, subscribeLive } from "../lib/altengine.js";
-import { STATUS_COLUMNS, PRIORITIES, EXPIRY_CHOICES, ago, columnOrder, sortColumn } from "../lib/duties.js";
+import { STATUS_COLUMNS, PRIORITIES, expiryChoices, ago, columnOrder, sortColumn } from "../lib/duties.js";
 import BoardColumn from "../components/BoardColumn.vue";
 import { activityByDuty, runnerSummary } from "../lib/runners.js";
 import { pastedFiles } from "../lib/paste.js";
@@ -140,7 +140,10 @@ function clearSearch() {
 const error = ref("");
 const liveState = ref("connecting");
 const showForm = ref(false);
-const draft = ref({ title: "", brief: "", priority: "next", expire_after_days: 0 });
+/** How long a finished duty stays, as the board's settings say a new one should start. */
+const defaultExpiry = () => (board.value && board.value.profile && board.value.profile.expire_after_days) || 0;
+const blankDraft = () => ({ title: "", brief: "", priority: "next", expire_after_days: defaultExpiry() });
+const draft = ref(blankDraft());
 const adding = ref(false);
 
 // Files chosen while writing the duty, uploaded once it exists. A screenshot of the bug is
@@ -357,6 +360,8 @@ async function openBoard() {
   try {
     const res = await api("/board/open", { project_id: props.projectId });
     board.value = res.project || null;
+    // The form may already be open; nothing typed into it yet means nothing chosen in it yet.
+    if (!draft.value.title && !draft.value.brief) draft.value.expire_after_days = defaultExpiry();
     agents.value = res.agents || [];
     runners.value = res.runners || [];
     searchable.value = res.search === true;
@@ -517,7 +522,7 @@ async function addDuty() {
     // someone has written because a screenshot timed out would lose the part that mattered.
     const failed = draftFiles.value.length ? await attachAll(created.duty_id, draftFiles.value) : [];
     if (failed.length) attachFailed.value = { dutyId: created.duty_id, title: draft.value.title, lines: failed };
-    draft.value = { title: "", brief: "", priority: "next", expire_after_days: 0 };
+    draft.value = blankDraft();
     draftFiles.value = [];
     showForm.value = false;
     // A new duty is queued, by definition — no other column can have changed, so no other
@@ -651,7 +656,7 @@ onUnmounted(() => {
       <div class="field">
         <label for="d-expire">Once it is done</label>
         <select id="d-expire" v-model.number="draft.expire_after_days">
-          <option v-for="c in EXPIRY_CHOICES" :key="c.days" :value="c.days">{{ c.label }}</option>
+          <option v-for="c in expiryChoices(draft.expire_after_days)" :key="c.days" :value="c.days">{{ c.label }}</option>
         </select>
         <p class="hint">For one-off work nobody needs the record of — it is removed with its thread and files.</p>
       </div>

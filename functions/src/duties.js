@@ -721,7 +721,14 @@ export async function enqueueDuty(ctx, body) {
     // runner claims within seconds — so it waits for this many before it starts, rather than working
     // a duty whose input has not arrived.
     expect_files: intIn(body.expect_files, "expect_files", 0, MAX_ATTACHMENTS, 0),
-    expire_after_days: expireDays(body.expire_after_days),
+    // Left out, a work duty takes the board's default. Setup and rules duties are kept: they are the
+    // record of how the board came to be set up the way it is.
+    expire_after_days:
+      body.expire_after_days != null
+        ? expireDays(body.expire_after_days)
+        : kind === "work"
+          ? (project.profile && project.profile.expire_after_days) || 0
+          : 0,
     expires_at: null,
     created_at: now,
     updated_at: now,

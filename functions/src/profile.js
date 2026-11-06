@@ -19,7 +19,7 @@
 
 import { badRequest, conflict, forbidden, str, oneOf, intIn } from "./http.js";
 import { resolveProject, projectOfDuty, requireHuman, checkAgentId } from "./identity.js";
-import { loadDuty, stripMeta } from "./duties.js";
+import { expireDays, loadDuty, stripMeta } from "./duties.js";
 import { putOp } from "./store.js";
 
 /**
@@ -212,6 +212,8 @@ export function mergeProfile(stored, input) {
   if (has(p, "default_branch")) next.default_branch = branch(p.default_branch, "profile.default_branch");
   if (has(p, "stack")) next.stack = list(p.stack, "profile.stack", { max: 30, item: plain(40) });
   if (has(p, "test_command")) next.test_command = str(p.test_command, "profile.test_command", { max: 500 });
+  // How long a finished duty stays on the board when whoever files it does not say. 0 keeps it.
+  if (has(p, "expire_after_days")) next.expire_after_days = expireDays(p.expire_after_days, "profile.expire_after_days");
   if (has(p, "toolchain")) {
     next.toolchain = list(p.toolchain, "profile.toolchain", {
       max: 30,
