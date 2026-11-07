@@ -3,16 +3,16 @@
 // A project's key IS its slug, because agents name it in configuration and a human has
 // to be able to type it. That makes creation a uniqueness check rather than an auto-id.
 
-import { badRequest, conflict, forbidden, str, intIn } from "./http.js";
+import { badRequest, conflict, forbidden, notFound, str, intIn } from "./http.js";
 import { putOp } from "./store.js";
 import { slugify } from "./ids.js";
-import { requireHuman, resolveProject } from "./identity.js";
+import { isMember, requireHuman, resolveProject } from "./identity.js";
 import { liveConfigured, mintLive } from "./live.js";
 import { sweepAttachments } from "./attachments.js";
 import { searchConfigured, unindexDuties } from "./searching.js";
 import { sharedBoards, sweepMembers, syncAccess } from "./members.js";
 import { isFolderBoard, mergeProfile, mergeRunner } from "./profile.js";
-import { rulesDuty, runnersOf, sweepBoardMachines } from "./machines.js";
+import { rulesDuty, runnersOf, runnersOfBoards, sweepBoardMachines } from "./machines.js";
 
 const SWEEP_PAGE = 200;
 
@@ -108,6 +108,38 @@ export async function listProjects(ctx, body) {
   };
 }
 
+/** Boards `/projects/runners` answers for in one call: a full page of your own and every shared one. */
+const MAX_RUNNER_BOARDS = 150;
+
+/**
+ * `POST /projects/runners` — `{ project_ids }`. The machines on each of these boards, keyed by
+ * board, in the shape `/board/runners` gives one board — so the boards page can say "runner
+ * offline" with the same words the board's own header uses.
+ *
+ * Separate from `/projects/list` because presence is a call per machine: the list draws first and
+ * this fills in. A board the caller cannot see is refused, as `resolveProject` refuses it — the
+ * whole request, not just that board, so a list of guesses learns nothing about which ones exist.
+ * The console treats a refusal as "no runner lines", so a board deleted between the list and this
+ * costs one refresh's worth of them.
+ */
+export async function listRunners(ctx, body) {
+  const caller = requireHuman(ctx.caller);
+  if (!Array.isArray(body.project_ids)) throw badRequest("'project_ids' must be a list");
+  const ids = [...new Set(body.project_ids.map(String))];
+  if (ids.length > MAX_RUNNER_BOARDS) throw badRequest(`at most ${MAX_RUNNER_BOARDS} boards at once`);
+  const found = ids.length ? await ctx.store.getMany("projects", ids) : new Map();
+  const projects = await Promise.all(
+    ids.map(async (id) => {
+      const p = found.get(id);
+      if (!p) throw notFound(`project '${id}' not found`);
+      if (p.owner_uid !== caller.uid && !(await isMember(caller, ctx.store, p.key))) throw forbidden(`you do not own project '${id}'`);
+      return p;
+    }),
+  );
+  const runners = await runnersOfBoards(ctx, projects);
+  return { runners: Object.fromEntries(runners) };
+}
+
 /**
  * `POST /board/open` — everything the console needs before it can draw a board.
  *
@@ -138,7 +170,7 @@ export async function openBoard(ctx, body) {
     liveConfigured(ctx) ? mintLive(ctx, project, body).catch(() => null) : Promise.resolve(null),
     // The machines working this board, for the header's runner pill. Best-effort like live: a
     // board still opens if this fails.
-    runnersOf(ctx, project.key).catch(() => []),
+    runnersOf(ctx, project).catch(() => []),
   ]);
 
   return {

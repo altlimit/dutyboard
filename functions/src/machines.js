@@ -454,31 +454,65 @@ async function dropLink(ctx, link) {
 
 /**
  * The machines working one board, whoever's they are — what the board's header and settings show.
- * Answers what each is doing there and whether it is online.
+ * Answers what each is doing there and whether it is online. Takes the board's row, which every
+ * caller has already read to check access.
  */
-export async function runnersOf(ctx, projectKey) {
-  const { rows } = await ctx.store.query("machine_links", {
-    where: [{ field: "project_id", op: "=", value: projectKey }],
-    limit: MAX_LINKS_PER_BOARD,
-  });
-  const ids = rows.map((l) => l.machine_id);
-  const [present, machines, project] = await Promise.all([machinesPresent(ctx, ids), machinesByIds(ctx, ids), ctx.store.get("projects", projectKey)]);
-  return rows.map((l) => ({
-    ...linkView({ ...l, problem: tooOldFor(project, (machines.get(l.machine_id) || {}).cli_version, l.machine_name) || l.problem }),
-    owner_uid: l.owner_uid,
-    online: present.get(l.machine_id),
-    // What it is actually running. A board where one machine is three versions behind looks like a
-    // board with a mystery, until this says which machine it is.
-    cli_version: (machines.get(l.machine_id) || {}).cli_version || "",
-  }));
+export async function runnersOf(ctx, project) {
+  return (await runnersOfBoards(ctx, [project])).get(project.key) || [];
 }
+
+/** Boards per links query. Each may have up to MAX_LINKS_PER_BOARD, so this keeps a page's worst
+ *  case under the datastore's 500-row limit while one query still covers a typical person. */
+const BOARDS_PER_LINKS_QUERY = 20;
+
+/**
+ * `runnersOf` for many boards at once, keyed by board — what the boards page needs to say which
+ * boards have a machine on them. One links query per twenty boards and one presence check per
+ * machine, rather than a presence check per machine per board: a person's one laptop working all
+ * nine of their boards is asked once.
+ */
+export async function runnersOfBoards(ctx, projects) {
+  const out = new Map(projects.map((p) => [p.key, []]));
+  if (!projects.length) return out;
+  const keys = projects.map((p) => p.key);
+  const pages = await Promise.all(
+    chunks(keys, BOARDS_PER_LINKS_QUERY).map((part) =>
+      ctx.store.query("machine_links", {
+        where: [{ field: "project_id", op: "in", value: part }],
+        limit: part.length * MAX_LINKS_PER_BOARD,
+      }),
+    ),
+  );
+  const links = pages.flatMap((p) => p.rows);
+  const ids = [...new Set(links.map((l) => l.machine_id))];
+  const [present, machines] = await Promise.all([machinesPresent(ctx, ids), machinesByIds(ctx, ids)]);
+  const byKey = new Map(projects.map((p) => [p.key, p]));
+  for (const l of links) {
+    const machine = machines.get(l.machine_id) || {};
+    out.get(l.project_id).push({
+      ...linkView({ ...l, problem: tooOldFor(byKey.get(l.project_id), machine.cli_version, l.machine_name) || l.problem }),
+      owner_uid: l.owner_uid,
+      online: present.get(l.machine_id),
+      // What it is actually running. A board where one machine is three versions behind looks like a
+      // board with a mystery, until this says which machine it is.
+      cli_version: machine.cli_version || "",
+    });
+  }
+  return out;
+}
+
+const chunks = (list, size) => Array.from({ length: Math.ceil(list.length / size) }, (_, i) => list.slice(i * size, (i + 1) * size));
 
 /** The machine rows behind a set of ids, keyed by id. */
 async function machinesByIds(ctx, ids) {
   const out = new Map();
   if (!ids.length) return out;
-  const { rows } = await ctx.store.query("machines", { where: [{ field: "machine_id", op: "in", value: ids }], limit: ids.length });
-  for (const m of rows) out.set(m.machine_id, m);
+  // `in` takes at most 80 values; one person's boards rarely reach that many machines, but a
+  // page of shared boards could.
+  const pages = await Promise.all(
+    chunks(ids, 80).map((part) => ctx.store.query("machines", { where: [{ field: "machine_id", op: "in", value: part }], limit: part.length })),
+  );
+  for (const m of pages.flatMap((p) => p.rows)) out.set(m.machine_id, m);
   return out;
 }
 
@@ -487,7 +521,7 @@ async function machinesByIds(ctx, ids) {
 export async function boardRunners(ctx, body) {
   if (ctx.caller.kind === "agent" && ctx.caller.tokenKey) {
     const project = await resolveProject(ctx.caller, body.project_id, ctx.store);
-    const runners = await runnersOf(ctx, project.key);
+    const runners = await runnersOf(ctx, project);
     return {
       project_id: project.key,
       runners: runners.map((r) => ({ agent_prefix: r.agent_prefix, name: r.machine_name, online: r.online })),
@@ -497,7 +531,7 @@ export async function boardRunners(ctx, body) {
   const caller = requireHuman(ctx.caller);
   const project = await resolveProject(caller, body.project_id, ctx.store);
   const [runners, repoRequest] = await Promise.all([
-    runnersOf(ctx, project.key),
+    runnersOf(ctx, project),
     project.owner_uid === caller.uid ? repoRequestOf(ctx, project.key) : null,
   ]);
   return {

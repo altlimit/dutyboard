@@ -26,7 +26,7 @@ import { identify } from "./identity.js";
 import { makePublisher, liveToken } from "./live.js";
 import { noteTokenUse, createToken, listTokens, revokeToken, updateToken } from "./tokens.js";
 import { setWebhook, testWebhook, withWebhooks } from "./webhooks.js";
-import { openBoard, createProject, listProjects, renameProject, deleteProject } from "./projects.js";
+import { openBoard, createProject, listProjects, listRunners, renameProject, deleteProject } from "./projects.js";
 import { attachToDuty, listAttachments, deleteAttachment } from "./attachments.js";
 import {
   pollDuties,
@@ -146,6 +146,7 @@ const ROUTES = {
   "/me/access": syncAccess,
   "/projects/create": createProject,
   "/projects/list": listProjects,
+  "/projects/runners": listRunners,
   "/projects/rename": renameProject,
   "/projects/delete": deleteProject,
   "/projects/profile": updateProfile,

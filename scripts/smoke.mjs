@@ -111,6 +111,16 @@ async function dsQuery(collection, req, token) {
   return { status: res.status, json, docs: json.documents || [] };
 }
 
+async function dsAggregate(collection, req, token) {
+  const res = await fetch(`${BASE}/v1/datastore/${encodeURIComponent(DS)}/ns/_default/col/${collection}/aggregate`, {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+    body: JSON.stringify(req),
+  });
+  const json = await res.json().catch(() => ({}));
+  return { status: res.status, json, groups: json.groups || [] };
+}
+
 /**
  * What the console does before its first direct read: ask the function whether this token can
  * read what the person is allowed to, and refresh it if not. Returns the token to use.
@@ -807,6 +817,23 @@ async function main() {
   );
   check("and a duty's decision log", memberThread.status === 200 && memberThread.docs.length === myThreads.docs.length, memberThread.status);
 
+  // The boards page: one grouped count across every board, the same request the console sends.
+  const boardsPageCount = { group: ["project_id", "status"], metrics: [{ fn: "count", as: "n" }, { fn: "max", field: "updated_at", as: "last" }], limit: 500 };
+  const ownerCounts = await dsAggregate("duties", boardsPageCount, human);
+  const ownerTotal = ownerCounts.groups.filter((g) => g.group.project_id === projectId).reduce((n, g) => n + g.metrics.n, 0);
+  check("the boards page counts a board's duties without a board filter", ownerCounts.status === 200 && ownerTotal === memberRead.docs.length, { status: ownerCounts.status, ownerTotal, json: ownerCounts.json });
+  const memberCounts = await dsAggregate("duties", boardsPageCount, memberToken);
+  const memberTotal = memberCounts.groups.filter((g) => g.group.project_id === projectId).reduce((n, g) => n + g.metrics.n, 0);
+  check("and counts a shared board for its member too", memberCounts.status === 200 && memberTotal === ownerTotal, { status: memberCounts.status, memberTotal, json: memberCounts.json });
+  const memberAsks = await dsQuery(
+    "duties",
+    { where: [{ field: "status", op: "=", value: "needs_decision" }], order: [{ field: "updated_at", dir: "asc" }], limit: 8 },
+    memberToken,
+  );
+  check("and lists what needs them across every board they are on", memberAsks.status === 200, { status: memberAsks.status, json: memberAsks.json });
+  const memberRunners = await call("/projects/runners", { project_ids: [projectId] }, memberToken);
+  check("a member asks which machines work a shared board", Array.isArray(memberRunners.runners[projectId]), memberRunners);
+
   const memberOpen = await call("/board/open", { project_id: projectId }, memberToken);
   check("the board tells them they are a member", memberOpen.role === "member", memberOpen.role);
 
@@ -1315,6 +1342,12 @@ async function main() {
   );
   const openedWithRunners = await call("/board/open", { project_id: mBoard }, human);
   check("and opening the board brings the same, for its header", (openedWithRunners.runners || []).length === 1, openedWithRunners.runners);
+  const pageRunners = await call("/projects/runners", { project_ids: [mBoard, projectId] }, human);
+  check(
+    "and the boards page asks for every board at once, in the same shape",
+    (pageRunners.runners[mBoard] || []).length === 1 && pageRunners.runners[mBoard][0].online === true && Array.isArray(pageRunners.runners[projectId]),
+    pageRunners.runners,
+  );
   await call("/machines/update", { machine_id: paired.machine_id, paused: true }, human);
   check("pausing it from the console tells the daemon at once", !!(await socket.next((f) => f.data && f.data.t === "pause")));
   socket.close();
@@ -1901,6 +1934,7 @@ async function main() {
     "/board/members/agents": () => ({ project_id: projectId, uid: other0.user.uid, can_run_agents: true }),
     "/board/profile": () => ({ project_id: projectId }),
     "/board/runners": () => ({ project_id: projectId }),
+    "/projects/runners": () => ({ project_ids: [projectId] }),
     "/board/profile/propose": (d) => ({ duty_id: d, test_command: "no" }),
     "/board/rules": () => ({ project_id: projectId }),
     "/board/rules/set": () => ({ project_id: projectId, body: "no" }),

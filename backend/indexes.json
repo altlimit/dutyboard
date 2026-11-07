@@ -65,6 +65,14 @@
     },
     {
       "fields": [
+        "owner_uid",
+        "status",
+        "updated_at"
+      ],
+      "for": "console: the boards page's 'Needs you' list — one status across every board you own, longest-waiting first. Shared boards' half of the same read is served by the member index below"
+    },
+    {
+      "fields": [
         "project_id",
         "status",
         "updated_at"

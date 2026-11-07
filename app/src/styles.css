@@ -329,6 +329,25 @@ input[aria-invalid="true"], textarea[aria-invalid="true"] { border-color: var(--
 .boardcard:hover { border-color: var(--border-strong); }
 .boardcard__name { font-weight: 600; font-size: 1.05rem; letter-spacing: -0.01em; }
 .boardcard__meta { color: var(--text-dim); font-size: 0.85rem; }
+/* What is on the board, as badges: the line that makes one card different from the next. */
+.boardcard__work { display: flex; flex-wrap: wrap; gap: 0.3rem; margin: 0.35rem 0 0.15rem; }
+/* A board with nothing open steps back, so the ones with work in them are what the eye lands on. */
+.boardcard--idle { box-shadow: none; background: transparent; }
+.boardcard--idle .boardcard__name { color: var(--text-dim); }
+/* The page's "Needs you" list: questions from every board, one per row, in the same card the
+   board's own column uses. Two across on a wide window, one on a phone. */
+.asks {
+  list-style: none;
+  margin-inline: 0;
+  margin-bottom: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 380px), 1fr));
+  gap: 0.6rem;
+}
+.asks > li { min-width: 0; }
+.quiet > summary { margin-bottom: 0.75rem; }
+.quiet > summary .muted { font-weight: 400; }
 
 /* --- badges ------------------------------------------------------------- */
 .badge {
