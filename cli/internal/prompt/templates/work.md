@@ -6,7 +6,7 @@ The question you parked on has been answered:
 - You asked: {{.Duty.UnblockedContext.LastQuestion}}
 - Answer: {{.Duty.UnblockedContext.HumanResolution}}
 
-That answer is a decision, not a suggestion.
+That answer is a decision, not a suggestion. If it turns out not to work in practice, say so on the board rather than keep at it.
 {{- end}}
 {{- else}}
 Your duty is `{{.Duty.ID}}`.

@@ -1765,6 +1765,22 @@ async function main() {
     const midWork = await call("/duty/cancel", { duty_id: working.duty_id }, sub, { expectStatus: true });
     check("but not while an agent is working on it", midWork.status === 409, midWork);
     await call("/duty/complete", { duty_id: working.duty_id, outcome_summary: "done" }, worker);
+    // A person on the board may stop what the token may not, and nothing brings it back but a person.
+    const running = await call("/duty/enqueue", { title: "Build 45", brief: "in progress" }, sub);
+    await call("/duty/claim", { duty_id: running.duty_id }, worker);
+    const stranger = await call("/duty/cancel", { duty_id: running.duty_id }, other0.id_token, { expectStatus: true });
+    check("someone not on the board cannot cancel it", stranger.status === 403 || stranger.status === 404, stranger);
+    const called = await call("/duty/cancel", { duty_id: running.duty_id, reason: "wrong branch" }, human);
+    const calledDuty = (await call("/duty/get", { duty_id: running.duty_id }, human)).duty;
+    check("a person can cancel a duty an agent is working on", called.status === "failed" && /^Cancelled by .*: wrong branch$/.test(calledDuty.outcome_summary), calledDuty);
+    const lateFinish = await call("/duty/complete", { duty_id: running.duty_id, outcome_summary: "done anyway" }, worker, { expectStatus: true });
+    check("the session it stopped cannot then finish it", lateFinish.status === 409, lateFinish);
+    const lateNote = await call("/duty/checkpoint", { duty_id: running.duty_id, kind: "note", message: "stopped" }, worker, { expectStatus: true });
+    check("a note still goes on the record", lateNote.status === 200, lateNote);
+    const latePark = await call("/duty/checkpoint", { duty_id: running.duty_id, kind: "question", message: "still there?", set_status: "needs_decision" }, worker, { expectStatus: true });
+    check("but it cannot park the duty back to life", latePark.status === 409, latePark);
+    const twice = await call("/duty/cancel", { duty_id: running.duty_id }, human, { expectStatus: true });
+    check("and cancelling it twice is refused", twice.status === 409, twice);
     const notMine = await call("/duty/cancel", { duty_id: humans.duty_id }, sub, { expectStatus: true });
     check("and not what it did not file", notMine.status === 404, notMine);
 

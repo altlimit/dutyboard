@@ -809,7 +809,7 @@ only when you first try it hosted.
 | `/duty/enqueue` | both | New work. `immediate_blocker` interrupts what the caller holds. `external_ref` makes a retry answer the duty already filed; `metadata` is the caller's own; `reserved_for` sends it to one runner. |
 | `/duty/get` | both | One duty as it stands now, with its outcome once finished. |
 | `/duty/changes` | token | The duties this token filed that changed since `since`, oldest first, with `next_since` to pass back. |
-| `/duty/cancel` | token | Call off a duty this token filed that nobody is working on: `→ failed`, with the reason. |
+| `/duty/cancel` | both | Call a duty off: `→ failed`, with the reason. A person may cancel any unfinished duty on their board, and the machine holding it stops the session and removes its worktree or folder. A token may cancel only what it filed, while nobody is working on it. |
 | `/duty/checkpoint` | both | Post to the thread; optionally park the duty. |
 | `/duty/complete` | agent | `active` → `done`. Requires an outcome summary. Refused once, with the notes, when a person wrote on the duty since the session was shown its notes. |
 | `/duty/fail` | agent | `→ failed`, with a reason. Refused for unread notes like complete. |

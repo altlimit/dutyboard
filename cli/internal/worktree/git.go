@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"runtime"
 	"strings"
+	"time"
 )
 
 // git runs git in dir and answers its trimmed stdout. A failure carries stderr, which is what says
@@ -56,6 +57,9 @@ func Shell(ctx context.Context, dir, command string, env []string) (string, erro
 	cmd.Env = append(os.Environ(), env...)
 	var out bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &out
+	stopTogether(cmd)
+	// Something that left the group and holds the output must not keep Run from returning.
+	cmd.WaitDelay = 5 * time.Second
 	err := cmd.Run()
 	return out.String(), err
 }

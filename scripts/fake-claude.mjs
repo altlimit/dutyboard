@@ -9,7 +9,7 @@
 // $FAKE_CLAUDE_LOG so the smoke test can assert on it.
 //
 // What it does is steered by the duty: the setup and rules prompts are recognised by their wording,
-// and a work duty's title can carry [park], [crash] or [slow].
+// and a work duty's title can carry [park], [crash], [slow] or [stray].
 
 import { spawn, execFileSync } from "node:child_process";
 import { appendFileSync, existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
@@ -208,6 +208,13 @@ if (title.includes("[slow]")) {
   // What Claude Code emits when it starts a command — the daemon turns it into the duty's "now" line.
   say({ type: "assistant", message: { content: [{ type: "tool_use", name: "Bash", input: { command: "tools/run_tests.sh --all" } }] } });
   record({ event: "slow-start", dutyId });
+  if (title.includes("[stray]")) {
+    // What a tool that gives each command a session of its own leaves behind: out of the agent's
+    // process group, so stopping the group does not reach it.
+    const stray = spawn("sleep", ["600"], { detached: true, stdio: "ignore" });
+    stray.unref();
+    record({ event: "stray-start", dutyId, pid: stray.pid });
+  }
   await new Promise((r) => setTimeout(r, 120_000));
   record({ event: "slow-end", dutyId });
   finish("slow");

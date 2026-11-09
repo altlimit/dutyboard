@@ -81,8 +81,11 @@ type Job struct {
 	// repository's git data (a worktree's commits land there), the tools folder.
 	Writable []string
 	Env      []string
-	Log      io.Writer // the agent's raw output, one event per line
-	Timeout  time.Duration
+	// Mark is an entry of Env unique to this session. Stopping the session also stops every process
+	// carrying it, wherever it has got to.
+	Mark    string
+	Log     io.Writer // the agent's raw output, one event per line
+	Timeout time.Duration
 	// OnActivity receives a short line each time the agent starts something: "Editing
 	// src/ui/pause.gd", "Running `npm test`". Called from the reading goroutine; keep it cheap.
 	OnActivity func(string)
@@ -132,6 +135,10 @@ type Outcome struct {
 
 // stream reads an agent's output, a line at a time, into the Outcome, and says what the agent just
 // started doing ("" for a line that is not the start of something).
+// outputGrace is how long a stopped agent's output is waited for: longer than killGrace, so anything
+// still holding it has already been told twice.
+const outputGrace = 15 * time.Second
+
 type stream interface {
 	Read(line []byte, out *Outcome) (activity string)
 }
@@ -151,6 +158,8 @@ func runProcess(ctx context.Context, j Job, bin string, args []string, stdin io.
 	cmd.Dir = j.Dir
 	cmd.Env = append(os.Environ(), j.Env...)
 	cmd.Stdin = stdin
+	// Something the agent left behind holding its stderr must not keep Wait from returning.
+	cmd.WaitDelay = outputGrace
 	isolate(cmd)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -169,7 +178,13 @@ func runProcess(ctx context.Context, j Job, bin string, args []string, stdin io.
 	go func() {
 		select {
 		case <-runCtx.Done():
-			killTree(cmd)
+			killTree(cmd, j.Mark)
+			// Whatever got away and still holds the agent's stdout would keep the read below waiting for ever.
+			select {
+			case <-stopped:
+			case <-time.After(outputGrace):
+				_ = stdout.Close()
+			}
 		case <-stopped:
 		}
 	}()
@@ -189,13 +204,17 @@ func runProcess(ctx context.Context, j Job, bin string, args []string, stdin io.
 	}
 	err = cmd.Wait()
 	close(stopped)
+	if runCtx.Err() != nil {
+		// Before this returns: what happens next is often removing the folder these are running in.
+		finishOff(cmd, j.Mark)
+	}
 
 	switch {
 	case errors.Is(runCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil:
 		out.TimedOut = true
 	case ctx.Err() != nil:
 		out.Canceled = true
-	case err != nil && !out.Limited:
+	case err != nil && !out.Limited && !errors.Is(err, exec.ErrWaitDelay):
 		out.Err = fmt.Errorf("%s exited: %w: %s%s", filepath.Base(bin), err, strings.TrimSpace(stderr.String()), killedHint(err))
 	}
 	return out

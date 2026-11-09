@@ -44,6 +44,9 @@ const canDelete = computed(() => !!(duty.value && user.value && duty.value.owner
 /** Finished, one way or the other — the only state a duty can be sent back from. */
 const finished = computed(() => duty.value && (duty.value.status === "done" || duty.value.status === "failed"));
 
+/** Still someone's to work, so still something to call off. */
+const canCancel = computed(() => duty.value && !finished.value);
+
 /** The options an agent offered, if it offered any — answering with one click is the
  *  difference between a question answered in seconds and one answered tomorrow.
  *
@@ -235,6 +238,16 @@ const saveEdits = () =>
     editing.value = false;
   }, "Saved.");
 
+/** Calling it off ends it as failed, keeping the record. Anything working on it stops. */
+async function cancelDuty() {
+  const working = duty.value.status === "active" ? " The session working on it is stopped straight away." : "";
+  if (!confirm(`Cancel "${duty.value.title}"? It moves to Failed.${working} Work not yet handed in is removed from the machine.`)) return;
+  await act(
+    () => api("/duty/cancel", { duty_id: props.dutyId }),
+    "Cancelled. If a machine had work on it, it stops that and clears its folder, and says so in the log below.",
+  );
+}
+
 async function remove() {
   if (!confirm(`Delete "${duty.value.title}" and its thread? This cannot be undone.`)) return;
   await act(async () => {
@@ -307,7 +320,10 @@ onUnmounted(() => {
       <div class="panel">
         <div class="panel__head">
           <h2>Brief</h2>
-          <button v-if="!editing" type="button" class="btn" @click="startEdit">Edit</button>
+          <span v-if="!editing" class="row">
+            <button v-if="canCancel" type="button" class="btn danger" :disabled="posting" @click="cancelDuty">Cancel duty</button>
+            <button type="button" class="btn" @click="startEdit">Edit</button>
+          </span>
         </div>
 
         <div v-if="!editing" class="md" v-html="markdown(duty.brief)"></div>
@@ -333,8 +349,9 @@ onUnmounted(() => {
               <option v-for="s in ALL_STATUSES" :key="s" :value="s">{{ statusLabel(s) }}</option>
             </select>
             <p class="hint">
-              Moving a duty off "In progress" releases whichever agent was holding it. To send
-              finished work back, use <strong>Did not work?</strong> instead — it records why,
+              Moving a duty off "In progress" releases whichever agent was holding it and stops its
+              session. To call the work off and clear it from the machine, use
+              <strong>Cancel duty</strong>. To send finished work back, use <strong>Did not work?</strong> instead — it records why,
               and that note is the first thing the next agent reads.
             </p>
           </div>
@@ -356,7 +373,7 @@ onUnmounted(() => {
 
       <Attachments :duty-id="dutyId" :items="attachments" :busy="posting" :accept-paste="editing" @changed="load" />
 
-      <div v-if="duty.outcome_summary" class="panel" style="border-left: 3px solid var(--ok)">
+      <div v-if="duty.outcome_summary" class="panel" :style="`border-left: 3px solid var(--${duty.status === 'failed' ? 'danger' : 'ok'})`">
         <div class="panel__head"><h2>Outcome</h2></div>
         <div class="md" v-html="markdown(duty.outcome_summary)"></div>
       </div>

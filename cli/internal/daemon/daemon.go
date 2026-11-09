@@ -39,6 +39,11 @@ const (
 	fallbackPoll = 15 * time.Minute
 	pollNoLive   = 2 * time.Minute
 	debounce     = 2 * time.Second
+	// stopAfter is how long a duty may be missing from what this machine holds before its session is
+	// stopped. A session that parks or finishes its own duty is gone well within it.
+	stopAfter = 60 * time.Second
+	// sweepEvery is how often the duties this machine keeps work for are checked when no event says to.
+	sweepEvery = time.Hour
 )
 
 // Options configure a daemon.
@@ -85,6 +90,8 @@ type Daemon struct {
 	readiness    readinessState
 	limitedUntil time.Time
 	paused       bool
+	sweepDue     bool
+	sweptAt      time.Time
 
 	ctx    context.Context // Run's, for work a person starts from the control socket
 	wg     sync.WaitGroup
@@ -409,6 +416,14 @@ func (d *Daemon) onEvent(ev live.Event) {
 			run.cancelByBoard()
 		}
 		if status == "queued" || status == "done" || status == "failed" || status == "deleted" {
+			if run == nil && status != "queued" {
+				// Possibly a duty parked here: its worktree is waiting for it, and now nothing will come.
+				if records, _ := state.RunRecords(); records[id].Board != "" {
+					d.mu.Lock()
+					d.sweepDue = true
+					d.mu.Unlock()
+				}
+			}
 			d.wake()
 		}
 	case "board":
@@ -449,6 +464,7 @@ func (d *Daemon) tick(ctx context.Context) error {
 	for _, b := range p.Boards {
 		d.polled[b.ProjectID] = b
 	}
+	d.stopMissing(p.Boards)
 	limited := time.Now().Before(d.limitedUntil)
 	maxSessions := 3
 	if d.me != nil && d.me.Machine.MaxSessions > 0 {
@@ -470,6 +486,7 @@ func (d *Daemon) tick(ctx context.Context) error {
 	// And its recurring duties keep the hour they were set for: this machine has a timezone
 	// database and the board does not.
 	d.syncZones(ctx, p.Boards)
+	d.sweepFinished(ctx)
 	if p.Paused || limited {
 		return nil
 	}
@@ -500,6 +517,81 @@ func (d *Daemon) tick(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// stopMissing stops the sessions on duties the board no longer says this machine holds. An event
+// normally says so at once, but a dropped one, or a board with no live updates, would otherwise leave
+// a session working on something nobody wants. Called with d.mu held.
+func (d *Daemon) stopMissing(boards []board.PollBoard) {
+	now := time.Now()
+	for _, b := range boards {
+		held := map[string]bool{}
+		for _, a := range b.Active {
+			held[a.DutyID] = held[a.DutyID] || a.Mine
+		}
+		for _, run := range d.runs {
+			switch {
+			case run.Board != b.ProjectID || run.byBoard.Load():
+			case held[run.DutyID]:
+				run.missingSince = time.Time{}
+			case run.missingSince.IsZero():
+				run.missingSince = now
+				time.AfterFunc(stopAfter, d.wake) // no later than this, however quiet the board is
+			case now.Sub(run.missingSince) >= stopAfter:
+				d.log.Printf("%s is no longer held here on the board; stopping its session", run.DutyID)
+				run.cancelByBoard()
+			}
+		}
+	}
+}
+
+// sweepFinished removes the work this machine still keeps for duties that ended with no session here
+// to clean up after them: parked here and then cancelled or deleted, finished on another machine, or
+// ended while this one was off.
+func (d *Daemon) sweepFinished(ctx context.Context) {
+	d.mu.Lock()
+	due := d.sweepDue || time.Since(d.sweptAt) >= sweepEvery
+	if due {
+		d.sweepDue, d.sweptAt = false, time.Now()
+	}
+	d.mu.Unlock()
+	if !due {
+		return
+	}
+	records, err := state.RunRecords()
+	if err != nil {
+		d.log.Printf("reading run records: %v", err)
+		return
+	}
+	for id, rec := range records {
+		d.mu.Lock()
+		v, linked := d.views[rec.Board]
+		d.mu.Unlock()
+		if !linked || d.isRunning(id) {
+			continue
+		}
+		duty, err := d.api.Get(ctx, rec.Board, id)
+		gone := board.IsStatus(err, 404)
+		if err != nil && !gone {
+			continue // the next sweep asks again
+		}
+		if !gone && duty.Status != "done" && duty.Status != "failed" {
+			continue
+		}
+		run := &Run{Board: rec.Board, DutyID: id, Agent: rec.Agent, Files: v.Folder(), Service: v.Service(), Spec: d.specFor(ctx, rec.Board, id, v), opened: rec.Repos}
+		// A duty someone marked done by hand may have no other copy than its branch, on a repository
+		// with no remote. One called off leaves nothing anyone is waiting for.
+		keepBranch := !gone && duty.Status == "done" && modeFor(ctx, v, run.Spec) == worktree.ModeBranch
+		if !run.Files && run.Spec.Repo == "" {
+			continue // the board's clone is not here yet, so there is nothing to remove it from
+		}
+		d.removeWork(ctx, run, v, keepBranch)
+		_ = state.SaveRunRecord(id, nil)
+		d.log.Printf("%s: removed what was kept for %s, which has ended", rec.Board, id)
+		if !gone && duty.Status == "failed" {
+			d.noteRemoved(ctx, run, false)
+		}
+	}
 }
 
 func (d *Daemon) folder(boardID string) string {

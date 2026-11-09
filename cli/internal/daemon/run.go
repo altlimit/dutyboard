@@ -51,6 +51,8 @@ type Run struct {
 	opened     []string // the board's other repositories this duty has a worktree of
 	cancel     context.CancelFunc
 	byBoard    atomic.Bool
+	// missingSince is when the board first answered without this duty among those this machine holds.
+	missingSince time.Time
 }
 
 func (r *Run) set(s, detail string) {
@@ -195,6 +197,7 @@ func (d *Daemon) execute(dctx, rctx context.Context, run *Run, duty *board.Duty,
 		path, created, files.Inputs, files.Missing, err = d.prepareFiles(rctx, run, duty)
 		if err != nil {
 			if rctx.Err() != nil {
+				d.settleStopped(dctx, run, v)
 				return
 			}
 			d.park(dctx, run, v, fmt.Sprintf("The runner on this machine could not fetch this duty's files, so it has not started:\n\n%v", err))
@@ -211,6 +214,11 @@ func (d *Daemon) execute(dctx, rctx context.Context, run *Run, duty *board.Duty,
 		}
 	} else {
 		path, created, err = d.wt.Ensure(rctx, spec)
+		if rctx.Err() != nil {
+			// Whatever went wrong in there is the stopping, not something to ask a person about.
+			d.settleStopped(dctx, run, v)
+			return
+		}
 		var prepErr *worktree.PrepError
 		switch {
 		case errors.As(err, &prepErr) && path != "":
@@ -258,7 +266,9 @@ func (d *Daemon) execute(dctx, rctx context.Context, run *Run, duty *board.Duty,
 	}
 
 	for {
-		if rctx.Err() != nil && !run.byBoard.Load() {
+		if rctx.Err() != nil {
+			_ = state.SaveRunRecord(run.DutyID, &rec)
+			d.settleStopped(dctx, run, v)
 			return
 		}
 		rulesAt, rules := d.rulesFor(dctx, run.Board)
@@ -389,6 +399,9 @@ func (d *Daemon) execute(dctx, rctx context.Context, run *Run, duty *board.Duty,
 			d.removeWork(dctx, run, v, keepBranch)
 			_ = state.SaveRunRecord(run.DutyID, nil)
 			d.log.Printf("%s: %s %q", run.Board, fresh.Status, fresh.Title)
+			if run.byBoard.Load() {
+				d.noteRemoved(dctx, run, true)
+			}
 			if fresh.Status == "done" && res != nil && res.OK && !res.NoOp && (res.Mode == worktree.ModePush || res.Mode == worktree.ModeSquash) {
 				d.watchDeploy(dctx, run, v, spec, res.Commit)
 			}
@@ -414,6 +427,7 @@ func (d *Daemon) execute(dctx, rctx context.Context, run *Run, duty *board.Duty,
 			select {
 			case <-dctx.Done():
 				return
+			case <-rctx.Done():
 			case <-time.After(time.Duration(rec.Attempts) * retryDelay()):
 			}
 			fresh.Notes = duty.Notes // a claim hands them over; a read of the duty does not
@@ -422,6 +436,67 @@ func (d *Daemon) execute(dctx, rctx context.Context, run *Run, duty *board.Duty,
 			d.afterPark(dctx, run, rec)
 			return
 		}
+	}
+}
+
+// settleStopped ends a run stopped while no session was running: still being prepared, or waiting to
+// retry. The board says what becomes of its work. It does nothing when the daemon itself is stopping,
+// since the record is what the next start resumes from.
+func (d *Daemon) settleStopped(dctx context.Context, run *Run, v board.BoardView) {
+	if dctx.Err() != nil || !run.byBoard.Load() {
+		return
+	}
+	fresh, err := d.api.Get(dctx, run.Board, run.DutyID)
+	gone := board.IsStatus(err, 404)
+	if err != nil && !gone {
+		d.log.Printf("reading %s after stopping it: %v", run.DutyID, err)
+		return
+	}
+	switch {
+	case gone || fresh.Status == "done" || fresh.Status == "failed":
+		d.removeWork(dctx, run, v, false)
+		_ = state.SaveRunRecord(run.DutyID, nil)
+		if !gone {
+			d.noteRemoved(dctx, run, true)
+		}
+	case fresh.Status == "active": // moved and moved back: the next pass picks it up as held
+	default:
+		records, _ := state.RunRecords()
+		d.afterPark(dctx, run, records[run.DutyID])
+	}
+}
+
+// noteRemoved puts it on the record that this machine has let go of a duty, so whoever called it off
+// can see that nothing is left running here rather than having to wonder.
+func (d *Daemon) noteRemoved(ctx context.Context, run *Run, stopped bool) {
+	d.mu.Lock()
+	machine := ""
+	if d.me != nil {
+		machine = d.me.Machine.Name
+	}
+	d.mu.Unlock()
+	what, left := "worktree", ""
+	if run.Files {
+		what = "folder"
+		dir, _, _ := d.filesFolder(run)
+		if _, err := os.Stat(dir); err == nil {
+			left = dir
+		}
+	} else if d.wt.Exists(run.Spec) {
+		left = d.wt.PathOf(run.Spec)
+	}
+	msg := fmt.Sprintf("Removed this duty's %s on %s.", what, machine)
+	if stopped {
+		msg = fmt.Sprintf("Stopped this duty's session on %s, with everything it started, and removed its %s.", machine, what)
+	}
+	if left != "" {
+		msg = fmt.Sprintf("Stopped this duty's session on %s, but could not remove `%s`.", machine, left)
+		if !stopped {
+			msg = fmt.Sprintf("Could not remove this duty's %s on %s: `%s`.", what, machine, left)
+		}
+	}
+	if err := d.api.Checkpoint(ctx, run.Board, run.DutyID, run.Agent, "note", msg, "", false); err != nil {
+		d.log.Printf("noting the clean-up on %s: %v", run.DutyID, err)
 	}
 }
 
@@ -482,6 +557,7 @@ func (d *Daemon) job(run *Run, v board.BoardView, path, system, task string, rec
 	servers, _ := d.boardMCPServers(v)
 	j := runner.Job{
 		Dir: path, Prompt: task, Instructions: system, SessionID: rec.Session, Resume: resume,
+		Mark:       "DUTYBOARD_RUN_TOKEN=" + run.Token,
 		Name:       clip(run.Title, 80),
 		Timeout:    180 * time.Minute,
 		SessionDir: state.Path("run", "sessions", run.Token),

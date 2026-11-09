@@ -329,6 +329,35 @@ async function main() {
     const removed = await until("slow worktree removed", () => !worktrees().includes(slow.duty_id), 20_000);
     check("deleting a duty stops its session and removes its worktree", !!removed && !events(log).some((e) => e.event === "slow-end"), worktrees());
 
+    // --- cancelled mid-session, and while parked ---------------------------------
+    const thread = async (id) => (await call("/duty/thread", { duty_id: id, limit: 50 }, human)).entries.map((e) => e.message).join("\n");
+    const stray = await call("/duty/enqueue", { project_id: boardId, title: "[slow][stray] Start a server and take forever", brief: "Sleeps." }, human);
+    const strayStart = await until("stray started", () => events(log).find((e) => e.event === "stray-start" && e.dutyId === stray.duty_id));
+    await call("/duty/cancel", { duty_id: stray.duty_id, reason: "changed my mind" }, human);
+    const strayGone = await until("cancelled worktree removed", () => !worktrees().includes(stray.duty_id), 20_000);
+    const cancelledRow = await get(stray.duty_id);
+    check("cancelling a duty fails it, saying who and why", cancelledRow.status === "failed" && /Cancelled by .*changed my mind/.test(cancelledRow.outcome_summary || ""), cancelledRow);
+    check("it stops the session and removes its worktree", !!strayGone && !events(log).some((e) => e.event === "slow-end" && e.dutyId === stray.duty_id), worktrees());
+    const strayAlive = () => {
+      try {
+        process.kill(strayStart.pid, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    check("and ends what the session started outside its process group", !strayAlive(), strayStart.pid);
+    if (strayAlive()) process.kill(strayStart.pid, "SIGKILL");
+    check("the machine says so on the duty", !!(await until("stop noted", async () => /Stopped this duty's session on .*removed its worktree/.test(await thread(stray.duty_id)), 20_000)));
+
+    const parkedAway = await call("/duty/enqueue", { project_id: boardId, title: "[park] Then never mind", brief: "Ask, then do it." }, human);
+    await until("parked before cancelling", async () => (await get(parkedAway.duty_id)).status === "needs_decision");
+    check("a parked duty's worktree is kept", worktrees().includes(parkedAway.duty_id), worktrees());
+    await call("/duty/cancel", { duty_id: parkedAway.duty_id }, human);
+    const parkedGone = await until("parked worktree removed", () => !worktrees().includes(parkedAway.duty_id), 20_000);
+    check("cancelling a parked duty removes the worktree it was keeping", !!parkedGone, worktrees());
+    check("and says that too", !!(await until("removal noted", async () => /Removed this duty's worktree on /.test(await thread(parkedAway.duty_id)), 20_000)));
+
     // --- a board of one-off tasks: files in, files out, no repository ------------
     const errands = `errands-${Date.now().toString(36)}`;
     await call("/projects/create", { name: "Errands", project_id: errands, profile: { workspace: "files", description: "Things to print." }, runner: { parallel: 1 } }, human);

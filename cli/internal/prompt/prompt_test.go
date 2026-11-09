@@ -108,6 +108,16 @@ func TestEveryKindRenders(t *testing.T) {
 		t.Errorf("people's notes on the duty are not handed to the session:\n%s", out)
 	}
 
+	told, err := System(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"Never poll", "`duty_schedule_create`", "fetches what it needs for itself", "do not keep trying it"} {
+		if !strings.Contains(told, want) {
+			t.Errorf("sessions are not told %q:\n%s", want, told)
+		}
+	}
+
 	in.Duty.Check, in.Check = "scripts/inbox.sh", "2 new emails from billing@"
 	if out, _ := Duty(in); !strings.Contains(out, "`scripts/inbox.sh`") || !strings.Contains(out, "2 new emails from billing@") {
 		t.Errorf("what the schedule's check found is not handed to the session:\n%s", out)

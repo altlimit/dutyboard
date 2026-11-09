@@ -158,6 +158,10 @@ func (d *Daemon) MCP(ctx context.Context, runToken, cwd string, raw json.RawMess
 		if p.Arguments == nil {
 			p.Arguments = map[string]any{}
 		}
+		// Stopping takes a moment, and in that moment the session must not land, deploy or file anything.
+		if s.run != nil && s.run.byBoard.Load() {
+			return toolText(msg.ID, "this duty was moved on the board and this session is being stopped: stop now", true), nil
+		}
 		if reply, handled := d.localTool(ctx, s, msg.ID, p.Name, p.Arguments); handled {
 			return reply, nil
 		}

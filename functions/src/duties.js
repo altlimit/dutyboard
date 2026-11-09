@@ -906,6 +906,11 @@ export async function checkpointDuty(ctx, body) {
   const setStatus = body.set_status
     ? oneOf(body.set_status, "set_status", ["needs_decision", "blocked", "active"])
     : null;
+  // A session stopping as its duty is cancelled can still get a last call in. That must not bring
+  // the duty back: only a person takes a duty out of a terminal state.
+  if (setStatus && ctx.caller.kind !== "human" && (duty.status === "done" || duty.status === "failed")) {
+    throw conflict(`duty '${duty.key}' is already ${duty.status}`, { status: duty.status });
+  }
 
   // Built once and returned below. A caller that has just written an entry should not
   // have to re-read the thread to find out what it wrote — that read is the single most
@@ -997,29 +1002,34 @@ export async function failDuty(ctx, body) {
 }
 
 /**
- * `POST /duty/cancel` — the token that filed a duty takes it back, while nobody is working it.
+ * `POST /duty/cancel` — call a duty off.
  *
  * It ends `failed`, not deleted: the record of what was asked and why it was called off stays on
- * the board, and the webhook says so like any other ending. A duty a session holds is not the
- * caller's to pull out from under it — a person on the board can.
+ * the board, and the webhook says so like any other ending.
+ *
+ * A person on the board may cancel a duty in any unfinished state. The status change is what stops
+ * the work: the daemon holding it ends the session and everything it started, then removes the
+ * duty's worktree or folder, and says so on the thread.
+ *
+ * The token that filed a duty may take it back too, but only while nobody is working it: a duty a
+ * session holds is not that caller's to pull out from under it.
  */
 export async function cancelDuty(ctx, body) {
-  const caller = requireAgent(ctx.caller);
+  const caller = ctx.caller.kind === "human" ? ctx.caller : requireAgent(ctx.caller);
   const duty = await loadDuty(ctx, body.duty_id);
   await projectOfDuty(caller, duty, ctx.store);
+  const reason = str(body.reason, "reason", { max: 1000, fallback: "" });
+  const said = reason ? `: ${reason}` : ".";
+  if (caller.kind === "human") {
+    return finishDuty(ctx, { duty_id: duty.key, reason: `Cancelled by ${caller.name}${said}` }, "failed", { duty });
+  }
   if (!caller.tokenKey || duty.filed_by_token !== caller.tokenKey) {
     throw forbidden(`duty '${duty.key}' was not filed by this token — only what it filed can it cancel`);
   }
   if (duty.status === "active") {
     throw conflict(`duty '${duty.key}' is being worked on — cancel it from the board, where whoever holds it can be stopped`, { status: duty.status });
   }
-  const reason = str(body.reason, "reason", { max: 1000, fallback: "" });
-  return finishDuty(
-    ctx,
-    { duty_id: duty.key, reason: `Cancelled by ${caller.tokenName || "the token that filed it"}${reason ? `: ${reason}` : "."}` },
-    "failed",
-    { duty },
-  );
+  return finishDuty(ctx, { duty_id: duty.key, reason: `Cancelled by ${caller.tokenName || "the token that filed it"}${said}` }, "failed", { duty });
 }
 
 async function finishDuty(ctx, body, terminal, { duty: held } = {}) {

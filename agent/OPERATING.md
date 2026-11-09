@@ -78,6 +78,19 @@ duty_checkpoint(
   set_status="needs_decision")
 ```
 
+## A duty has an end
+
+Never poll, sleep in a loop, or stay in a session to see what happens later: a scheduled job
+firing, a deploy settling, a page changing. Check what you can now, finish, and say plainly what
+has not been seen working yet. What must happen later or keep happening is a recurring duty (see
+*Work that comes round again*).
+
+Work out what the person is after, and treat the steps in a brief or an answer as a way to get
+there. Someone who asks for something to stay current wants a thing that fetches what it needs for
+itself when it is opened, not a copy that has to be refreshed. If the way you were told or chose
+turns out not to work, do not keep trying it: take another that gets them the same thing within
+what they agreed to, or put the choice on the board if it needs their say.
+
 ## Before you build something that sounds familiar
 
 **`duty_search`** looks through the duties already finished on this board — their titles,
@@ -161,14 +174,21 @@ twice.
 - **`duty_schedule_history`** shows what one has actually filed, newest first, with how each run
   went — a page at a time, so pass `cursor` from `next_cursor` for older ones rather than asking
   for everything.
-- Anything that commits the board to work indefinitely is better proposed to a person in a
-  `duty_checkpoint` than decided by you. **`duty_schedule_update`** pauses one with
+- Use one for anything that must happen later: refreshing data, watching for a change, looking
+  back to see whether something worked. Each run knows only its brief and how the last one went,
+  so the brief must carry every URL and step. Delete one you needed only for a follow-up once it
+  has its answer.
+- When a duty asks for something to stay current or be watched, that is a person asking: set it up
+  and name it in your outcome. When nobody asked, propose it in a `duty_checkpoint` rather than
+  commit the board to work indefinitely. **`duty_schedule_update`** pauses one with
   `enabled: false`; **`duty_schedule_delete`** removes it — ask first if a person set it up.
 
 ## Rules the board enforces
 
 - One active duty at a time. Claiming a second returns a `409` naming the one to finish.
 - Only a person can post a resolution. You cannot answer your own question.
+- A person can cancel a duty at any time. It ends `failed`, your session is stopped, and the
+  machine's worktree or folder for it is removed. Anything after that is refused.
 - `duty_complete` needs a non-empty `outcome_summary`.
 - Use `duty_fail` only for work that genuinely cannot be done. Anything a person could
   unblock is a `needs_decision`, not a failure.
