@@ -34,7 +34,7 @@ const PAGE = 12;
  * backend/indexes.json. `status != "done"` would be a range, which cannot lead an order on
  * a different field.
  */
-const LIVE_STATUSES = STATUS_COLUMNS.map((c) => c.key).filter((k) => k !== "done");
+const LIVE_STATUSES = STATUS_COLUMNS.map((c) => c.key).filter((k) => k !== "done" && k !== "note");
 /** The point past which the working set stops being read whole. Reaching it means over two
  *  hundred unfinished duties on one board, at which point a mixed page could let one column
  *  starve another and each goes back to its own top-N. */
@@ -140,6 +140,13 @@ function clearSearch() {
 const error = ref("");
 const liveState = ref("connecting");
 const showForm = ref(false);
+const showNotes = ref(false);
+const formKind = ref("duty");
+function openForm(kind) {
+  showForm.value = formKind.value === kind ? !showForm.value : true;
+  formKind.value = kind;
+}
+watch(showNotes, (visible) => { if (visible) { picked.value = "note"; loadColumn("note"); } });
 /** How long a finished duty stays, as the board's settings say a new one should start. */
 const defaultExpiry = () => (board.value && board.value.profile && board.value.profile.expire_after_days) || 0;
 const blankDraft = () => ({ title: "", brief: "", priority: "next", expire_after_days: defaultExpiry() });
@@ -302,6 +309,7 @@ async function refresh(keys, { agents = true } = {}) {
   const jobs = [];
   if (all || [...keys].some((k) => k !== "done")) jobs.push(loadLive(all ? null : keys));
   if (all || keys.has("done")) jobs.push(loadColumn("done"));
+  if (showNotes.value && (all || keys.has("note"))) jobs.push(loadColumn("note"));
   if (agents) jobs.push(loadAgents());
   await Promise.all(jobs);
   await loadTotals();
@@ -509,7 +517,8 @@ async function addDuty() {
   error.value = "";
   attachFailed.value = null;
   try {
-    const created = await api("/duty/enqueue", {
+    const isNote = formKind.value === "note";
+    const created = await api(isNote ? "/note/create" : "/duty/enqueue", {
       project_id: props.projectId,
       title: draft.value.title,
       brief: draft.value.brief,
@@ -525,9 +534,9 @@ async function addDuty() {
     draft.value = blankDraft();
     draftFiles.value = [];
     showForm.value = false;
-    // A new duty is queued, by definition — no other column can have changed, so no other
-    // column needs re-reading.
-    await refresh(new Set(["queued"]), { agents: false });
+    // New notes stay outside the queue; reveal the lane after saving one.
+    if (isNote) { showNotes.value = true; picked.value = "note"; }
+    await refresh(new Set([isNote ? "note" : "queued"]), { agents: false });
   } catch (err) {
     error.value = err.message;
   } finally {
@@ -543,7 +552,7 @@ const needsYou = computed(() => count("needs_decision"));
  *  `failed` is hidden while it is empty. It is a real state an agent can reach and it
  *  needs somewhere to appear — but on most boards it never happens, and a permanently
  *  empty sixth column costs every other column a fifth of its width. */
-const shownColumns = computed(() => STATUS_COLUMNS.filter((c) => !c.whenUsed || count(c.key) > 0));
+const shownColumns = computed(() => STATUS_COLUMNS.filter((c) => (!c.hidden || showNotes.value) && (!c.whenUsed || count(c.key) > 0)));
 
 /** The phone layout's column: whatever was chosen, else the one that wants a person. */
 const focusColumn = computed(() => {
@@ -556,6 +565,7 @@ watch(
   () => {
     resetColumns();
     picked.value = null;
+    showNotes.value = false;
     openBoard();
     loadAll({ agents: false });
   },
@@ -608,9 +618,11 @@ onUnmounted(() => {
           <button type="submit" :disabled="searching || !searchQuery.trim()">{{ searching ? "…" : "Search" }}</button>
         </form>
         <button type="button" @click="loadAll">Refresh</button>
-        <button class="primary" type="button" @click="showForm = !showForm" :aria-expanded="showForm">
-          {{ showForm ? "Cancel" : "Add duty" }}
+        <button class="primary" type="button" @click="openForm('duty')" :aria-expanded="showForm && formKind === 'duty'">
+          {{ showForm && formKind === 'duty' ? "Cancel" : "Add duty" }}
         </button>
+        <button type="button" @click="openForm('note')" :aria-expanded="showForm && formKind === 'note'">{{ showForm && formKind === 'note' ? "Cancel note" : "Add Note" }}</button>
+        <button type="button" :aria-pressed="showNotes" @click="showNotes = !showNotes">{{ showNotes ? "Hide notes" : "Show notes" }}</button>
       </div>
     </div>
 
@@ -626,34 +638,33 @@ onUnmounted(() => {
     </div>
 
     <p v-if="needsYou" class="notice notice--warn" role="status">
-      {{ needsYou }} {{ needsYou === 1 ? "duty is" : "duties are" }} waiting on an answer from you. Agents have
-      already moved on to other work — answering puts each one back at the front of the queue.
+      {{ needsYou }} {{ needsYou === 1 ? "duty needs" : "duties need" }} your answer or approval before work can begin or resume.
     </p>
 
     <form v-if="showForm" class="panel panel--form stack" @submit.prevent="addDuty">
-      <h2>Add a duty</h2>
+      <h2>{{ formKind === "note" ? "Add a note" : "Add a duty" }}</h2>
       <div class="field">
         <label for="d-title">Title</label>
         <input id="d-title" v-model="draft.title" required maxlength="200" placeholder="A short name for what you want done" />
       </div>
       <div class="field">
-        <label for="d-brief">Brief</label>
+        <label for="d-brief">{{ formKind === "note" ? "Note" : "Brief" }}</label>
         <textarea
           id="d-brief"
           v-model="draft.brief"
-          required
+          :required="formKind !== 'note' || !draftFiles.length"
           maxlength="4000"
-          placeholder="What should change, and how you will know it is done."
+          :placeholder="formKind === 'note' ? 'Ideas, reference material, questions, or context for the board.' : 'What should change, and how you will know it is done.'"
         ></textarea>
-        <p class="hint">An agent may pick this up with no other context. Write it for that reader.</p>
+        <p class="hint">{{ formKind === "note" ? "Saving a note does not start work. Choose Suggest duties on the saved note when you want an agent to review it." : "An agent may pick this up with no other context. Write it for that reader." }}</p>
       </div>
-      <div class="field">
+      <div v-if="formKind !== 'note'" class="field">
         <label for="d-priority">Priority</label>
         <select id="d-priority" v-model="draft.priority">
           <option v-for="p in PRIORITIES" :key="p.key" :value="p.key">{{ p.label }} — {{ p.hint }}</option>
         </select>
       </div>
-      <div class="field">
+      <div v-if="formKind !== 'note'" class="field">
         <label for="d-expire">Once it is done</label>
         <select id="d-expire" v-model.number="draft.expire_after_days">
           <option v-for="c in expiryChoices(draft.expire_after_days)" :key="c.days" :value="c.days">{{ c.label }}</option>
@@ -676,8 +687,7 @@ onUnmounted(() => {
           </li>
         </ul>
         <p class="hint">
-          A screenshot of the bug, a recording, a log — choose them or paste them in. Uploaded when you add the duty, and an
-          agent that picks it up reads them before asking about it.
+          A screenshot of the bug, a recording, a log — choose them or paste them in. Uploaded with your {{ formKind === "note" ? "note" : "duty" }} and available to the agent when it reads it.
         </p>
         <ul v-if="uploading.length" class="uploads" aria-live="polite">
           <li v-for="u in uploading" :key="u.name">
@@ -688,10 +698,10 @@ onUnmounted(() => {
         </ul>
       </div>
       <div>
-        <button class="primary" type="submit" :disabled="adding || !draft.title || !draft.brief">
+        <button class="primary" type="submit" :disabled="adding || !draft.title.trim() || (!draft.brief.trim() && (formKind !== 'note' || !draftFiles.length))">
           {{
             !adding
-              ? draftFiles.length
+              ? formKind === "note" ? "Save note" : draftFiles.length
                 ? `Add to the queue with ${draftFiles.length} file${draftFiles.length === 1 ? "" : "s"}`
                 : "Add to the queue"
               : uploading.length
@@ -765,6 +775,7 @@ onUnmounted(() => {
         :project-id="projectId"
         :activity="activity"
         @more="loadColumn($event, { append: true })"
+        @changed="refresh(new Set([$event, 'queued']), { agents: false })"
       />
     </div>
 
@@ -797,6 +808,7 @@ onUnmounted(() => {
         :activity="activity"
         standalone
         @more="loadColumn($event, { append: true })"
+        @changed="refresh(new Set([$event, 'queued']), { agents: false })"
       />
     </template>
   </div>

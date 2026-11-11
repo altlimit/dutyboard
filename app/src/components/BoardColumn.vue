@@ -16,7 +16,7 @@ const props = defineProps({
   activity: { type: Object, default: () => ({}) },
 });
 
-defineEmits(["more"]);
+defineEmits(["more", "changed"]);
 
 /** A cursor is the only thing that means "there is more". Every row fetched is on screen,
  *  so this button always costs a request and always brings something back. */
@@ -35,7 +35,7 @@ const more = computed(() => !!props.state.cursor);
 
     <ul class="column__list">
       <li v-for="duty in state.rows" :key="duty.key">
-        <DutyCard :duty="duty" :project-id="projectId" :activity="activity[duty.key]" />
+        <DutyCard :duty="duty" :project-id="projectId" :activity="activity[duty.key]" @changed="$emit('changed', col.key)" />
       </li>
     </ul>
 

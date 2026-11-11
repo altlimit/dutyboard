@@ -101,3 +101,10 @@ func TestCodexStream(t *testing.T) {
 		t.Errorf("a turn failed on the usage limit: %+v", o)
 	}
 }
+
+func TestCodexUsesAdvertisedEffortWithoutLegacyMapping(t *testing.T) {
+	args, _ := codexArgs(Job{Effort: "max", NativeEffort: true, Prompt: "work"})
+	if !strings.Contains(strings.Join(args, " "), `model_reasoning_effort="max"`) {
+		t.Fatal("catalog effort was silently changed", args)
+	}
+}

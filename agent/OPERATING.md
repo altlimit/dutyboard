@@ -3,6 +3,24 @@
 You have a DutyBoard connected. It holds the work, the decisions made about it, and the
 record of what was done — across sessions, and across whatever runs out of context first.
 
+## Session mode and runner fallback
+
+An interactive connection uses the loop below. A session started by the DutyBoard daemon
+already holds one duty: do not claim another on the source board. Finish or park the assigned
+duty and stop; the daemon chooses the next job.
+
+The machine owner enables agent/model/effort combinations from its installed CLI catalogs.
+The board owner selects their priority order. `board_profile` exposes `runner.options` (or
+legacy `runner.agent`, `model`, and `effort`), not live availability or remaining usage.
+The daemon selects a matching available combination and tries the next when usage runs out.
+A replacement session keeps the same duty and workspace: read checkpoints and inspect existing
+changes before continuing. Post useful checkpoints so another agent can resume safely.
+
+Do not change agent selection or retry usage limits yourself. After fixing an account or usage
+on the server, the board or machine owner can click **Retry now** on the waiting duty or machine.
+**Refresh models** refreshes CLI catalogs; **Check again** checks readiness. Neither clears
+usage cooldowns. These are owner controls, not agent MCP tools.
+
 ## The loop
 
 1. **`duty_poll`.** It answers with the duty you are holding, if any, and the top of the
@@ -14,6 +32,63 @@ record of what was done — across sessions, and across whatever runs out of con
 4. **`duty_complete`** with a real `outcome_summary`. If a person wrote on the duty while you
    worked, it is refused once with their notes: do what they ask, then complete again.
 5. Poll again.
+
+## Linked boards
+
+Use **`board_links`** when your duty needs another board's context or work. It lists only boards this board can currently access, their READ/WRITE/FULL grants and the allowed operations.
+
+Use **`board_call`** with the receiving `project_id`, the tool name as `operation`, and its normal `arguments`. Read the receiving board's rules first. READ permits context reads; WRITE also permits filing independent duties and attaching their input files; FULL permits existing agent actions under their usual claim and approval requirements. Ordinary tools still operate on your own board. A grant in one direction does not imply the reverse, and links never extend through a third board.
+
+`duty_list` reads all lanes, including notes and duties awaiting a human. Follow its cursor when more pages exist. Supply a stable `external_ref` when filing work so retries do not duplicate it. A headless session's daemon supplies its source duty and agent identity automatically.
+
+A note-review duty may read linked boards for context but must suggest work on its own board for human approval. A link is not permission to carry out that proposed work.
+
+For example, call `board_call` with these arguments after discovering `board-b`:
+
+```json
+{"project_id":"board-b","operation":"board_rules"}
+```
+
+```json
+{"project_id":"board-b","operation":"duty_enqueue","arguments":{"title":"Export totals","brief":"Provide a CSV of totals; verify headings and totals.","external_ref":"totals-export"}}
+```
+
+Use target-board IDs inside `arguments`; never use a source duty as `spawned_by`. WRITE can
+attach files only to duties filed by this source board. Direct MCP clients should pass their
+source `agent_id` and, when holding a duty, `source_duty_id` at the outer level for provenance.
+A FULL target claim uses `board_call` for `duty_poll`, then `duty_claim` with the target `duty_id`.
+Finish or park that target claim before ending the source session. Local integration, deployment,
+workspaces and account credentials remain those of the source session; a link does not transfer them.
+If access is refused, refresh `board_links` and report the missing access if it blocks your duty.
+Only the receiving board's owner can grant or revoke access.
+
+## Notes and human-approved suggestions
+
+Notes are source material outside the runnable queue. Use **`duty_list`** with `status: "note"`
+to browse them, or `status: "needs_decision"` to inspect Needs you. Pass the returned `cursor`
+until it is null. Reading a note never authorizes implementing it. A person chooses **Suggest
+duties** to queue a separate `note_review` duty; only work that review after it is assigned to you.
+
+1. Read `source_note_id` using **`duty_get`**, its discussion with **`duty_thread`**, and its files
+   with **`duty_attachments`**. Read the review's thread too when resuming.
+2. Inspect the note's `suggestions`, following **`suggestions_cursor`** through all pages with
+   `duty_get`. Check their statuses and outcomes to avoid duplicating approved or completed work.
+3. Call **`duty_suggest`** for each actionable proposal, with a specific title, complete brief,
+   acceptance criteria, optional clarification `question`, and a stable `external_ref` for retries.
+   The server links it to the note and review, with `approval_required: true` in Needs you.
+4. Complete the review with the suggestion IDs and a short summary. If nothing is actionable,
+   explain why. If essential input cannot be read, park the review with a concrete question.
+
+During a review, do not implement, integrate, install, deploy, change accounts or schedule work.
+`duty_enqueue` also creates approval-required suggestions during a review. Only a person may
+**Approve duty**, **Approve with answer**, or **Reject suggestion**; neither FULL board access
+nor an ordinary enqueue can bypass that gate. Approved work retains `source_note_id`: read the
+source and human answer, then implement only the approved brief.
+
+After a review ends, a person may **Clear and suggest again**. This starts a new review; it does
+not erase past suggestions or their source links. Read that history before suggesting again.
+Creating notes, starting/clearing reviews and approving/rejecting suggestions are human actions,
+not agent MCP tools.
 
 ## Work that comes back
 
@@ -107,7 +182,7 @@ duty_search(query="~authenticate")
 duty_search(query='"webhook signature"')
 ```
 
-Only finished duties are in there — `duty_poll` is what shows you live work — and indexing
+Only finished duties are in there — `duty_list` shows all lanes and `duty_poll` shows runnable work — and indexing
 is not instant, so an empty result immediately after finishing something means nothing.
 
 ## Report what you find, do not absorb it

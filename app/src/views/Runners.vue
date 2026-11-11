@@ -4,7 +4,8 @@ import { useRoute } from "vue-router";
 import { api } from "../lib/altengine.js";
 import { config } from "../config.js";
 import { ago } from "../lib/duties.js";
-import { runStateLabel } from "../lib/runners.js";
+import MachineAgents from "../components/MachineAgents.vue";
+import { AGENTS, runnerLimited, runStateLabel } from "../lib/runners.js";
 import { CONSOLE_VERSION, differs, serviceVersion } from "../lib/version.js";
 
 // Your machines: the computers running `dutyboard` for you, what each is working on, and the
@@ -44,9 +45,9 @@ const shown = (m) => {
   const items = readiness(m);
   // With no board on it yet, every agent is worth seeing: the first board picks one.
   if (!m.links.length) return items;
-  return items.filter((it) => it.needed || it.state === "ok");
+  return items.filter((it) => it.needed || it.state === "ok" || AGENTS.some((a) => a.key === it.key));
 };
-const unneeded = (m) => (m.links.length ? readiness(m).filter((it) => !it.needed && it.state !== "ok") : []);
+const unneeded = (m) => (m.links.length ? readiness(m).filter((it) => !it.needed && it.state !== "ok" && !AGENTS.some((a) => a.key === it.key)) : []);
 const mark = (state) => (state === "ok" ? "✓" : state === "todo" ? "!" : "?");
 
 // Installs and sign-ins asked for from here, followed until they finish: an open one shows on its
@@ -170,8 +171,8 @@ function revoke(m) {
 
 function retry(m, link) {
   act(
-    () => api("/machines/retry", { machine_id: m.machine_id, project_id: link.project_id }),
-    `Asked ${m.name} to check ${link.project_id} again — its answer shows here in a few seconds.`,
+    () => api("/machines/retry", { machine_id: m.machine_id, project_id: link.project_id, reset_limits: runnerLimited(link) }),
+    runnerLimited(link) ? `Retry saved for ${m.name}. It will clear this board's model cooldowns on its next check.` : `Asked ${m.name} to check ${link.project_id} again — its answer shows here in a few seconds.`,
   );
   setTimeout(() => load({ quiet: true }), 8000);
 }
@@ -234,7 +235,7 @@ onUnmounted(() => {
         <h1>Your machines</h1>
         <p class="muted" style="margin: 0">
           Computers running <code class="mono">dutyboard</code> for you. Each one claims duties from the boards
-          linked to it and works them with the board's agent — Claude Code, Codex or Cursor — in a git worktree of its own.
+          linked to it and works them with the board's preferred available agents — Claude Code, Codex or Cursor — in a git worktree of its own.
         </p>
         <p class="small" style="margin: 0.4rem 0 0">
           API URL, for pairing a machine: <code class="mono">{{ config.api }}</code>
@@ -396,6 +397,8 @@ onUnmounted(() => {
           </p>
         </section>
 
+        <MachineAgents :machine="m" :disabled="busy" @refresh="checkAgain(m)" @save="(options) => update(m, { agent_options: options }, 'Agent availability saved.')" />
+
         <div v-if="m.links.length" class="tablewrap">
           <table>
             <caption class="sr-only">Boards {{ m.name }} works</caption>
@@ -414,7 +417,7 @@ onUnmounted(() => {
                 <td>
                   <p v-if="l.problem" class="notice notice--warn small" style="margin: 0 0 0.3rem">{{ l.problem }}</p>
                   <p v-if="l.notice" class="notice small" style="margin: 0 0 0.3rem">{{ l.notice }}</p>
-                  <button v-if="l.problem || l.notice" type="button" class="link small" :disabled="busy" @click="retry(m, l)">
+                  <button v-if="l.problem || l.notice || runnerLimited(l)" type="button" class="link small" :disabled="busy" @click="retry(m, l)">
                     Retry now<span class="sr-only"> for {{ l.project_id }}</span>
                   </button>
                   <span v-if="!l.runs.length" class="muted">idle</span>

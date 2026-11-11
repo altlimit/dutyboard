@@ -251,7 +251,7 @@ export async function listAttachments(ctx, body) {
   const trueCount = out.length;
   const stale = await ctx.store.get("duties", duty.key);
   const cached = stale ? stale.attachment_count || 0 : 0;
-  if (abandoned.length || cached !== trueCount) {
+  if (!ctx.readOnly && (abandoned.length || cached !== trueCount)) {
     await ctx.store.transaction([
       ...abandoned.map((key) => deleteOp("attachments", key)),
       putOp("duties", duty.key, {

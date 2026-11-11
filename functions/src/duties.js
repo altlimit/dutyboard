@@ -51,7 +51,7 @@ import { machinesPresent } from "./live.js";
 import { noteScheduleOutcome, noteQuietRun } from "./schedules.js";
 import { runnerPrefixes } from "./tokens.js";
 
-export const STATUSES = ["queued", "active", "needs_decision", "blocked", "done", "failed"];
+export const STATUSES = ["note", "queued", "active", "needs_decision", "blocked", "done", "failed"];
 export const PRIORITIES = ["immediate_blocker", "next", "backlog"];
 export const THREAD_KINDS = ["question", "resolution", "checkpoint", "note"];
 
@@ -350,6 +350,7 @@ async function presenceFor(ctx, duties) {
  * worktree has the half-finished work, but only while that machine is there to pick it up.
  */
 function claimBlocker(ctx, duty, agentId, present, now) {
+  if (duty.kind === "note" || duty.approval_required) return "this note or suggestion needs human approval before it can be worked";
   if (duty.reserved_for && !reservedTo(duty.reserved_for, agentId)) {
     return `duty '${duty.key}' is reserved for '${duty.reserved_for}'`;
   }
@@ -372,7 +373,13 @@ function claimBlocker(ctx, duty, agentId, present, now) {
 export async function getDuty(ctx, body) {
   const duty = await loadDuty(ctx, body.duty_id);
   await projectOfDuty(ctx.caller, duty, ctx.store);
+  const linked = duty.kind === "note" ? await ctx.store.query("duties", {
+    where: [{ field: "project_id", op: "=", value: duty.project_id }, { field: "source_note_id", op: "=", value: duty.key }, { field: "kind", op: "=", value: "work" }],
+    order: [{ field: "created_at", dir: "desc" }], limit: 25,
+    cursor: str(body.suggestions_cursor, "suggestions_cursor", { max: 4000, fallback: "" }) || undefined,
+  }) : null;
   return {
+    ...(linked ? { suggestions: linked.rows.map(d => ({ ...briefOf(d, { full: true }), review_duty_id: d.spawned_by, outcome_summary: d.outcome_summary || null })), suggestions_cursor: linked.rows.length === 25 ? linked.cursor : null } : {}),
     duty: {
       ...briefOf(duty, { full: true }),
       outcome_summary: duty.outcome_summary || null,
@@ -394,6 +401,19 @@ export async function getDuty(ctx, body) {
       updated_at: duty.updated_at,
     },
   };
+}
+
+/** Read a page of any lane without polling or touching an agent's state. */
+export async function listDuties(ctx, body) {
+  const project = await resolveProject(ctx.caller, body.project_id, ctx.store);
+  const status = oneOf(body.status, "status", [...STATUSES, "any"], "any");
+  const limit = intIn(body.limit, "limit", 1, 50, 25);
+  const { rows, cursor } = await ctx.store.query("duties", {
+    where: [{ field: "project_id", op: "=", value: project.key }, ...(status === "any" ? [] : [{ field: "status", op: "=", value: status }])],
+    order: [{ field: "updated_at", dir: "desc" }], limit,
+    cursor: str(body.cursor, "cursor", { max: 4000, fallback: "" }) || undefined,
+  });
+  return { project_id: project.key, duties: rows.map(d => ({ ...briefOf(d, { full: true }), outcome_summary: d.outcome_summary || null, last_question: d.last_question || null })), cursor: rows.length === limit ? cursor : null };
 }
 
 /** Duties per page of `/duty/changes`. */
@@ -584,7 +604,7 @@ export async function claimDuty(ctx, body) {
   return {
     status: "active",
     duty_id: duty.key,
-    duty: { ...briefOf({ ...claimed, key: duty.key }, { full: true }), notes },
+    duty: { ...briefOf({ ...claimed, key: duty.key }, { full: true }), expect_files: claimed.expect_files || 0, notes },
     // So a daemon can tell, from the claim alone, whether the rules it has are current.
     rules_version: (board && board.rules_version) || 0,
   };
@@ -632,6 +652,48 @@ function pickLane(duty, board, active, projectKey) {
   throw conflict(`this board runs ${parallel} duties at a time, and all are taken`, { parallel });
 }
 
+/** Notes live outside the runnable queue, but share files, threads and board access. */
+export async function createNote(ctx, body) {
+  requireHuman(ctx.caller);
+  const brief = str(body.brief, "brief", { max: 4000, fallback: "" });
+  if (!brief && !body.expect_files) throw badRequest("add note text or a file");
+  return enqueueDuty(ctx, { project_id: body.project_id, title: body.title, brief: brief || "See attached files.", expect_files: body.expect_files }, { note: true });
+}
+
+export async function processNote(ctx, body) {
+  requireHuman(ctx.caller);
+  const note = await loadDuty(ctx, body.note_id);
+  await projectOfDuty(ctx.caller, note, ctx.store);
+  if (note.kind !== "note" || note.status !== "note") throw conflict("this is not a board note");
+  if (note.review_duty_id) {
+    const review = await ctx.store.get("duties", note.review_duty_id);
+    if (review) return filedAlready(review);
+  }
+  return enqueueDuty(ctx, {
+    project_id: note.project_id, title: `Suggest duties: ${note.title}`.slice(0, 200),
+    brief: `Review note ${note.key} and its attachments using duty_get and duty_attachments. Read existing suggested duties linked to the note before creating more. Create actionable suggestions with duty_suggest (or duty_enqueue), each with a clear brief and an optional question. Every suggestion requires human approval. Do not carry out the suggested work, change accounts, schedule work, commit, integrate or deploy. Finish this review with duty_complete and a summary of the suggestions, or explain why none are needed.`,
+  }, { reviewNote: note });
+}
+
+export async function clearNoteSuggestions(ctx, body) {
+  requireHuman(ctx.caller);
+  const note = await loadDuty(ctx, body.note_id);
+  await projectOfDuty(ctx.caller, note, ctx.store);
+  if (note.kind !== "note") throw conflict("this is not a board note");
+  if (note.review_duty_id) {
+    const review = await ctx.store.get("duties", note.review_duty_id);
+    if (review && UNFINISHED.includes(review.status)) throw conflict("finish or cancel the current review before clearing its link");
+  }
+  await ctx.store.putOne("duties", note.key, { ...stripMeta(note), review_duty_id: null, suggestion_round: dutyId(), updated_at: Date.now() });
+  await ctx.publish(note.project_id, note.key, { t: "duty", id: note.key, status: "note" });
+  return { ok: true, note_id: note.key };
+}
+
+export async function suggestDuty(ctx, body) {
+  requireAgent(ctx.caller);
+  return enqueueDuty(ctx, body, { suggest: true });
+}
+
 /**
  * `POST /duty/enqueue` — new work, from either side of the board.
  *
@@ -639,21 +701,44 @@ function pickLane(duty, board, active, projectKey) {
  * until this is done": the held duty moves to `blocked` referencing the new child, and
  * the agent is freed to claim the child on its next poll.
  */
-export async function enqueueDuty(ctx, body) {
+export async function enqueueDuty(ctx, body, internal = {}) {
   const project = await resolveProject(ctx.caller, body.project_id, ctx.store);
   const submit = ctx.caller.scope === "submit";
+  const agentId = submit ? "" : agentIdFrom(ctx, body, { required: false });
+  // A review can only file suggestions, even if it uses the ordinary enqueue tool.
+  const agent = agentId ? await ctx.store.get("agents", agentKey(project.key, agentId)) : null;
+  const held = agent?.active_duty_id ? await ctx.store.get("duties", agent.active_duty_id) : null;
+  const spawningID = str(body.spawned_by, "spawned_by", { max: 64, fallback: "" });
+  const spawning = spawningID ? await ctx.store.get("duties", spawningID) : null;
+  if (spawning?.project_id === project.key && spawning.kind === "note_review" && (held?.key !== spawning.key || held.status !== "active")) {
+    throw conflict("this note review is no longer held; its session must stop");
+  }
+  const review = held?.status === "active" && held.kind === "note_review" ? held : null;
+  if (internal.suggest && !review) throw conflict("claim a note review before suggesting duties");
+  if (review && (body.kind && body.kind !== "work" || body.parent_id)) throw forbidden("a note review only creates suggested work");
+  const source = review ? await loadDuty(ctx, review.source_note_id) : null;
+  if (source) {
+    await projectOfDuty(ctx.caller, source, ctx.store);
+    if (source.kind !== "note" || source.review_duty_id !== review.key) throw conflict("this note review is no longer current");
+  }
 
   // The caller's own name for this work — an order id, a CI run — under which filing it again
   // answers the duty already filed instead of filing a second. The unique index on `api_ref` is
   // what makes that hold when two retries race; the read first is what makes the common case
   // (a retry long after the first went through) an answer rather than an error.
   const externalRef = str(body.external_ref, "external_ref", { max: 128, fallback: "" }) || null;
-  const apiRef = externalRef ? `${refOwner(ctx.caller)}:${externalRef}` : null;
+  const apiRef = internal.reviewNote ? `note-review:${internal.reviewNote.key}:${internal.reviewNote.suggestion_round || "initial"}`
+    : review ? `note-suggestion:${review.key}:${externalRef || str(body.title, "title", { required: true, max: 200 })}`
+    : externalRef ? `${refOwner(ctx.caller)}:${externalRef}` : null;
   if (apiRef) {
     const existing = await dutyByRef(ctx, apiRef);
     if (existing) return filedAlready(existing);
   }
 
+  if (internal.note) {
+    const count = await ctx.store.countAtMost("duties", [{ field: "project_id", op: "=", value: project.key }, { field: "status", op: "=", value: "note" }], MAX_OPEN_DUTIES);
+    if (count >= MAX_OPEN_DUTIES) throw badRequest("this board has 500 notes; delete some before adding more");
+  }
   // Counted before anything is written, so a loop is refused rather than recorded.
   const open = await ctx.store.countAtMost(
     "duties",
@@ -674,8 +759,7 @@ export async function enqueueDuty(ctx, body) {
   const now = Date.now();
   const priority = oneOf(body.priority, "priority", PRIORITIES, "next");
   // A submit token is no agent: it holds nothing, so there is nothing for an interrupt to block.
-  const agentId = submit ? "" : agentIdFrom(ctx, body, { required: false });
-  const kind = oneOf(body.kind, "kind", KINDS, "work");
+  const kind = internal.note ? "note" : internal.reviewNote ? "note_review" : oneOf(body.kind, "kind", KINDS, "work");
   if (submit) {
     // What it files is work, standing on its own. Setup and rules duties change what every other
     // duty runs against; a parent or a spawning duty would tie it to work it cannot see.
@@ -691,9 +775,13 @@ export async function enqueueDuty(ctx, body) {
     parent_id: str(body.parent_id, "parent_id", { max: 64, fallback: null }) || null,
     title: str(body.title, "title", { required: true, max: 200 }),
     brief: str(body.brief, "brief", { required: true, max: 4000 }),
-    status: "queued",
+    status: internal.note ? "note" : review ? "needs_decision" : "queued",
+    source_note_id: source?.key || internal.reviewNote?.key || null,
+    approval_required: !!review,
     priority,
     prio_rank: RANK[priority],
+    origin_board_id: ctx.caller.crossBoard?.source || null,
+    origin_duty_id: ctx.caller.crossBoard?.sourceDutyID || null,
     origin: submit ? "api" : ctx.caller.kind === "agent" ? "agent" : "human",
     // WHICH person. `origin` said "a human", which was the same thing as "the owner" until a
     // board could be shared; now a member files work too, and a card that says "from you" to
@@ -709,9 +797,9 @@ export async function enqueueDuty(ctx, body) {
     metadata,
     assigned_agent_id: null,
     outcome_summary: null,
-    spawned_by: str(body.spawned_by, "spawned_by", { max: 64, fallback: null }) || null,
+    spawned_by: review?.key || str(body.spawned_by, "spawned_by", { max: 64, fallback: null }) || null,
     blocked_by: null,
-    last_question: null,
+    last_question: review ? str(body.question, "question", { max: 4000, fallback: "Created from note. Approve this suggested duty?" }) : null,
     last_resolution: null,
     kind,
     reserved_for: reservedFor,
@@ -735,10 +823,16 @@ export async function enqueueDuty(ctx, body) {
   };
   const id = dutyId();
   const ops = [putOp("duties", id, duty)];
+  if (internal.reviewNote) ops.push(putOp("duties", internal.reviewNote.key, { ...stripMeta(internal.reviewNote), review_duty_id: id }));
+  if (review) ops.push(putOp("threads", threadId(), {
+    duty_id: id, project_id: project.key, owner_uid: project.owner_uid,
+    ...authorOf(ctx.caller, agentId), kind: "question", message: duty.last_question, created_at: now,
+    metadata: { source_note_id: source.key },
+  }));
 
   // Does this interrupt something the caller is holding?
   let blocked = null;
-  if (priority === "immediate_blocker" && agentId) {
+  if (priority === "immediate_blocker" && agentId && !review) {
     const aKey = agentKey(project.key, agentId);
     const agent = await ctx.store.get("agents", aKey);
     if (agent && agent.active_duty_id) {
@@ -761,7 +855,9 @@ export async function enqueueDuty(ctx, body) {
     if (existing) return filedAlready(existing);
     throw err;
   }
-  await ctx.publish(project.key, id, { t: "duty", id, status: "queued" });
+  await ctx.publish(project.key, id, { t: "duty", id, status: duty.status });
+  if (internal.reviewNote) await ctx.publish(project.key, internal.reviewNote.key, { t: "duty", id: internal.reviewNote.key, status: "note" });
+  if (review) await notifyNeedsYou(ctx, project, { ...duty, key: id }, duty.last_question);
   if (blocked) {
     // The interrupt released whoever it interrupted, in the same transaction.
     await ctx.publish(project.key, blocked, {
@@ -772,12 +868,12 @@ export async function enqueueDuty(ctx, body) {
     });
   }
 
-  return { duty_id: id, status: "queued", priority, kind, reserved_for: reservedFor, blocked_duty_id: blocked, external_ref: externalRef };
+  return { duty_id: id, status: duty.status, priority, kind, reserved_for: reservedFor, blocked_duty_id: blocked, external_ref: externalRef };
 }
 
 /** Whose namespace an `external_ref` is in: the token, machine or person filing. Two integrations
  *  that both call their work "build-42" are two duties. */
-const refOwner = (caller) => caller.tokenKey || caller.machineId || caller.uid || "";
+const refOwner = (caller) => caller.crossBoard ? caller.crossBoard.refOwner : caller.tokenKey || caller.machineId || caller.uid || "";
 
 async function dutyByRef(ctx, apiRef) {
   const { rows } = await ctx.store.query("duties", { where: [{ field: "api_ref", op: "=", value: apiRef }], limit: 1 });
@@ -895,6 +991,7 @@ export async function checkpointDuty(ctx, body) {
   const agentId = agentIdFrom(ctx, body, { required: false });
   const now = Date.now();
 
+  if (body.set_status && (duty.kind === "note" || duty.approval_required)) throw forbidden("notes and unapproved suggestions cannot be activated; a person must approve the suggestion");
   const kind = oneOf(body.kind, "kind", THREAD_KINDS, "note");
   if (kind === "resolution" && ctx.caller.kind === "agent") {
     // Only a human resolves. Otherwise an agent could answer its own question and the
@@ -1038,6 +1135,8 @@ async function finishDuty(ctx, body, terminal, { duty: held } = {}) {
   const agentId = agentIdFrom(ctx, body, { required: false });
   const now = Date.now();
 
+  if (duty.kind === "note") throw conflict("notes stay in the notes lane; delete a note to remove it");
+  if (duty.approval_required && ctx.caller.kind !== "human") throw forbidden("only a person may approve or reject this suggestion");
   const summaryField = terminal === "done" ? "outcome_summary" : "reason";
   const summary = str(body[summaryField] ?? body.outcome_summary, summaryField, { required: true, max: 4000 });
 
@@ -1214,6 +1313,8 @@ export async function reopenDuty(ctx, body) {
     throw conflict(`duty '${duty.key}' is ${duty.status}, so there is nothing to reopen`, { status: duty.status });
   }
 
+  if (duty.approval_required) throw conflict("this suggestion was not approved; request a new suggestion from its note");
+
   // Reopening moves a duty from the finished pile back into the unfinished one, so it is
   // held to the same bound as creating one. Counted before anything is written.
   const open = await ctx.store.countAtMost(
@@ -1296,6 +1397,8 @@ export async function resolveDuty(ctx, body) {
   const duty = await loadDuty(ctx, body.duty_id);
   const project = await projectOfDuty(ctx.caller, duty, ctx.store);
   const now = Date.now();
+  if (duty.kind === "note") throw conflict("use Suggest duties to review a note");
+  if (duty.approval_required && (body.approve !== true || duty.status !== "needs_decision")) throw conflict("explicitly approve this suggestion before queueing it");
   const text = str(body.resolution_text ?? body.message, "resolution_text", { required: true, max: 4000 });
 
   if (duty.status === "done" || duty.status === "failed") {
@@ -1316,9 +1419,11 @@ export async function resolveDuty(ctx, body) {
     putOp("duties", duty.key, {
       ...stripMeta(duty),
       status: "queued",
-      priority: "immediate_blocker",
-      prio_rank: RANK.immediate_blocker,
+      priority: duty.approval_required ? duty.priority : "immediate_blocker",
+      prio_rank: duty.approval_required ? RANK[duty.priority] : RANK.immediate_blocker,
       last_resolution: text,
+      approval_required: false,
+      ...(duty.approval_required ? { approved_by: ctx.caller.uid, approved_at: now } : {}),
       resolved_at: now,
       holder: null,
       lane: null,
@@ -1347,6 +1452,8 @@ export async function updateDuty(ctx, body) {
   }
   if (body.status != null) {
     next.status = oneOf(body.status, "status", STATUSES);
+    if ((duty.kind === "note" || next.status === "note") && next.status !== duty.status) throw conflict("notes cannot be moved into the work queue");
+    if (duty.approval_required && next.status !== duty.status) throw conflict("use Approve or Reject for this suggestion");
     if (next.status !== "active") {
       next.assigned_agent_id = null;
       next.holder = null;
@@ -1559,6 +1666,10 @@ function briefOf(duty, { full = false } = {}) {
     kind: duty.kind || "work",
     unblocked_context: null,
   };
+  if (duty.origin_board_id) { out.origin_board_id = duty.origin_board_id; out.origin_duty_id = duty.origin_duty_id || null; }
+  if (duty.source_note_id) out.source_note_id = duty.source_note_id;
+  if (duty.kind === "note") out.review_duty_id = duty.review_duty_id || null;
+  if (duty.approval_required) out.approval_required = true;
   if (duty.reserved_for) out.reserved_for = duty.reserved_for;
   if (duty.last_resolution) {
     out.unblocked_context = {

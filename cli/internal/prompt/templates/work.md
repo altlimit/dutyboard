@@ -24,6 +24,10 @@ Read the note before the brief, and `duty_thread` before you change anything.
 # {{.Duty.Title}}
 
 {{.Duty.Brief}}
+{{- if .Duty.SourceNoteID}}
+
+This duty was suggested from note `{{.Duty.SourceNoteID}}` and approved by a person. Read that note with `duty_get` and its files with `duty_attachments` for the source context. The approved duty's brief and human answer define the work; other suggestions on the note are separate duties.
+{{- end}}
 
 {{- if .Check}}
 

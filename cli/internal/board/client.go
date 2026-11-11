@@ -293,15 +293,37 @@ type MCPServer struct {
 }
 
 // Runner is a board's runner settings.
+type AgentOption struct {
+	Agent  string `json:"agent"`
+	Model  string `json:"model"`
+	Effort string `json:"effort"`
+}
+
+// Options is nil for a legacy board; an explicit empty list enables no agents.
+func (r *Runner) Choices() []AgentOption {
+	if r == nil {
+		return []AgentOption{{Agent: "claude-code"}}
+	}
+	if r.Options != nil {
+		return r.Options
+	}
+	agent := r.Agent
+	if agent == "" {
+		agent = "claude-code"
+	}
+	return []AgentOption{{Agent: agent, Model: r.Model, Effort: r.Effort}}
+}
+
 type Runner struct {
-	Agent          string   `json:"agent"`
-	Model          string   `json:"model"`
-	Effort         string   `json:"effort"`
-	Instructions   string   `json:"instructions"`
-	PermissionMode string   `json:"permission_mode"`
-	AllowedTools   []string `json:"allowed_tools"`
-	SessionMinutes int      `json:"session_minutes"`
-	Parallel       int      `json:"parallel"`
+	Options        []AgentOption `json:"options"`
+	Agent          string        `json:"agent"`
+	Model          string        `json:"model"`
+	Effort         string        `json:"effort"`
+	Instructions   string        `json:"instructions"`
+	PermissionMode string        `json:"permission_mode"`
+	AllowedTools   []string      `json:"allowed_tools"`
+	SessionMinutes int           `json:"session_minutes"`
+	Parallel       int           `json:"parallel"`
 }
 
 // BoardView is a board with its profile.
@@ -353,13 +375,14 @@ type NewRepo struct {
 
 // Machine is this machine's settings.
 type Machine struct {
-	MachineID     string `json:"machine_id"`
-	Name          string `json:"name"`
-	AgentPrefix   string `json:"agent_prefix"`
-	Paused        bool   `json:"paused"`
-	MaxSessions   int    `json:"max_sessions"`
-	RemoteSetup   string `json:"remote_setup"`
-	WorkspaceRoot string `json:"workspace_root"`
+	AgentOptions  []AgentOption `json:"agent_options"`
+	MachineID     string        `json:"machine_id"`
+	Name          string        `json:"name"`
+	AgentPrefix   string        `json:"agent_prefix"`
+	Paused        bool          `json:"paused"`
+	MaxSessions   int           `json:"max_sessions"`
+	RemoteSetup   string        `json:"remote_setup"`
+	WorkspaceRoot string        `json:"workspace_root"`
 }
 
 // Me is /machine/me.
@@ -434,10 +457,18 @@ type PollBoard struct {
 }
 
 // Poll is /machine/poll.
+// QuotaRetry is a durable request from a person. Nil Options resets all models;
+// a non-nil list resets only the named board's agent/model quotas.
+type QuotaRetry struct {
+	ID      string        `json:"id"`
+	Options []AgentOption `json:"options"`
+}
+
 type Poll struct {
-	Paused   bool        `json:"paused"`
-	Boards   []PollBoard `json:"boards"`
-	Requests []Request   `json:"requests"`
+	QuotaRetries map[string]QuotaRetry `json:"quota_retries"`
+	Paused       bool                  `json:"paused"`
+	Boards       []PollBoard           `json:"boards"`
+	Requests     []Request             `json:"requests"`
 }
 
 // Poll reads every linked board at once.
@@ -528,6 +559,7 @@ func (c *Client) ReportRepo(ctx context.Context, requestID, repoURL string) erro
 
 // Duty is a duty as /duty/get and /duty/claim return it.
 type Duty struct {
+	SourceNoteID     string `json:"source_note_id"`
 	ID               string `json:"id"`
 	Title            string `json:"title"`
 	Brief            string `json:"brief"`

@@ -53,6 +53,20 @@ export const CURSOR_PERMISSION_MODES = [
  * account run through its MCP servers. */
 export const noRepo = (workspace) => workspace === "files" || workspace === "service";
 export const agentLabel = (key) => (AGENTS.find((a) => a.key === key) || AGENTS[0]).label;
+export const optionKey = (o) => JSON.stringify([o.agent, o.model || "", o.effort || ""]);
+export const optionLabel = (o) => `${agentLabel(o.agent)} · ${o.model || "CLI default"} · ${o.effort || "default effort"}`;
+export function availableOptions(machines = []) {
+  const options = new Map();
+  for (const m of machines) for (const o of m.agent_options || []) {
+    const key = optionKey(o);
+    if (!options.has(key)) options.set(key, { ...o, machines: [] });
+    const names = options.get(key).machines;
+    const name = m.machine_name || m.name || m.machine_id;
+    if (!names.includes(name)) names.push(name);
+  }
+  return [...options.values()];
+}
+
 export const PERMISSION_MODES = [
   { key: "acceptEdits", label: "Accept edits (recommended)" },
   { key: "default", label: "Ask for everything (nothing will run unattended)" },
@@ -76,10 +90,12 @@ export const typeLabel = (key) => (PROJECT_TYPES.find((t) => t.key === key) || {
  * What each machine says it is doing, by duty: `{ [duty_id]: { machine, state, detail } }`. Built
  * from `/board/runners`, which a runner event says to re-read.
  */
+export const runnerLimited = (r) => (r.runs || []).some((x) => x.state === "limited") || /All configured agent options are at their usage limit/.test(r.notice || "");
+
 export function activityByDuty(runners) {
   const out = {};
   for (const r of runners || []) {
-    for (const x of r.runs || []) out[x.duty_id] = { machine: r.machine_name, online: r.online, state: x.state, detail: x.detail || "" };
+    for (const x of r.runs || []) out[x.duty_id] = { machine: r.machine_name, machineId: r.machine_id, machineOwnerUid: r.owner_uid, online: r.online, state: x.state, detail: x.detail || "" };
   }
   return out;
 }
@@ -162,6 +178,7 @@ export function profileDraft(profile, runner) {
     git_author_name: (p.git && p.git.author_name) || "",
     git_author_email: (p.git && p.git.author_email) || "",
     git_ssh_command: (p.git && p.git.ssh_command) || "",
+    options: Array.isArray(r.options) ? r.options.map((o) => ({ ...o })) : runner ? null : [],
     agent: r.agent || "claude-code",
     parallel: r.parallel || 1,
     model: r.model || "",
@@ -227,6 +244,7 @@ export function profilePayload(d) {
       },
     },
     runner: {
+      ...(d.options != null ? { options: d.options.map((o) => ({ agent: o.agent, model: o.model || "", effort: o.effort || "" })) } : {}),
       agent: d.agent || "claude-code",
       parallel: Number(d.parallel) || 1,
       model: d.model.trim(),

@@ -134,7 +134,11 @@ func codexArgs(j Job) (args, env []string) {
 	if j.Model != "" {
 		args = append(args, "-m", j.Model)
 	}
-	if effort := codexEffort(j.Effort); effort != "" {
+	effort := codexEffort(j.Effort)
+	if j.NativeEffort {
+		effort = j.Effort
+	}
+	if effort != "" {
 		config("model_reasoning_effort", effort)
 	}
 	if j.Instructions != "" {
@@ -180,7 +184,7 @@ func codexArgs(j Job) (args, env []string) {
 // codexEffort maps a board's effort onto Codex's scale, which has no "max".
 func codexEffort(e string) string {
 	switch e {
-	case "low", "medium", "high", "xhigh":
+	case "none", "minimal", "low", "medium", "high", "xhigh":
 		return e
 	case "max":
 		return "xhigh"

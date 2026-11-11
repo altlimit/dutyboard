@@ -1,10 +1,13 @@
 <script setup>
 import { computed } from "vue";
+import NoteActions from "./NoteActions.vue";
+import QuotaRetry from "./QuotaRetry.vue";
 import { ago, originLabel, priorityLabel } from "../lib/duties.js";
 import { activityLine } from "../lib/runners.js";
 import { plain } from "../lib/markdown.js";
 import { user } from "../lib/session.js";
 
+defineEmits(["changed"]);
 const props = defineProps({
   duty: { type: Object, required: true },
   projectId: { type: String, required: true },
@@ -19,34 +22,38 @@ const showPriority = computed(() => d.value.priority === "immediate_blocker");
 </script>
 
 <template>
-  <router-link class="duty" :to="{ name: 'duty', params: { projectId, dutyId: d.key } }">
-    <span class="duty__title">{{ d.title }}</span>
+  <article class="duty">
+    <router-link style="display: block; color: inherit; text-decoration: none" :to="{ name: 'duty', params: { projectId, dutyId: d.key } }">
+      <span class="duty__title">{{ d.title }}</span>
 
-    <span class="duty__meta">
-      <span v-if="showPriority" class="badge badge--immediate_blocker">{{ priorityLabel(d.priority) }}</span>
-      <span v-if="d.kind === 'setup' || d.kind === 'rules'" class="badge badge--active">{{ d.kind }}</span>
-      <span class="badge">{{ originLabel(d, user) }}</span>
-      <span v-if="d.assigned_agent_id" class="nowrap">
-        <span class="sr-only">{{ d.status === "active" ? "held by " : "last worked by " }}</span>{{ d.assigned_agent_id }}
+      <span class="duty__meta">
+        <span v-if="showPriority" class="badge badge--immediate_blocker">{{ priorityLabel(d.priority) }}</span>
+        <span v-if="d.kind === 'setup' || d.kind === 'rules'" class="badge badge--active">{{ d.kind }}</span>
+        <span class="badge">{{ originLabel(d, user) }}</span>
+        <span v-if="d.assigned_agent_id" class="nowrap">
+          <span class="sr-only">{{ d.status === "active" ? "held by " : "last worked by " }}</span>{{ d.assigned_agent_id }}
+        </span>
+        <span v-if="d.attachment_count" class="nowrap" :title="`${d.attachment_count} file${d.attachment_count === 1 ? '' : 's'}`">
+          <span aria-hidden="true">📎</span>
+          <span class="sr-only">{{ d.attachment_count }} file{{ d.attachment_count === 1 ? "" : "s" }}</span>
+          {{ d.attachment_count }}
+        </span>
+        <span class="nowrap">{{ ago(d.updated_at) }}</span>
       </span>
-      <span v-if="d.attachment_count" class="nowrap" :title="`${d.attachment_count} file${d.attachment_count === 1 ? '' : 's'}`">
-        <span aria-hidden="true">📎</span>
-        <span class="sr-only">{{ d.attachment_count }} file{{ d.attachment_count === 1 ? "" : "s" }}</span>
-        {{ d.attachment_count }}
+
+      <span v-if="now" class="duty__now" :title="`On ${activity.machine}`">{{ now }}</span>
+
+      <span v-if="d.status === 'needs_decision' && d.last_question" class="duty__ask">{{ plain(d.last_question) }}</span>
+      <!-- Work that was delivered and came back. Worth seeing from the board: a queued card
+           that looks new is a different thing from one somebody has already had to reject. -->
+      <span v-else-if="d.reopen_note && d.status === 'queued'" class="duty__ask" style="border-left-color: var(--danger)">
+        {{ plain(d.reopen_note) }}
       </span>
-      <span class="nowrap">{{ ago(d.updated_at) }}</span>
-    </span>
-
-    <span v-if="now" class="duty__now" :title="`On ${activity.machine}`">{{ now }}</span>
-
-    <span v-if="d.status === 'needs_decision' && d.last_question" class="duty__ask">{{ plain(d.last_question) }}</span>
-    <!-- Work that was delivered and came back. Worth seeing from the board: a queued card
-         that looks new is a different thing from one somebody has already had to reject. -->
-    <span v-else-if="d.reopen_note && d.status === 'queued'" class="duty__ask" style="border-left-color: var(--danger)">
-      {{ plain(d.reopen_note) }}
-    </span>
-    <span v-else-if="d.status === 'done' && d.outcome_summary" class="duty__ask" style="border-left-color: var(--ok)">
-      {{ plain(d.outcome_summary) }}
-    </span>
-  </router-link>
+      <span v-else-if="d.status === 'done' && d.outcome_summary" class="duty__ask" style="border-left-color: var(--ok)">
+        {{ plain(d.outcome_summary) }}
+      </span>
+    </router-link>
+    <NoteActions v-if="d.kind === 'note'" :note="d" :project-id="projectId" @changed="$emit('changed')" />
+    <QuotaRetry v-if="d.status === 'active'" :activity="activity" :project-id="projectId" :owner-uid="d.owner_uid" />
+  </article>
 </template>

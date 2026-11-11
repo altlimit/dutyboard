@@ -27,7 +27,7 @@ var dutyScoped = map[string]bool{
 
 // Tools that take an agent id, which the bridge fills in so a session cannot sign as anyone else.
 var takesAgent = map[string]bool{
-	"duty_poll": true, "duty_claim": true, "duty_enqueue": true, "duty_checkpoint": true, "duty_complete": true,
+	"board_call": true, "duty_poll": true, "duty_claim": true, "duty_enqueue": true, "duty_suggest": true, "duty_checkpoint": true, "duty_complete": true,
 	"duty_fail": true, "duty_attach": true, "board_profile_propose": true, "board_rules_submit": true,
 }
 
@@ -141,6 +141,12 @@ func (d *Daemon) MCP(ctx context.Context, runToken, cwd string, raw json.RawMess
 	}
 
 	switch msg.Method {
+	case "initialize":
+		reply, err := d.api.RawMCP(ctx, s.board, raw)
+		if err != nil || reply == nil || s.run == nil {
+			return reply, err
+		}
+		return sessionInstructions(reply, s)
 	case "tools/list":
 		reply, err := d.api.RawMCP(ctx, s.board, raw)
 		if err != nil || reply == nil {
@@ -162,13 +168,13 @@ func (d *Daemon) MCP(ctx context.Context, runToken, cwd string, raw json.RawMess
 		if s.run != nil && s.run.byBoard.Load() {
 			return toolText(msg.ID, "this duty was moved on the board and this session is being stopped: stop now", true), nil
 		}
-		if reply, handled := d.localTool(ctx, s, msg.ID, p.Name, p.Arguments); handled {
-			return reply, nil
-		}
 		if refusal := guard(s, p.Name, p.Arguments); refusal != "" {
 			return toolText(msg.ID, refusal, true), nil
 		}
-		if s.run != nil && s.run.Files && p.Name == "duty_complete" {
+		if reply, handled := d.localTool(ctx, s, msg.ID, p.Name, p.Arguments); handled {
+			return reply, nil
+		}
+		if s.run != nil && s.run.Files && s.run.Kind != "note_review" && p.Name == "duty_complete" {
 			// What the task made goes on the duty before the duty says it is done, so a person told it is
 			// finished finds the files there. A file that cannot be attached stops the completion.
 			names, err := d.attachOutputs(ctx, s.run)
@@ -184,7 +190,10 @@ func (d *Daemon) MCP(ctx context.Context, runToken, cwd string, raw json.RawMess
 			p.Arguments["agent_id"] = s.agent
 		}
 		if s.run != nil {
-			if p.Name == "duty_enqueue" && p.Arguments["spawned_by"] == nil {
+			if p.Name == "board_call" {
+				p.Arguments["source_duty_id"] = s.run.DutyID
+			}
+			if (p.Name == "duty_enqueue" || p.Name == "duty_suggest") && (s.run.Kind == "note_review" || p.Arguments["spawned_by"] == nil) {
 				p.Arguments["spawned_by"] = s.run.DutyID
 			}
 			// A session parking its duty keeps it for this machine, where its worktree is.
@@ -208,6 +217,15 @@ func guard(s *session, name string, args map[string]any) string {
 	if s.run == nil {
 		return ""
 	}
+	if name == "board_call" && s.run.Kind == "note_review" {
+		op, _ := args["operation"].(string)
+		if !reviewReadOperation(op) {
+			return "a note review may read linked boards, but may not start or change their work"
+		}
+	}
+	if s.run.Kind == "note_review" && reviewForbiddenTool(name) {
+		return "this is a note review: suggest work for human approval; do not implement, deploy or schedule it"
+	}
 	if name == "duty_claim" {
 		return "claiming is the daemon's job: this session holds exactly one duty, " + s.run.DutyID + ". Finish, park or fail it."
 	}
@@ -216,7 +234,7 @@ func guard(s *session, name string, args map[string]any) string {
 			return fmt.Sprintf("this session may only change its own duty, %s — not %q", s.run.DutyID, id)
 		}
 	}
-	if name == "duty_complete" && !s.run.Files && s.run.integration() == nil {
+	if name == "duty_complete" && s.run.Kind != "note_review" && !s.run.Files && s.run.integration() == nil {
 		return "call duty_integrate first: a duty is complete only once its work has landed, and the outcome should name the commit or pull request it gives you"
 	}
 	return ""
@@ -240,9 +258,49 @@ func (d *Daemon) filterTools(reply json.RawMessage, s *session) (json.RawMessage
 		if s.run != nil && name == "duty_claim" {
 			continue
 		}
+		if s.run != nil && s.run.Kind == "note_review" && reviewForbiddenTool(name) {
+			continue
+		}
+		if s.run != nil && s.run.Kind == "note_review" && name == "board_call" {
+			// The gateway stays available for context, but advertise only its read operations.
+			schema, _ := t["inputSchema"].(map[string]any)
+			properties, _ := schema["properties"].(map[string]any)
+			operation, _ := properties["operation"].(map[string]any)
+			values, _ := operation["enum"].([]any)
+			var allowed []any
+			for _, value := range values {
+				if name, ok := value.(string); ok && reviewReadOperation(name) {
+					allowed = append(allowed, value)
+				}
+			}
+			if operation != nil {
+				operation["enum"] = allowed
+			}
+			t["description"] = "Read context from a linked board during this note review. Use board_links to discover targets; pass project_id, operation and its normal arguments. Only the listed read operations are allowed. Suggest work on your own board with duty_suggest for human approval."
+		}
+		if s.run != nil && s.run.Kind != "note_review" && name == "duty_suggest" {
+			continue
+		}
+		if s.run != nil {
+			switch name {
+			case "duty_poll":
+				t["description"] = "Read the held duty and runnable queue for context, including human answers in unblocked_context and prior failures in reopened. This daemon session already holds " + s.run.DutyID + "; do not poll for more work or claim another duty. Stop when your assignment completes or parks."
+			case "duty_enqueue":
+				if s.run.Kind == "note_review" {
+					t["description"] = "Propose work from the note being reviewed. During this review, every enqueue is linked to the source note and stays in Needs you until a person approves it. Prefer duty_suggest to include a clarification question. Use a stable external_ref for retries. Never implement the proposal."
+				} else {
+					t["description"] = "File work discovered outside this duty. Use next or backlog to file it and continue. immediate_blocker parks your assigned duty behind the new one: stop this session, and the daemon will schedule the blocker. The daemon supplies spawned_by for provenance. Use external_ref to deduplicate retries."
+				}
+			case "duty_checkpoint":
+				t["description"] = "Record a milestone or ask a question on your assigned duty. To request a human decision, use set_status needs_decision, a concrete message and suggested_options, then stop this session. The daemon resumes it when a person answers; do not wait or claim other work."
+			}
+		}
 		out = append(out, t)
 	}
 	for _, t := range localTools {
+		if s.run != nil && s.run.Kind == "note_review" && reviewForbiddenTool(t["name"].(string)) {
+			continue
+		}
 		if s.run == nil && (t["name"] == "duty_integrate" || t["name"] == "duty_repo_open") {
 			continue
 		}
@@ -254,7 +312,7 @@ func (d *Daemon) filterTools(reply json.RawMessage, s *session) (json.RawMessage
 		}
 		out = append(out, t)
 	}
-	if s.run != nil {
+	if s.run != nil && s.run.Kind != "note_review" {
 		// Only the tools for the kinds the board allows: a board that publishes a site is not offered a
 		// function deploy it would only refuse.
 		v := d.view(s.board)

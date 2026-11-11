@@ -536,6 +536,93 @@ async function main() {
       return it && it.state === "ok" && it;
     }, 30_000);
     check("and its checklist says so", !!backIn, backIn);
+
+    // The source session keeps its own duty and identity while filing work on a linked board.
+    const receiving = `receiving-${Date.now().toString(36)}`;
+    await call("/projects/create", { project_id: receiving, name: "Receiving board" }, human);
+    await call("/board/rules/set", { project_id: receiving, body: "Keep source context with each duty." }, human);
+    await call("/board/access/set", { project_id: receiving, source_project_id: boardId, level: "write" }, human);
+    const linkedDuty = await call("/duty/enqueue", { project_id: boardId, title: "[linked] Ask the receiving board", brief: "Read target rules and file a duty with input." }, human);
+    const linkedDone = await until("source duty used its board link", async () => (await get(linkedDuty.duty_id)).status === "done", 30_000);
+    const linkEvent = events(log).find(e => e.event === "linked" && e.dutyId === linkedDuty.duty_id);
+    check("the daemon discovers directional grants and reads the receiving board's rules", !!linkedDone && linkEvent?.target?.project_id === receiving && linkEvent?.rules?.body === "Keep source context with each duty.", linkEvent);
+    check("WRITE files a duty and its input while refusing completion", linkEvent?.filed?.status === "queued" && !!linkEvent?.attached && linkEvent?.denied && !linkEvent?.errors?.length, linkEvent);
+    const crossDuty = linkEvent?.filed?.duty_id ? (await call("/duty/get", { duty_id: linkEvent.filed.duty_id }, human)).duty : null;
+    check("cross-board work preserves its source duty and stays on the receiving board", crossDuty?.origin_board_id === boardId && crossDuty?.origin_duty_id === linkedDuty.duty_id && crossDuty?.attachment_count === 1 && crossDuty?.status === "queued", crossDuty);
+    await call("/board/access/remove", { project_id: receiving, source_project_id: boardId }, human);
+    await call("/projects/delete", { project_id: receiving, confirm: receiving }, human);
+
+    // Notes are inert until asked for suggestions; suggested work needs explicit human approval.
+    const note = await call("/note/create", { project_id: boardId, title: "Export idea", brief: "An export would help.", expect_files: 1 }, human);
+    await call("/duty/attach", { duty_id: note.duty_id, name: "context.txt", content_type: "text/plain", content_base64: Buffer.from("Export context").toString("base64") }, human);
+    check("saving a note leaves it outside the runnable queue", (await get(note.duty_id)).status === "note");
+    const mainBeforeReview = sh("git", ["--git-dir", remote, "rev-parse", "main"]);
+    const reviews = await Promise.all([call("/note/process", { note_id: note.duty_id }, human), call("/note/process", { note_id: note.duty_id }, human)]);
+    check("two review requests track the same review duty", reviews[0].duty_id === reviews[1].duty_id);
+    const review = reviews[0];
+    const reviewed = await until("note reviewed", async () => (await get(review.duty_id)).status === "done", 30_000);
+    const noteEvent = events(log).find(e => e.event === "note-review" && e.dutyId === review.duty_id);
+    const reviewStart = events(log).find(e => e.event === "start" && e.dutyId === review.duty_id);
+    check("MCP initialization describes the assigned duty across all tested agent CLIs", events(log).filter(e => e.event === "start").every(e => e.mcpAssigned));
+    check("review MCP instructions and tool discovery enforce review-only work", reviewStart?.mcpReview && reviewStart?.tools.includes("duty_suggest") && !reviewStart.tools.includes("duty_integrate") && !reviewStart.tools.includes("duty_schedule_create") && reviewStart.linkedOperations.includes("board_rules") && !reviewStart.linkedOperations.includes("duty_enqueue"), reviewStart?.tools);
+    check("ordinary work is not offered the note-review suggestion tool", !codexStart?.mcpReview && !codexStart?.tools.includes("duty_suggest"));
+    check("the board agent reads the source note and its attachment", !!reviewed && noteEvent?.source?.duty?.id === note.duty_id && noteEvent?.attachments?.attachments?.some(a => a.name === "context.txt"), noteEvent);
+    check("a review finishes without landing changes and cannot integrate", !!reviewed && noteEvent?.refused && !noteEvent?.completeError && sh("git", ["--git-dir", remote, "rev-parse", "main"]) === mainBeforeReview, noteEvent);
+    check("suggestions and ordinary enqueue during a review both wait for human approval", noteEvent?.first?.status === "needs_decision" && noteEvent?.bypass?.status === "needs_decision", noteEvent);
+    check("retrying a suggestion does not duplicate it", noteEvent?.first?.duty_id === noteEvent?.retry?.duty_id);
+    const tracked = await call("/duty/get", { duty_id: note.duty_id }, human);
+    check("the note tracks its suggested duties and current review", tracked.suggestions?.length === 2 && tracked.duty.review_duty_id === review.duty_id, tracked);
+    const suggested = noteEvent?.first?.duty_id;
+    if (suggested) {
+      await call("/duty/resolve", { duty_id: suggested, resolution_text: "Approved, include column names.", approve: true }, human);
+      const worked = await until("approved suggestion worked", async () => (await get(suggested)).status === "done", 30_000);
+      check("only after approval does the agent work a suggested duty", !!worked && (await get(suggested)).source_note_id === note.duty_id);
+      await call("/duty/cancel", { duty_id: noteEvent.bypass.duty_id, reason: "Reject this suggestion." }, human);
+    }
+    await call("/note/clear", { note_id: note.duty_id }, human);
+    const anotherReview = await call("/note/process", { note_id: note.duty_id }, human);
+    const rereviewed = await until("note reviewed again", async () => (await get(anotherReview.duty_id)).status === "done", 30_000);
+    const again = events(log).find(e => e.event === "note-review" && e.dutyId === anotherReview.duty_id);
+    check("clearing allows a fresh review which sees the previous suggestions and their status", !!rereviewed && anotherReview.duty_id !== review.duty_id && again?.source?.suggestions?.some(d => d.id === suggested && d.status === "done") && again?.source?.suggestions?.some(d => d.status === "failed"), again?.source);
+
+    // Model catalogs and an ordered, cross-agent quota fallback on the same worktree.
+    await call("/machines/retry", { machine_id: paired.machine_id }, human);
+    const catalog = await until("CLI catalogs reported", async () => {
+      const m = (await call("/machines/list", {}, human)).machines[0];
+      return m?.readiness?.items.some((it) => it.key === "codex" && it.models?.some((model) => model.id === "quota-model")) && m;
+    }, 30_000);
+    check("model choices and efforts come from the machine CLIs", !!catalog, catalog?.readiness);
+    const options = [{ agent: "codex", model: "quota-model", effort: "high" }, { agent: "claude-code", model: "backup-model", effort: "low" }];
+    await call("/machines/update", { machine_id: paired.machine_id, agent_options: [...options, { agent: "claude-code", model: "", effort: "" }], max_sessions: 1 }, human);
+    await call("/projects/profile", { project_id: boardId, runner: { options } }, human);
+    const fallback = await call("/duty/enqueue", { project_id: boardId, title: "[quota] Continue with the next agent", brief: "Keep unfinished work when switching." }, human);
+    const fallbackDone = await until("quota fallback completed", async () => (await get(fallback.duty_id)).status === "done", 60_000);
+    const history = events(log).filter((e) => e.dutyId === fallback.duty_id);
+    const starts = history.filter((e) => e.event === "start");
+    const handoff = history.find((e) => e.event === "handoff");
+    check("usage limit switches from Codex to Claude in priority order", !!fallbackDone && starts[0]?.agent === "codex" && starts[1]?.agent === "claude", starts.map((e) => e.agent));
+    check("fallback keeps uncommitted work, uses the configured model/effort, and starts a fresh native session", handoff?.kept && !handoff.resumed && handoff.model === "backup-model" && handoff.effort === "low" && starts[0]?.cwd === starts[1]?.cwd, handoff);
+    check("the finished work includes changes left by the exhausted agent", sh("git", ["--git-dir", remote, "show", "main:quota-progress.txt"]).includes("keep this unfinished work"));
+    const afterQuota = await call("/duty/enqueue", { project_id: boardId, title: "After quota", brief: "Use the available option." }, human);
+    const afterDone = await until("next duty avoids exhausted model", async () => (await get(afterQuota.duty_id)).status === "done", 60_000);
+    const afterStart = events(log).find((e) => e.event === "start" && e.dutyId === afterQuota.duty_id);
+    check("later duties skip the cooling model", !!afterDone && afterStart?.agent === "claude", afterStart?.agent);
+    const exhausted = await call("/duty/enqueue", { project_id: boardId, title: "[all-quota] Wait for reset", brief: "Both choices exhausted." }, human);
+    const cooling = await until("all options cooling", async () => {
+      const { runners } = await call("/board/runners", { project_id: boardId }, human);
+      return runners.some((r) => /All configured agent options/.test(r.notice || "") && r.runs.some((run) => run.duty_id === exhausted.duty_id && run.state === "limited"));
+    }, 30_000);
+    check("all exhausted options leave the claim and worktree intact, without using a session slot", cooling && (await get(exhausted.duty_id)).status === "active" && existsSync(join(home, "worktrees", boardId, exhausted.duty_id)));
+    const unrelated = await call("/duty/enqueue", { project_id: errands, title: "Other board keeps working", brief: "Make a file with the CLI default model." }, human);
+    const unrelatedDone = await until("other board continues", async () => (await get(unrelated.duty_id)).status === "done", 30_000);
+    check("an unrelated available model can run even with the machine limited to one session", !!unrelatedDone);
+
+    // The person repairs something on the server, then explicitly retries before the reset time.
+    writeFileSync(join(home, "worktrees", boardId, exhausted.duty_id, "quota-recovered.txt"), "account fixed on server\n");
+    await call("/machines/retry", { machine_id: paired.machine_id, project_id: boardId, reset_limits: true }, human);
+    const retriedQuota = await until("manual quota retry completes", async () => (await get(exhausted.duty_id)).status === "done", 30_000);
+    check("Retry now clears the cooldown and resumes held work before the reset time", !!retriedQuota);
+    check("the manual retry preserves changes made on the server", !!retriedQuota && sh("git", ["--git-dir", remote, "show", "main:quota-recovered.txt"]).includes("account fixed"));
   } finally {
     daemon.kill("SIGTERM");
     await sleep(500);

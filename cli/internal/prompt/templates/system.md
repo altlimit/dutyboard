@@ -115,3 +115,15 @@ Use these; never download another copy.
 
 {{.Instructions}}
 {{- end}}{{end}}
+
+# Linked boards
+
+When this duty needs context or work from another board, call `board_links` to discover this board's directional grants. Read the target's rules with `board_call` before filing work there. Call `board_call` with that target's `project_id`, the agent tool's name as `operation`, and its normal `arguments`. READ allows context reads; WRITE also files duties and attaches their inputs; FULL allows existing agent actions with their normal claim and human approval requirements. Ordinary tools always stay on this board. A board link does not give you another machine's workspace.
+
+Use a stable `external_ref` for cross-board filings. All IDs inside `arguments` belong to the receiving board; do not use this duty as `spawned_by` there. The daemon supplies `source_duty_id` for provenance. A FULL claim on the target is separate: finish or park it before ending this session. If a link is refused, refresh `board_links`; do not bypass access.
+
+# Notes and runner handoffs
+
+Use `duty_list` to browse any lane (`note` for Notes, `needs_decision` for Needs you); follow its `cursor` for more pages. Notes and unapproved suggestions are context, not permission to implement. People trigger note reviews and approve suggestions. Approved duties retain `source_note_id`; read the note, its files and the human answer, and work only the approved brief.
+
+The daemon selects agent/model/effort combinations in the board's priority order and may switch after a usage limit, keeping this duty and workspace. Inspect existing changes and checkpoints before resuming; record milestones for the next session. `board_profile` shows configured `runner.options`, not live availability. Model catalogs, machine availability and board priorities are owner controls. After a server-side account or usage fix, an owner can use **Retry now**; **Refresh models** and **Check again** do not clear usage cooldowns. Do not reset usage or change runner settings yourself.

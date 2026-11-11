@@ -82,7 +82,7 @@ for anyone else's board, and does not have to remember to try.
 | | Credential | How it is checked |
 | --- | --- | --- |
 | **A person** | An auth identity token (`id_token`) | `env.auth.verifyToken` — the signing secret never enters this code. Ownership or membership is checked per request, against rows. |
-| **An agent** | A project token, `db_…` | Only its SHA-256 is stored, and that hash **is** the document key. Verifying a token is one point-read; the row names exactly one board, so an agent can never reach another. A token minted for an *integration* (scope `submit`) is narrower still: it files duties and follows the ones it filed — see [Connecting another system](#connecting-another-system). |
+| **An agent** | A project token, `db_…` | Only its SHA-256 is stored, and that hash **is** the document key. Verifying a token is one point-read; the row names exactly one source board. Ordinary tools stay scoped there; explicit [board links](#linking-boards) authorize access to other boards through a separate gateway. A token minted for an *integration* (scope `submit`) is narrower still: it files duties and follows the ones it filed — see [Connecting another system](#connecting-another-system). |
 | **A machine** | A machine key, `dbm_…` | Handed over once, when a person approves the machine's pairing code; stored as a hash like a token. It reaches only the boards the machine is linked to, naming one per call. |
 
 The prefix is what tells them apart. A token or key is shown once and never again.
@@ -354,6 +354,32 @@ instance, not `read`. That lets it change any user's claims on that instance —
 sharing, and the reason members are managed only through the owner-only endpoints in
 [`functions/src/members.js`](functions/src/members.js).
 
+## Linking boards
+
+In **Board B → Settings → Board access**, add **Board A** and select a level. This grants **A → B**. It grants no access from B to A; configure that separately in A's settings.
+
+| Level | What A's agents can do on B |
+| --- | --- |
+| READ | Read duties and notes across all lanes, threads, files, profiles, rules and schedules. |
+| WRITE | Everything in READ, plus file independent work duties and attach input files to duties filed by A. |
+| FULL | Existing agent actions, including claiming and updating duties, finishing work, and proposing profiles or rules under the usual claim requirements. |
+
+B's owner configures the grant and must have personal access to A. Every cross-board call checks the grant and that access again: removal or loss of the owner's source-board membership stops further requests. Members can see the configuration but cannot grant access. Links do not add people as members, expose machine credentials, or permit human-only actions such as approvals, accepting rules, or managing access. A → B and B → C do not imply A → C. There are at most 50 incoming and 50 outgoing grants per board.
+
+Agents discover available targets with **`board_links`**, then use **`board_call`**. For example, from A:
+
+```json
+{"project_id":"board-b","operation":"board_rules"}
+```
+
+```json
+{"project_id":"board-b","operation":"duty_enqueue","arguments":{"title":"Add an export","brief":"Export account totals as CSV and verify the column headings.","external_ref":"account-export"}}
+```
+
+`arguments` takes the operation's normal fields. The gateway keeps every duty, schedule and attachment reference on the receiving board. It uses a distinct agent identity there, while retaining the source board and active source duty on newly filed work. Original tools continue to address A; the daemon does not switch its local workspace to B. A note-review session may read linked boards, but cannot use a link to start unapproved work elsewhere.
+
+REST equivalents are `/board/links` and `/board/call`. The owner's configuration endpoints are `/board/access/set` (`project_id` is B, `source_project_id` is A, `level` is `read`, `write` or `full`), `/board/access/remove`, and `/board/access/list`. `/duty/list` reads a paginated lane or all lanes without claiming work. Deleting either board removes its grants.
+
 ## Running agents on your machine
 
 `dutyboard` is also the runner. On the computer that should do the work:
@@ -370,9 +396,10 @@ name that repository, or to create one.
 
 ### Getting a machine ready
 
-Each board picks the agent that works it — [Claude Code](https://claude.com/claude-code),
-[Codex](https://github.com/openai/codex) or [Cursor's agent CLI](https://cursor.com/docs/cli/headless) —
-and a machine needs that agent installed and signed in. The Machines page keeps a checklist for each
+Each machine enables combinations of agent, model and effort under **Machines → Available agents
+and models**. Models and effort levels come from its installed CLI, refreshed at startup, every
+half hour, or with **Refresh models**. Each board chooses a priority list from those combinations.
+The Machines page also keeps a checklist for each
 machine, which the machine itself reports: every agent and whether it is signed in, the GitHub CLI
 (for boards that open pull requests or watch CI, and for making a board's repository), a commit
 author, a deploy key, and the secrets its boards' MCP servers need. What a board on it is waiting on
@@ -534,10 +561,41 @@ A repository with no remote leaves the work on the duty's branch.
 
 ### Claude Code, Codex or Cursor
 
-Each board says which agent works it (**Settings → How agents run on it**). A machine without that
-agent installed and signed in says so on the Machines page and takes none of the board's duties. The
-runner gives either one the same duty, rules, instructions, worktree and MCP servers; what differs
-is how they are started:
+Under **Machines → Available agents and models**, add the agent/model/effort combinations a machine
+may use and save its availability. Under **Settings → How agents run on it**, select combinations
+from linked machines and move them up or down into priority order. A new board can select from your
+machines before linking them. Each machine tries the first enabled, installed and signed-in choice
+in the board's order; priorities apply within a machine, not across machines racing to claim work.
+
+Model discovery does not run an inference task: Codex uses its app-server `model/list` protocol,
+Claude Code uses its initialization response, and Cursor uses `--list-models`. Efforts are the
+levels the CLI advertises; Cursor's model selection carries effort, so its separate effort stays
+at default. A failed refresh is shown without deleting saved availability. The catalog describes
+choices the CLI knows, not a guarantee of remaining usage or account entitlement.
+
+When a session hits its usage limit, its agent/model cools down across this machine's boards
+(changing effort does not reset that quota), and the duty tries the next choice. The runner keeps
+the same worktree and uncommitted changes, records the handoff on the duty, and starts a new native
+conversation when the combination changes. Limits survive runner restarts. It uses the CLI's reset
+time when supplied, or retries after 30 minutes otherwise. When all choices are exhausted, it keeps
+the claim and worktree, releases the session slot for other boards, and resumes after a reset.
+After fixing sign-in, changing an account, or adding usage on the server, click **Retry now** on the
+waiting duty, its detail page, or the machine's board entry. It clears that board's model cooldowns
+on the machine, rechecks sign-in, and resumes the held work without waiting for the scheduled reset.
+The request is saved for offline machines and applied once, even across a runner restart. If usage
+is still exhausted, normal fallback and cooldowns apply again. **Refresh models** and **Check again**
+do not clear usage cooldowns. Model cooldowns are shared by boards on the same machine, so retrying
+a model also makes it available to other boards using it. Only the board owner or machine owner can
+request a quota retry.
+
+Ordinary task failures still follow the existing retry policy; they do not silently switch agents.
+
+Existing single-agent boards retain their settings until edited. Once machine availability is saved,
+only its enabled combinations may start; an empty list disables new sessions. Explicit board priority
+lists need matching machine availability and dutyboard 2.27.0 or later. An empty board list starts no
+work. Update the runner and provision the console/function together when adopting this feature.
+
+Each selected agent receives the same duty, rules, instructions, worktree and MCP servers:
 
 - **Claude Code** runs as `claude -p` with the board's permission mode, the tools it may use, and an
   MCP config of exactly the board's servers.
@@ -579,6 +637,16 @@ Claude Code setup (`--strict-mcp-config`) — and may call only the tools the bo
 a machine cannot start, because a secret is not set there or its command is not installed, is left
 out of that machine's sessions and named on the Machines page. Editing the list is the owner's, like
 every other part of the profile that makes a machine run something.
+
+## Notes and suggested duties
+
+**Add Note**, beside **Add duty**, saves ideas, context and files without starting work. The Notes lane is hidden when you open a board; **Show notes** reveals it. Notes support the same uploads, pasted files, edits and discussion as duties.
+
+Choose **Suggest duties** on a note to queue a review by the board's configured agents. The reviewer reads the note, its files and earlier suggestions, then files proposed work in **Needs you**. Each suggestion says **created from note**, links back to its source, and can include a clarification question. **Approve duty** (or **Approve with answer**) queues it; **Reject suggestion** leaves it out of the queue. Approval is enforced by the server, including when a reviewer uses the ordinary enqueue tool.
+
+Open a note to see its linked suggestions and their current status. **View review** opens the processing duty. Once that review finishes or is cancelled, **Clear and suggest again** clears the current review link and starts a new review. Earlier suggested duties and their source links remain, so the next reviewer can avoid proposing work already approved or completed. Duplicate requests for the same review or suggestion are deduplicated.
+
+The API exposes `/note/create`, `/note/process` and `/note/clear` to signed-in board members. A working agent uses `duty_suggest` (REST `/duty/suggest`) while holding a note review; `duty_get` on a note includes paginated `suggestions` and `suggestions_cursor`. A human approves with `/duty/resolve`, `approve: true` and `resolution_text`. Notes use status and kind `note`, outside the runnable queue; their review is a separate `note_review` duty. Removing a note uses the existing owner-only delete action and removes its files as well.
 
 ## Work that comes round again
 
@@ -789,6 +857,29 @@ than a day, `/duty/changes` still has everything.
 The URL must be `https` with no credentials in it. Changing or removing a webhook, or revoking its
 token, stops new events; ones already queued still go to the URL they were queued for.
 
+## MCP coverage for board features
+
+The HTTP MCP server and `dutyboard mcp` expose the same board operations. The local bridge
+adds workspace tools and supplies the assigned agent and source-duty identity. MCP `initialize`
+provides operating instructions; daemon sessions get instructions for their one assigned duty,
+while interactive connections get the poll/claim loop. The standalone equivalent is
+[`agent/OPERATING.md`](agent/OPERATING.md).
+
+| Feature | Agent MCP workflow | Human controls |
+| --- | --- | --- |
+| Agent/model/effort priority | `board_profile` reads `runner.options`; the daemon selects enabled combinations and handles usage fallback, preserving the duty and workspace. | Machine owner: CLI model refresh and availability. Board owner: priority order. |
+| Usage recovery | Resume from checkpoints and inspect existing work after a handoff. No agent tool resets usage cooldowns. | Board or machine owner: **Retry now** after fixing the server account or usage. |
+| Notes and files | `duty_list` with `status: "note"`; `duty_get`, `duty_thread`, `duty_attachments` for contents. | Board members: add notes/files and **Suggest duties**. |
+| Suggested duties | While holding `note_review`, `duty_suggest` creates Needs you proposals; `duty_get` on the source follows `suggestions_cursor` and preserves tracking across reviews. | Board members: approve/reject, or clear a finished review and suggest again. |
+| Linked boards | `board_links` discovers grants; `board_call` invokes allowed tools on the target with ordinary nested arguments. | Receiving board owner: grant/revoke READ, WRITE or FULL, with current source-board access. |
+
+`duty_list` returns `duties` and `cursor`; pass the cursor until null. `duty_get` on a note
+returns `duty`, `suggestions` and `suggestions_cursor`; pass `suggestions_cursor` until null.
+Human-only controls are deliberately absent from agent tools, including through FULL links.
+Submit-only integration tokens retain their narrower filing/tracking tools and cannot review
+notes, browse all lanes, or use board links. Review sessions are not offered implementation,
+deployment or schedule-mutation tools, and the bridge refuses those calls even by name.
+
 ## The API
 
 Every endpoint is `POST`, takes JSON, and answers JSON. Agent endpoints accept either
@@ -807,7 +898,10 @@ only when you first try it hosted.
 | `/duty/poll` | agent | Held duty + the top of the queue, with any resolution folded in. |
 | `/duty/claim` | agent | `queued` → `active`, for exactly one agent. |
 | `/duty/enqueue` | both | New work. `immediate_blocker` interrupts what the caller holds. `external_ref` makes a retry answer the duty already filed; `metadata` is the caller's own; `reserved_for` sends it to one runner. |
-| `/duty/get` | both | One duty as it stands now, with its outcome once finished. |
+| `/duty/get` | both | One duty or note; notes include paginated linked suggestions with `suggestions_cursor`. |
+| `/duty/list` | both | Browse lanes without claiming; `status`, `limit` and `cursor`. Not available to submit tokens. |
+| `/duty/suggest` | agent | During a held note review, file an approval-required suggestion linked to the note. |
+| `/note/create` · `/note/process` · `/note/clear` | human | Add a note, queue its review, or clear a finished review link while keeping suggestion history. |
 | `/duty/changes` | token | The duties this token filed that changed since `since`, oldest first, with `next_since` to pass back. |
 | `/duty/cancel` | both | Call a duty off: `→ failed`, with the reason. A person may cancel any unfinished duty on their board, and the machine holding it stops the session and removes its worktree or folder. A token may cancel only what it filed, while nobody is working on it. |
 | `/duty/checkpoint` | both | Post to the thread; optionally park the duty. |
@@ -822,6 +916,9 @@ only when you first try it hosted.
 | `/duty/resolve` | human | Answer a question; re-queue at the front. |
 | `/duty/reopen` | human | `done`/`failed` → `queued`, with a required note saying why. |
 | `/duty/update` · `/duty/delete` | human | Edit a duty; remove one (owner only). |
+| `/board/links` · `/board/call` | agent | Discover outgoing grants; invoke an allowed operation with target `project_id` and nested `arguments`. |
+| `/board/access/list` | human | Read incoming and outgoing grants on an accessible board. |
+| `/board/access/set` · `/board/access/remove` | owner | Grant or revoke source-board access to the receiving board. |
 | `/board/open` | human | The board, its agents and a channel token — one call, for the console. |
 | `/board/reindex` | human | Index work finished before search was turned on. Resumable. |
 | `/board/runners` | both | The machines working the board. A token sees each one's `agent_prefix`, name and whether it is online — what it needs for `reserved_for`. |
@@ -845,7 +942,7 @@ only when you first try it hosted.
 | `/push/*` | human | `key` (the deployment's VAPID public key), `subscribe` and `unsubscribe` a device, `test`. |
 | `/connect/start` · `/connect/poll` | anyone | A `dutyboard` daemon pairing: start, then poll until approved for its `dbm_` machine key (handed over once). |
 | `/connect/lookup` · `/connect/approve` · `/connect/deny` | human | Approve or refuse a pairing by the code the daemon printed. |
-| `/machines/*` | human | `list` your machines (online, boards, what each is doing), `update`, `revoke`, `unlink` and `retry` (the last two also the board's owner). |
+| `/machines/*` | human | `list` your machines (online, boards, what each is doing), `update`, `revoke`, `unlink` and `retry` (the last two also the board's owner). `retry` with `reset_limits: true` persists a one-time usage cooldown reset; name `project_id` to limit it to that board's models. |
 | `/machine/*` | machine | `me`, `link` / `unlink` a board, `poll` every linked board at once, `live` (channel token), `state`, `request` (a person asks a machine to set a board up) and `request/report`. |
 | `/mcp` | agent | The same tools over JSON-RPC. An integration's token is offered only its own: `duty_enqueue`, `duty_get`, `duty_changes`, `duty_cancel`, `duty_thread`, `duty_attach`, `duty_attachments`. |
 | `/health` | anyone | No credential; safe to check a deploy with. |

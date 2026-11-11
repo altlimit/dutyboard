@@ -22,6 +22,21 @@ const opt = (name) => {
   const i = args.indexOf(name);
   return i === -1 ? null : args[i + 1];
 };
+// Catalog requests initialize the CLI without submitting a task.
+if (args[0] === "app-server" || args.includes("--input-format")) {
+  const lines = createInterface({ input: process.stdin });
+  for await (const line of lines) {
+    const m = JSON.parse(line);
+    if (m.method === "initialize") console.log(JSON.stringify({ id: m.id, result: {} }));
+    if (m.method === "model/list") console.log(JSON.stringify({ id: m.id, result: { data: [{ model: "quota-model", displayName: "Quota model", supportedReasoningEfforts: [{ reasoningEffort: "high" }] }, { model: "backup-model", displayName: "Backup model", supportedReasoningEfforts: [{ reasoningEffort: "low" }] }], nextCursor: null } }));
+    if (m.type === "control_request") console.log(JSON.stringify({ type: "control_response", response: { subtype: "success", request_id: m.request_id, response: { models: [{ value: "backup-model", displayName: "Backup model", supportedEffortLevels: ["low"] }] } } }));
+  }
+  process.exit(0);
+}
+if (args[0] === "--list-models") {
+  console.log("auto - Auto\nbackup-model - Backup model");
+  process.exit(0);
+}
 const codex = args[0] === "exec";
 // Cursor: `-p --output-format stream-json --trust --workspace <dir> … <prompt>`, MCP servers read from the
 // workspace's .cursor/mcp.json, the instructions at the top of the prompt.
@@ -154,13 +169,18 @@ const finish = (text, code = 0) => {
   process.exit(code);
 };
 
-await rpc("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "fake-claude", version: "0" } });
+const initialized = await rpc("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "fake-claude", version: "0" } });
 mcp.stdin.write(JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }) + "\n");
-const tools = (await rpc("tools/list", {})).result.tools.map((t) => t.name);
+const listedTools = (await rpc("tools/list", {})).result.tools;
+const tools = listedTools.map((t) => t.name);
 const dutyId = (prompt.match(/`(duty_[0-9A-Z]+)`/) || [])[1];
 const title = (prompt.match(/^# (?!The project|Working|Tools|From)(.+)$/m) || [])[1] || "";
 record({
-  event: "start", dutyId, title, resumed, session, tools, cwd: process.cwd(), branch: (() => {
+  event: "start", dutyId, title, resumed, session, tools,
+  mcpAssigned: initialized.result?.instructions?.includes(dutyId) && initialized.result.instructions.includes("do not poll"),
+  mcpReview: initialized.result?.instructions?.includes("NOTE REVIEW ONLY"),
+  linkedOperations: listedTools.find(t => t.name === "board_call")?.inputSchema?.properties?.operation?.enum,
+  cwd: process.cwd(), branch: (() => {
     try {
       return git("rev-parse", "--abbrev-ref", "HEAD");
     } catch {
@@ -171,6 +191,29 @@ record({
   instructions: (codex ? config.developer_instructions : cursor ? cursorPrompt.slice(0, Math.max(cursorSplit, 0)) : opt("--append-system-prompt")) || "",
   sandbox: codex ? { mode: config.sandbox_mode, writable: config["sandbox_workspace_write.writable_roots"] } : null,
 });
+
+if (title.includes("[linked]")) {
+  const links = await tool("board_links");
+  const target = links.data?.boards?.[0];
+  const rules = await tool("board_call", { project_id: target?.project_id, operation: "board_rules" });
+  const filed = await tool("board_call", { project_id: target?.project_id, operation: "duty_enqueue", arguments: { title: "Work for the receiving board", brief: "Filed through a directional link", external_ref: "linked-file" } });
+  const attached = await tool("board_call", { project_id: target?.project_id, operation: "duty_attach", arguments: { duty_id: filed.data?.duty_id, name: "input.txt", content_type: "text/plain", content_base64: Buffer.from("Context from the source board").toString("base64") } });
+  const denied = await tool("board_call", { project_id: target?.project_id, operation: "duty_complete", arguments: { duty_id: filed.data?.duty_id, outcome_summary: "WRITE cannot complete target work" } });
+  record({ event: "linked", dutyId, target, rules: rules.data, filed: filed.data, attached: attached.data, denied: denied.isError, errors: [links, rules, filed, attached].filter(r => r.isError).map(r => r.text) });
+}
+
+if (/Your review duty is/.test(prompt)) {
+  const sourceID = (prompt.match(/Source note: `(duty_[0-9A-Z]+)`/) || [])[1];
+  const source = await tool("duty_get", { duty_id: sourceID });
+  const attached = await tool("duty_attachments", { duty_id: sourceID });
+  const first = await tool("duty_suggest", { title: "Suggested export", brief: "Add a CSV export and verify its contents.", external_ref: "export" });
+  const retry = await tool("duty_suggest", { title: "Suggested export", brief: "Add a CSV export and verify its contents.", external_ref: "export" });
+  const bypass = await tool("duty_enqueue", { title: "Suggested documentation", brief: "Explain the export.", priority: "immediate_blocker" });
+  const refused = await tool("duty_integrate");
+  const complete = await tool("duty_complete", { duty_id: dutyId, outcome_summary: "Suggested export and documentation; awaiting human approval." });
+  record({ event: "note-review", dutyId, source: source.data, attachments: attached.data, first: first.data, retry: retry.data, bypass: bypass.data, refused: refused.isError, completeError: complete.isError ? complete.text : null });
+  finish("reviewed note");
+}
 
 if (/make this machine ready/.test(prompt)) {
   const proposed = await tool("board_profile_propose", { duty_id: dutyId, toolchain: [{ name: "node", version: process.versions.node }], test_command: "test -f README.md" });
@@ -187,6 +230,17 @@ if (/write this project's rules/.test(prompt)) {
   const completed = await tool("duty_complete", { duty_id: dutyId, outcome_summary: "Drafted the rules." });
   record({ event: "rules", submitError: submitted.isError ? submitted.text : null, integrate: integrated.data, completeError: completed.isError ? completed.text : null });
   finish("rules");
+}
+
+if (title.includes("[all-quota]") && !existsSync("quota-recovered.txt")) finish("usage limit reached", 1);
+
+if (title.includes("[quota]")) {
+  if (codex && opt("-m") === "quota-model") {
+    writeFileSync("quota-progress.txt", "keep this unfinished work\n");
+    record({ event: "quota", dutyId, cwd: process.cwd(), model: opt("-m") });
+    finish("usage limit reached", 1);
+  }
+  record({ event: "handoff", dutyId, cwd: process.cwd(), kept: existsSync("quota-progress.txt"), resumed, model: opt("--model") || opt("-m"), effort: opt("--effort") });
 }
 
 if (/put what it produces in `out\/`/.test(prompt)) {

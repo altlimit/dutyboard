@@ -255,7 +255,7 @@ onUnmounted(() => {
           </span>
         </span>
       </label>
-      <ProfileForm v-if="forRunner" v-model="profile" v-model:creating="creatingRepo" id-prefix="new" offer-new-repo :disabled="creating">
+      <ProfileForm v-if="forRunner" v-model="profile" :machines="machines" v-model:creating="creatingRepo" id-prefix="new" offer-new-repo :disabled="creating">
         <template #new-repo>
           <NewRepoFields v-model="newRepo" id-prefix="new-repo" :machines="machines" :disabled="creating" />
         </template>

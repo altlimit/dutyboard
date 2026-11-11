@@ -57,11 +57,18 @@ type Files struct {
 }
 
 // System is the part appended to the agent's own system prompt.
-func System(in Input) (string, error) { return render("system.md", in) }
+func System(in Input) (string, error) {
+	if in.Duty.Kind == "note_review" {
+		return render("note-system.md", in)
+	}
+	return render("system.md", in)
+}
 
 // Duty is the prompt for one session.
 func Duty(in Input) (string, error) {
 	switch in.Duty.Kind {
+	case "note_review":
+		return render("note-review.md", in)
 	case "setup":
 		if in.Fresh {
 			return render("scaffold.md", in)

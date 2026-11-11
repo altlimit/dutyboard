@@ -152,6 +152,22 @@
         "expires_at"
       ],
       "for": "the function's clock: finished duties whose time on the board is up, soonest first"
+    },
+    {
+      "fields": [
+        "project_id",
+        "source_note_id",
+        "kind",
+        "created_at:desc"
+      ],
+      "for": "note tracking: suggested duties across all reviews, newest first"
+    },
+    {
+      "fields": [
+        "project_id",
+        "updated_at:desc"
+      ],
+      "for": "read-only agent duty listing across statuses"
     }
   ],
   "threads": [
@@ -375,6 +391,20 @@
         "last_duty_id"
       ],
       "for": "the function: which schedule filed a duty that just finished, so the next run can be told how it went"
+    }
+  ],
+  "board_access": [
+    {
+      "fields": [
+        "source_project_id"
+      ],
+      "for": "outgoing board grants and deletion cleanup"
+    },
+    {
+      "fields": [
+        "target_project_id"
+      ],
+      "for": "incoming grants configured by the target owner"
     }
   ]
 }

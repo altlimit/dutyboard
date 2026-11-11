@@ -16,13 +16,15 @@
 // needs_decision, not queued" is what lets it, and a protocol-level error would instead
 // look to most clients like the server broke.
 
-import { HttpError, json, readBoundedText } from "./http.js";
-import { pollDuties, claimDuty, enqueueDuty, checkpointDuty, completeDuty, failDuty, listThread, getDuty, cancelDuty, listChanges, PRIORITIES, THREAD_KINDS } from "./duties.js";
-import { attachToDuty, listAttachments, MAX_BYTES, MAX_INLINE_BYTES } from "./attachments.js";
+import { HttpError, badRequest, json, readBoundedText } from "./http.js";
+import { listDuties, suggestDuty, pollDuties, claimDuty, enqueueDuty, checkpointDuty, completeDuty, failDuty, listThread, getDuty, cancelDuty, listChanges, PRIORITIES, THREAD_KINDS } from "./duties.js";
+import { deleteAttachment, attachToDuty, listAttachments, MAX_BYTES, MAX_INLINE_BYTES } from "./attachments.js";
 import { searchDuties } from "./searching.js";
 import { createSchedule, deleteSchedule, listSchedules, scheduleHistory, updateSchedule } from "./schedules.js";
 import { getProfile, proposeProfile, getRules, submitRules, DEPLOY_METHODS } from "./profile.js";
 import { VERSION } from "./version.js";
+
+import { BOARD_OPERATIONS, linkedBoards, callWithBoardAccess } from "./board-access.js";
 
 const PROTOCOL_VERSION = "2025-06-18";
 const SERVER_INFO = { name: "dutyboard", title: "DutyBoard", version: VERSION };
@@ -43,7 +45,16 @@ const SERVER_INFO = { name: "dutyboard", title: "DutyBoard", version: VERSION };
 const INSTRUCTIONS = `DutyBoard holds your work, the decisions made about it, and the record of what was done — across sessions, and across whatever runs out of context first. Synchronise with it at every boundary. Local execution (edits, tests, commands) is yours to manage alone.
 
 STARTING, AND WHENEVER YOU ARE BETWEEN THINGS
-Call duty_poll before doing anything you were not explicitly asked to do. If it reports an active duty, that is yours already — resume it from its brief and its last checkpoint rather than starting over. Otherwise duty_claim the first runnable duty; the queue is ordered, so do not shop through it. If nothing is runnable, say so and stop.
+Call duty_poll before doing anything you were not explicitly asked to do. If it reports an active duty, that is yours already — resume it from its brief and its last checkpoint rather than starting over. Otherwise duty_claim the first runnable duty; the queue is ordered, so do not shop through it. If nothing is runnable, say so and stop. A daemon-started session instead follows its assigned-duty instructions: the daemon claims work, and the session stops when its duty completes or parks.
+
+LINKED BOARDS
+Use board_links to discover boards this board can access. Use board_call with the receiving project_id, operation and normal tool arguments. Ordinary tools stay on your own board. READ is for context; WRITE also files work for that board; FULL allows the agent actions named in the link, without bypassing human approvals. Read the target rules before filing or changing work. Links are directional and never transitively inherited. Use duty_list to browse any lane, including notes and Needs you, and pass its returned cursor to continue. Use a stable external_ref for cross-board duties. Include source_duty_id when you hold a source duty; the daemon supplies it automatically. A link never switches your workspace or grants another board's MCP credentials. If access is refused, refresh board_links; do not work around the grant.
+
+REVIEWING NOTES
+A note_review duty asks for suggestions only. Read its source note, attachments and thread, and the existing suggestions returned by duty_get on the note. Use duty_suggest with a clear brief and optional question. Each proposal stays in Needs you until a person approves it. Never implement or schedule the proposed work during the review. Complete the review with a summary of what you suggested and the suggestion IDs. Follow suggestions_cursor through every page from duty_get. Notes themselves are not runnable. People trigger reviews with Suggest duties and can Clear and suggest again after a review ends; old suggestions and source links remain. Do not duplicate approved or completed work. Only a person may approve or reject suggestions.
+
+RUNNER SELECTION AND USAGE LIMITS
+board_profile returns runner.options in priority order (or legacy runner.agent/model/effort). The daemon chooses among combinations enabled on this machine and falls back when usage is exhausted, keeping the same duty and workspace. Resume from checkpoints and verify existing changes. Model catalogs come from installed CLIs; do not invent model names or edit runner configuration. Machine availability, board priorities and Refresh models are owner controls. After a server-side account or usage fix, the board or machine owner can use Retry now to clear usage cooldowns; Refresh models and Check again do not do that. Agents cannot reset usage, change access grants, or approve notes through MCP.
 
 WHAT YOU FIND ALONG THE WAY
 Do not widen the duty you are on. A discovery that blocks it: duty_enqueue with priority 'immediate_blocker' and spawned_by set to the duty you are holding — yours parks behind it, you claim the new one, and finishing it returns the parent to the front of the queue on its own. A discovery that does not block it: duty_enqueue with 'next' or 'backlog', then carry on with what you were doing.
@@ -80,6 +91,45 @@ const s = (description, extra = {}) => ({ type: "string", description, ...extra 
 
 const TOOLS = [
   {
+    name: "board_links", title: "Boards this board can access",
+    description: "List this board's outgoing grants, with target project_id, READ/WRITE/FULL level and allowed operations. Links are directional and rechecked on every call. They do not grant access through another board's links.",
+    inputSchema: { type: "object", properties: {} }, handler: linkedBoards,
+  },
+  {
+    name: "board_call", title: "Use a linked board",
+    description: "Call an allowed agent tool on a board returned by board_links. project_id is the receiving board; operation is the tool name; arguments are that tool's normal arguments. READ reads duties, notes, threads, files, rules, profiles and schedules. WRITE also files duties and attaches their input files. FULL allows existing agent actions, still subject to claims and human approval rules. No human-only actions or forwarding through another link. Ordinary tools always stay on your own board. Use a stable external_ref when filing work. WRITE attachments must belong to duties filed by this source board. Pass the receiving board's IDs in arguments; never pass a source-board duty as spawned_by. For FULL, duty_poll then duty_claim on the target establishes a separate claim; finish or park it before ending your source session. Claims do not switch workspaces. If denied, refresh board_links. For example: {project_id: \"board-b\", operation: \"duty_claim\", arguments: {duty_id: \"target-duty\"}}.",
+    inputSchema: { type: "object", properties: {
+      project_id: s("Receiving board id from board_links."), operation: s("Agent tool to invoke.", { enum: Object.keys(BOARD_OPERATIONS) }),
+      arguments: { type: "object", description: "The operation's normal arguments, such as duty_id or title and brief." },
+      agent_id: s("Your source-board agent id; the daemon supplies this."),
+      source_duty_id: s("The active source-board duty you hold, for provenance."),
+    }, required: ["project_id", "operation"] }, handler: callLinkedBoard,
+  },
+  {
+    name: "duty_list", title: "Read duties and notes",
+    description: "Read a page of duties or notes without claiming anything or changing agent state. Includes all statuses by default; use status note for notes or needs_decision for Needs you. Returns duties and cursor; pass that cursor for more until it is null. Reading a note or an unapproved suggestion does not authorize working it.",
+    inputSchema: { type: "object", properties: {
+      status: s("Lane, or any.", { enum: ["any", "note", "queued", "active", "needs_decision", "blocked", "done", "failed"] }),
+      limit: { type: "integer", minimum: 1, maximum: 50 }, cursor: s("Cursor from the previous page."),
+    } }, handler: listDuties,
+  },
+  {
+    name: "duty_attachment_delete", title: "Remove an attachment",
+    description: "Remove a file attached to a duty on this board.",
+    inputSchema: { type: "object", properties: { attachment_id: s("Attachment to remove.") }, required: ["attachment_id"] }, handler: deleteAttachment,
+  },
+  {
+    name: "duty_suggest", title: "Suggest a duty from the note being reviewed",
+    description: "While holding a note_review duty, create proposed work in Needs you. It cannot run until a human explicitly approves. The source note and review are linked automatically. Reuse external_ref for retries. Read the source note with duty_get, which includes links to existing suggestions, and inspect its files with duty_attachments first. Never implement the suggestion during the review.",
+    inputSchema: { type: "object", properties: {
+      title: s("Short title of the proposed work."), brief: s("What should be done and how to verify it."),
+      question: s("Optional clarification or approval question for the person."),
+      priority: s("Priority after approval.", { enum: PRIORITIES }),
+      external_ref: s("Stable reference for this suggestion within the review, to avoid duplicates."),
+      agent_id: s("The agent holding the review."),
+    }, required: ["title", "brief"] }, handler: suggestDuty,
+  },
+  {
     name: "duty_poll",
     title: "Poll the board",
     description:
@@ -112,7 +162,7 @@ const TOOLS = [
     name: "duty_enqueue",
     title: "Add work you discovered",
     description:
-      "Put newly discovered work on the board. Use priority 'immediate_blocker' when you cannot continue without it: the duty you are holding moves to blocked behind the new one, you are freed to claim it, and finishing it puts the parent back at the front of the queue automatically. Use 'next' or 'backlog' for work that does not interrupt what you are doing.",
+      "Put newly discovered work on the board. Use priority 'immediate_blocker' when you cannot continue without it: the duty you are holding moves to blocked behind the new one, you are freed to claim it, and finishing it puts the parent back at the front of the queue automatically. Use 'next' or 'backlog' for work that does not interrupt what you are doing. While holding a note_review, this creates an approval-required suggestion instead; prefer duty_suggest, which also accepts a question.",
     inputSchema: {
       type: "object",
       properties: {
@@ -132,10 +182,10 @@ const TOOLS = [
   {
     name: "duty_get",
     title: "Read one duty",
-    description: "One duty as it stands now: its status, and once it is done or failed, the outcome_summary saying what was done.",
+    description: "Read a duty or note. Returns duty with its status, brief, source_note_id or origin_board_id/origin_duty_id when present, and outcome_summary once finished. A note also returns suggestions and suggestions_cursor: repeat with that cursor until null to inspect every linked proposal, including older reviews. approval_required means a person must explicitly approve before any work starts.",
     inputSchema: {
       type: "object",
-      properties: { duty_id: s("The duty to read.") },
+      properties: { duty_id: s("The duty or note to read."), suggestions_cursor: s("For a note, the suggestions_cursor returned by the previous page of linked suggestions.") },
       required: ["duty_id"],
     },
     handler: getDuty,
@@ -242,7 +292,7 @@ const TOOLS = [
     name: "duty_search",
     title: "Search finished work",
     description:
-      "Search the duties on this board that are already FINISHED, by their title, brief and outcome summary. Use it before starting something that sounds familiar, and when you need to know how a thing was done rather than that it was: the outcome summary of the duty that did it is usually the answer, and the duty_id lets you read its full thread. Open duties are not in here — duty_poll is what shows you those. The query is App Engine Search syntax: bare words, \"a phrase\", ~stemmed, title:word, AND / OR, -excluded. Indexing is not instant: a duty you have just completed may take a moment to become findable, so an empty result immediately after finishing something means nothing.",
+      "Search the duties on this board that are already FINISHED, by their title, brief and outcome summary. Use it before starting something that sounds familiar, and when you need to know how a thing was done rather than that it was: the outcome summary of the duty that did it is usually the answer, and the duty_id lets you read its full thread. Open duties are not in here — use duty_list to browse all lanes or duty_poll for runnable work. The query is App Engine Search syntax: bare words, \"a phrase\", ~stemmed, title:word, AND / OR, -excluded. Indexing is not instant: a duty you have just completed may take a moment to become findable, so an empty result immediately after finishing something means nothing.",
     inputSchema: {
       type: "object",
       properties: {
@@ -301,7 +351,7 @@ const TOOLS = [
     name: "board_profile",
     title: "What this project is",
     description:
-      "The board's profile — project type, repository, stack, toolchain, test command, how it deploys, how a worktree for it is prepared — and its runner settings, plus the version of the rules in force. Read it before a setup or rules duty, and whenever you need the project's real commands rather than guessing them.",
+      "The board's profile — project type, repository, stack, toolchain, test command, how it deploys, how a worktree for it is prepared — and its runner settings, plus the version of the rules in force. runner.options lists agent/model/effort combinations in priority order; older boards use runner.agent/model/effort. This is configuration, not live availability or remaining usage. Only owners change runner settings. Read it before a setup or rules duty, and whenever you need the project's real commands rather than guessing them.",
     inputSchema: { type: "object", properties: {} },
     handler: getProfile,
   },
@@ -542,6 +592,13 @@ async function dispatch(ctx, msg) {
     default:
       return isNotification ? null : rpcErr(id, -32601, `method '${method}' not found`);
   }
+}
+
+/** Same authorized gateway for MCP and REST; nested calls are never permitted. */
+export async function callLinkedBoard(ctx, body) {
+  const tool = BOARD_OPERATIONS[body.operation] && BY_NAME.get(body.operation);
+  if (!tool) throw badRequest("that operation is not available through a board link");
+  return callWithBoardAccess(ctx, body, tool.handler);
 }
 
 export async function handleMcp(ctx, request, maxBody) {

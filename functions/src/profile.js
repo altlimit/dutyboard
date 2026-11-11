@@ -44,7 +44,7 @@ export const GIT_MODES = ["push", "squash", "pr"];
 export const ALTENGINE_KINDS = ["static", "functions"];
 export const RUNNER_AGENTS = ["claude-code", "codex", "cursor"];
 export const PERMISSION_MODES = ["default", "acceptEdits", "plan", "bypassPermissions"];
-export const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
+export const EFFORTS = ["none", "minimal", "low", "medium", "high", "xhigh", "max"];
 
 /** Duties at once on one board. Above this the bottleneck is merges and plan limits, not lanes. */
 export const MAX_PARALLEL = 10;
@@ -319,12 +319,34 @@ export function mergeProfile(stored, input) {
   return next;
 }
 
+/** An ordered board policy or a machine's explicitly enabled combinations. */
+export function agentOptions(value, field = "agent_options") {
+  if (!Array.isArray(value)) throw badRequest(`'${field}' must be an array`);
+  const options = list(value, field, {
+    max: 30,
+    item: (v, f) => {
+      const o = obj(v, f);
+      const option = {
+        agent: oneOf(o.agent, `${f}.agent`, RUNNER_AGENTS),
+        model: str(o.model, `${f}.model`, { max: 160 }),
+        effort: o.effort ? oneOf(o.effort, `${f}.effort`, EFFORTS) : "",
+      };
+      if (option.agent === "cursor" && option.effort) throw badRequest("Cursor chooses effort through its model; leave effort at default");
+      return option;
+    },
+  });
+  const keys = options.map((o) => JSON.stringify(o));
+  if (new Set(keys).size !== keys.length) throw badRequest(`'${field}' contains duplicate combinations`);
+  return options;
+}
+
 export function mergeRunner(stored, input) {
   const next = { ...RUNNER_DEFAULTS, ...(stored || {}) };
   const r = obj(input, "runner");
   if (has(r, "agent")) next.agent = oneOf(r.agent, "runner.agent", RUNNER_AGENTS);
   if (has(r, "model")) next.model = str(r.model, "runner.model", { max: 80 });
   if (has(r, "effort")) next.effort = r.effort ? oneOf(r.effort, "runner.effort", EFFORTS) : "";
+  if (has(r, "options")) next.options = agentOptions(r.options, "runner.options");
   if (has(r, "instructions")) next.instructions = str(r.instructions, "runner.instructions", { max: 4000 });
   if (has(r, "permission_mode")) next.permission_mode = oneOf(r.permission_mode, "runner.permission_mode", PERMISSION_MODES);
   if (has(r, "allowed_tools")) next.allowed_tools = list(r.allowed_tools, "runner.allowed_tools", { max: 50, item: plain(200) });

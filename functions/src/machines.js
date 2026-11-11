@@ -26,7 +26,7 @@ import { putOp, deleteOp } from "./store.js";
 import { requireHuman, requireMachine, resolveProject, memberKey, linkKey } from "./identity.js";
 import { liveConfigured, mintMachineLive, machinesPresent, publishMachine } from "./live.js";
 import { runnableDuties, activeDuties, seedDuty, stripMeta, blockBehindSetup } from "./duties.js";
-import { isFolderBoard, isServiceBoard, mergeRunner, profileView, repoUrl } from "./profile.js";
+import { isFolderBoard, isServiceBoard, agentOptions, mergeRunner, profileView, repoUrl } from "./profile.js";
 import { createProjectFor } from "./projects.js";
 import { runDueSchedules } from "./schedules.js";
 
@@ -77,6 +77,9 @@ function runnerTooOld(ctx, project, machineName) {
 
 /** Why a machine running `version` cannot work `project`; "" when it can. */
 function tooOldFor(project, version, machineName) {
+  if (Array.isArray(project?.runner?.options) && olderRelease(version, "2.27.0")) {
+    return `${machineName || "this machine"} needs dutyboard 2.27.0 or later for agent priorities — run \`alt update altlimit/dutyboard && dutyboard --service\``;
+  }
   if (!isFolderBoard(project)) return "";
   const service = isServiceBoard(project);
   const needs = service ? SERVICE_RUNNER : FILES_RUNNER;
@@ -98,6 +101,7 @@ const machineView = (m, { online = null, links = [], requests = [], readiness = 
   cli_version: m.cli_version || "",
   paused: !!m.paused,
   max_sessions: m.max_sessions || 3,
+  agent_options: m.agent_options ?? null,
   remote_setup: m.remote_setup || "auto",
   workspace_root: m.workspace_root || "",
   created_at: m.created_at,
@@ -382,10 +386,28 @@ export async function updateMachine(ctx, body) {
   if (body.max_sessions != null) next.max_sessions = intIn(body.max_sessions, "max_sessions", 1, 10, 3);
   if (body.remote_setup != null) next.remote_setup = oneOf(body.remote_setup, "remote_setup", REMOTE_SETUP);
   if (body.workspace_root != null) next.workspace_root = str(body.workspace_root, "workspace_root", { max: 300 });
+  if (Object.hasOwn(body, "agent_options")) {
+    if (olderRelease(row.cli_version, "2.27.0")) throw badRequest("update this machine to dutyboard 2.27.0 or later before configuring agent availability");
+    next.agent_options = agentOptions(body.agent_options);
+    const report = await ctx.store.get("machine_readiness", row.machine_id);
+    for (const option of next.agent_options) {
+      // Existing choices survive a temporary discovery failure. New ones must come from the CLI.
+      if ((row.agent_options || []).some((o) => o.agent === option.agent && o.model === option.model && o.effort === option.effort)) continue;
+      const item = (report?.items || []).find((it) => it.key === option.agent);
+      if (!item || item.state === "todo") throw badRequest(`${option.agent} must be installed and signed in first`);
+      const model = (item.models || []).find((m) => m.id === option.model);
+      if (option.model && !model) throw badRequest(`refresh the machine's models before enabling ${option.model}`);
+      if (option.effort && (!model || !(model.efforts || []).includes(option.effort))) throw badRequest(`the CLI did not advertise effort ${option.effort} for ${option.model}`);
+    }
+  }
   await ctx.store.putOne("machines", row.key, next);
 
   if (next.paused !== !!row.paused) await publishMachine(ctx, row.machine_id, { t: next.paused ? "pause" : "resume" });
   await publishMachine(ctx, row.machine_id, { t: "config" });
+  if (Object.hasOwn(body, "agent_options")) {
+    const links = await linksOfMachines(ctx, [row.machine_id]);
+    for (const l of links) await ctx.publish(l.project_id, null, { t: "runner", machine_id: row.machine_id });
+  }
   return { ok: true, machine: machineView(next) };
 }
 
@@ -408,7 +430,7 @@ export async function revokeMachine(ctx, body) {
 }
 
 /**
- * `POST /machines/retry` — `{ machine_id, project_id? }`. Has the machine check its boards again now —
+ * `POST /machines/retry` — `{ machine_id, project_id?, reset_limits? }`. Has the machine check its boards again now —
  * clone, agent, keys — rather than at its next scheduled check, after a person fixed what it reported.
  * The machine's owner may ask, and so may the owner of a board it works, naming that board.
  */
@@ -418,12 +440,29 @@ export async function retryMachine(ctx, body) {
   const { rows } = await ctx.store.query("machines", { where: [{ field: "machine_id", op: "=", value: id }], limit: 1 });
   const row = rows[0];
   if (!row) throw notFound(`machine '${id}' not found`);
+  const projectId = body.project_id ? str(body.project_id, "project_id", { required: true, max: 60 }) : "";
+  let project = null;
   if (row.owner_uid !== caller.uid) {
-    if (!body.project_id) throw notFound(`machine '${id}' not found`);
-    const project = await resolveProject(caller, body.project_id, ctx.store, { ownerOnly: true });
-    if (!(await ctx.store.get("machine_links", linkKey(project.key, id)))) throw notFound(`machine '${id}' not found`);
+    if (!projectId) throw notFound(`machine '${id}' not found`);
+    project = await resolveProject(caller, projectId, ctx.store, { ownerOnly: true });
   }
-  await publishMachine(ctx, id, { t: "retry", project_id: body.project_id ? String(body.project_id) : null });
+  if (projectId) {
+    if (!(await ctx.store.get("machine_links", linkKey(projectId, id)))) throw notFound(`machine '${id}' not found`);
+    project ||= await ctx.store.get("projects", projectId);
+    if (!project) throw notFound(`board '${projectId}' not found`);
+  }
+  if (body.reset_limits === true) {
+    if (olderRelease(row.cli_version, "2.27.0")) throw badRequest("update this machine to dutyboard 2.27.0 or later to retry usage limits");
+    const r = project?.runner;
+    const options = project ? (r?.options ?? [{ agent: r?.agent || "claude-code", model: r?.model || "", effort: r?.effort || "" }]) : null;
+    // Persist before publishing: a missed event or an offline machine picks this up on its next poll.
+    // Board owners may reset only the models their board uses. The machine owner can reset all.
+    const retries = { ...(row.quota_retries || {}) };
+    delete retries[projectId || "*"];
+    retries[projectId || "*"] = { id: requestId(), options };
+    await ctx.store.putOne("machines", row.key, { ...stripMeta(row), quota_retries: Object.fromEntries(Object.entries(retries).slice(-MAX_LINKS - 1)) });
+  }
+  await publishMachine(ctx, id, { t: "retry", project_id: projectId || null });
   return { ok: true, online: (await machinesPresent(ctx, [id])).get(id) };
 }
 
@@ -496,6 +535,7 @@ export async function runnersOfBoards(ctx, projects) {
       // What it is actually running. A board where one machine is three versions behind looks like a
       // board with a mystery, until this says which machine it is.
       cli_version: machine.cli_version || "",
+      agent_options: machine.agent_options ?? null,
     });
   }
   return out;
@@ -762,6 +802,19 @@ const READINESS_STATES = ["ok", "todo", "unknown"];
 const READINESS_ACTIONS = ["install", "sign_in"];
 const MAX_READINESS_ITEMS = 20;
 
+function modelCatalog(value) {
+  if (value == null) return [];
+  if (!Array.isArray(value) || value.length > 200) throw badRequest("models must be an array of at most 200 entries");
+  return value.map((m) => {
+    if (!m || typeof m !== "object" || Array.isArray(m)) throw badRequest("each model must be an object");
+    return {
+      id: str(m.id, "model.id", { required: true, max: 160 }),
+      label: str(m.label, "model.label", { max: 160 }),
+      efforts: Array.isArray(m.efforts) ? [...new Set(m.efforts)].filter((e) => ["none", "minimal", "low", "medium", "high", "xhigh", "max"].includes(e)) : [],
+    };
+  });
+}
+
 /** A readiness report as stored, for the console. */
 function readinessView(r) {
   if (!r) return null;
@@ -794,6 +847,8 @@ export async function reportReadiness(ctx, body) {
       detail: str(it.detail, `items[${i}].detail`, { max: 400 }),
       fix: str(it.fix, `items[${i}].fix`, { max: 300 }),
       actions,
+      models: modelCatalog(it.models),
+      models_error: str(it.models_error, `items[${i}].models_error`, { max: 300 }),
     };
   });
   const now = Date.now();
@@ -835,7 +890,7 @@ export async function pollMachine(ctx, body) {
   const boards = await Promise.all(
     links.map(async (l) => {
       const project = projects.get(l.project_id);
-      if (!project) return null;
+      if (!project || runnerTooOld(ctx, project, caller.machineRow.name)) return null;
       const [active, runnable, machines] = await Promise.all([
         activeDuties(ctx, project.key),
         runnableDuties(ctx, project.key, caller.agentPrefix, limit),
@@ -867,6 +922,7 @@ export async function pollMachine(ctx, body) {
   return {
     machine_id: caller.machineId,
     paused: !!caller.machineRow.paused,
+    quota_retries: caller.machineRow.quota_retries || {},
     boards: boards.filter(Boolean),
     requests: requests.map(requestView),
   };

@@ -29,6 +29,7 @@ import { setWebhook, testWebhook, withWebhooks } from "./webhooks.js";
 import { openBoard, createProject, listProjects, listRunners, renameProject, deleteProject } from "./projects.js";
 import { attachToDuty, listAttachments, deleteAttachment } from "./attachments.js";
 import {
+  listDuties, createNote, processNote, clearNoteSuggestions, suggestDuty,
   pollDuties,
   claimDuty,
   enqueueDuty,
@@ -46,7 +47,7 @@ import {
   listChanges,
   cancelDuty,
 } from "./duties.js";
-import { handleMcp } from "./mcp.js";
+import { handleMcp, callLinkedBoard } from "./mcp.js";
 import { addMember, listMembers, removeMember, setMemberAgents, syncAccess } from "./members.js";
 import { reindexBoard, searchConfigured, searchDuties } from "./searching.js";
 import { getProfile, updateProfile, proposeProfile, getRules, setRules, acceptRules, submitRules } from "./profile.js";
@@ -77,6 +78,7 @@ import {
   noteMachineUse,
 } from "./machines.js";
 import { createSchedule, deleteSchedule, listSchedules, scheduleHistory, syncScheduleZones, tickAllSchedules, updateSchedule } from "./schedules.js";
+import { setBoardAccess, removeBoardAccess, listBoardAccess, linkedBoards } from "./board-access.js";
 import { VERSION } from "./version.js";
 
 
@@ -105,6 +107,16 @@ function configure(env) {
 // Handlers are (ctx, body) -> JSON-serialisable result. Anything they throw that is an
 // HttpError becomes that status; anything else is a 500 with the request id.
 const ROUTES = {
+  "/board/access/set": setBoardAccess,
+  "/board/access/remove": removeBoardAccess,
+  "/board/access/list": listBoardAccess,
+  "/board/links": linkedBoards,
+  "/board/call": callLinkedBoard,
+  "/duty/list": listDuties,
+  "/note/create": createNote,
+  "/note/process": processNote,
+  "/note/clear": clearNoteSuggestions,
+  "/duty/suggest": suggestDuty,
   "/duty/poll": pollDuties,
   "/duty/claim": claimDuty,
   "/duty/enqueue": enqueueDuty,
@@ -398,7 +410,7 @@ export default {
         throw new HttpError(405, "METHOD_NOT_ALLOWED", `use POST for '${path}'`);
       }
 
-      const body = await readJson(request, path === "/duty/attach" ? { max: ATTACH_BODY_BYTES } : undefined);
+      const body = await readJson(request, (path === "/duty/attach" || path === "/board/call") ? { max: ATTACH_BODY_BYTES } : undefined);
       // A `project_id` in the query string is a convenience for curl and for the
       // console's own links; the body wins where both are present.
       if (!body.project_id && url.searchParams.get("project_id")) {

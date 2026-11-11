@@ -4,6 +4,8 @@ import { useRouter } from "vue-router";
 import { api, getDocs, query, subscribeLive } from "../lib/altengine.js";
 import { ALL_STATUSES, PRIORITIES, THREAD_KIND_LABELS, ago, exactTime, expiryChoices, originLabel, priorityLabel, statusLabel } from "../lib/duties.js";
 import { activityByDuty, activityLine } from "../lib/runners.js";
+import NoteActions from "../components/NoteActions.vue";
+import QuotaRetry from "../components/QuotaRetry.vue";
 import Attachments from "../components/Attachments.vue";
 import { markdown, plain } from "../lib/markdown.js";
 import { user } from "../lib/session.js";
@@ -45,7 +47,7 @@ const canDelete = computed(() => !!(duty.value && user.value && duty.value.owner
 const finished = computed(() => duty.value && (duty.value.status === "done" || duty.value.status === "failed"));
 
 /** Still someone's to work, so still something to call off. */
-const canCancel = computed(() => duty.value && !finished.value);
+const canCancel = computed(() => duty.value && duty.value.kind !== "note" && !finished.value);
 
 /** The options an agent offered, if it offered any — answering with one click is the
  *  difference between a question answered in seconds and one answered tomorrow.
@@ -200,10 +202,10 @@ async function act(fn, message, { reload = true } = {}) {
 const resolve = (text) =>
   act(
     async () => {
-      await api("/duty/resolve", { duty_id: props.dutyId, resolution_text: text ?? answer.value });
+      await api("/duty/resolve", { duty_id: props.dutyId, resolution_text: text ?? answer.value, ...(duty.value.approval_required ? { approve: true } : {}) });
       answer.value = "";
     },
-    "Answered. The duty is back at the front of the queue with your answer attached.",
+    duty.value.approval_required ? "Approved. The duty is queued with your answer attached." : "Answered. The duty is back at the front of the queue with your answer attached.",
   );
 
 /** Done was wrong. The note is required, and it is the whole point: it goes on the record
@@ -261,6 +263,7 @@ watch(
   () => {
     loading.value = true;
     editing.value = false;
+    notice.value = answer.value = note.value = sendBack.value = "";
     olderCursor.value = null;
     load();
     connect();
@@ -292,7 +295,7 @@ onUnmounted(() => {
         <h1>{{ duty.title }}</h1>
         <p class="row small muted" style="margin: 0">
           <span class="badge" :class="`badge--${duty.status}`">{{ statusLabel(duty.status) }}</span>
-          <span class="badge" :class="`badge--${duty.priority}`">{{ priorityLabel(duty.priority) }}</span>
+          <span v-if="duty.kind !== 'note'" class="badge" :class="`badge--${duty.priority}`">{{ priorityLabel(duty.priority) }}</span>
           <span v-if="duty.kind === 'setup'" class="badge badge--active" title="Gets one machine ready for the project">setup</span>
           <span v-if="duty.kind === 'rules'" class="badge badge--active" title="Drafts the board's rules for the owner to accept">rules</span>
           <span v-if="duty.reserved_for" class="badge" :title="`Only ${duty.reserved_for} can work this`">for {{ duty.reserved_for }}</span>
@@ -313,13 +316,23 @@ onUnmounted(() => {
           <span class="livedot" :class="activity.online === false ? 'livedot--off' : 'livedot--live'">{{ activity.machine }}</span>
           {{ activityLine(activity) }}
         </p>
+        <QuotaRetry v-if="duty.status === 'active'" :activity="activity" :project-id="projectId" :owner-uid="duty.owner_uid" />
       </div>
+
+      <p v-if="duty.source_note_id" class="notice">
+        {{ duty.kind === "note_review" ? "Reviewing" : "Created from" }}
+        <router-link :to="{ name: 'duty', params: { projectId, dutyId: duty.source_note_id } }">this note</router-link>.
+        <span v-if="duty.approval_required && needsAnswer">This suggestion will not be worked until you approve it.</span>
+      </p>
+      <section v-if="duty.kind === 'note'" class="panel">
+        <NoteActions :note="duty" :project-id="projectId" full @changed="load" />
+      </section>
 
       <!-- The brief, and the same panel in edit mode. Editing a duty happens where the
            duty is written, not in a disclosure below the thread. -->
       <div class="panel">
         <div class="panel__head">
-          <h2>Brief</h2>
+          <h2>{{ duty.kind === "note" ? "Note" : "Brief" }}</h2>
           <span v-if="!editing" class="row">
             <button v-if="canCancel" type="button" class="btn danger" :disabled="posting" @click="cancelDuty">Cancel duty</button>
             <button type="button" class="btn" @click="startEdit">Edit</button>
@@ -337,13 +350,13 @@ onUnmounted(() => {
             <label for="e-brief">Brief</label>
             <textarea id="e-brief" v-model="edit.brief" required maxlength="4000" rows="7"></textarea>
           </div>
-          <div class="field">
+          <div v-if="duty.kind !== 'note'" class="field">
             <label for="e-priority">Priority</label>
             <select id="e-priority" v-model="edit.priority">
               <option v-for="p in PRIORITIES" :key="p.key" :value="p.key">{{ p.label }}</option>
             </select>
           </div>
-          <div class="field">
+          <div v-if="duty.kind !== 'note' && !duty.approval_required" class="field">
             <label for="e-status">Status</label>
             <select id="e-status" v-model="edit.status">
               <option v-for="s in ALL_STATUSES" :key="s" :value="s">{{ statusLabel(s) }}</option>
@@ -355,7 +368,7 @@ onUnmounted(() => {
               and that note is the first thing the next agent reads.
             </p>
           </div>
-          <div class="field">
+          <div v-if="duty.kind !== 'note'" class="field">
             <label for="e-expire">Once it is done</label>
             <select id="e-expire" v-model.number="edit.expire_after_days">
               <option v-for="c in expiryChoices(edit.expire_after_days)" :key="c.days" :value="c.days">{{ c.label }}</option>
@@ -394,7 +407,7 @@ onUnmounted(() => {
       </div>
 
       <!-- Done is an agent's claim, not a fact. This is how you disagree with it. -->
-      <form v-if="finished" class="panel stack" @submit.prevent="reopen">
+      <form v-if="finished && !duty.approval_required" class="panel stack" @submit.prevent="reopen">
         <h2 class="section-h">Did not work?</h2>
         <p class="muted small" style="margin: 0">
           Send it back to the front of the queue with a note saying what is wrong. The note
@@ -434,23 +447,27 @@ onUnmounted(() => {
       </p>
 
       <!-- The human half of the loop. -->
-      <form v-if="needsAnswer" class="panel stack" @submit.prevent="resolve()">
-        <h2 class="section-h">Answer this</h2>
+      <form v-if="needsAnswer" class="panel stack" @submit.prevent="resolve(duty.approval_required ? answer.trim() || 'Approved. Proceed with the suggested duty.' : undefined)">
+        <h2 class="section-h">{{ duty.approval_required ? "Approve this suggestion" : "Answer this" }}</h2>
         <p class="muted small" style="margin: 0">
-          An agent parked this and moved on to other work. Your answer goes on the record and
-          rides along the next time any agent picks the duty up.
+          {{ duty.approval_required ? "Review the brief and question below. Approve to queue the work, optionally with your answer or changes. Reject to keep it out of the queue." : "An agent parked this and moved on to other work. Your answer goes on the record and rides along the next time any agent picks the duty up." }}
         </p>
-        <div v-if="options.length" class="options">
+        <div v-if="duty.approval_required && duty.last_question" class="md" v-html="markdown(duty.last_question)"></div>
+        <div v-if="duty.approval_required" class="row">
+          <button class="primary" type="button" :disabled="posting" @click="resolve(answer.trim() || 'Approved. Proceed with the suggested duty.')">{{ answer.trim() ? 'Approve with answer' : 'Approve duty' }}</button>
+          <button type="button" :disabled="posting" @click="act(() => api('/duty/cancel', { duty_id: dutyId, reason: answer.trim() || 'Suggestion rejected.' }), 'Suggestion rejected. It will not be worked.')">Reject suggestion</button>
+        </div>
+        <div v-if="options.length && !duty.approval_required" class="options">
           <button v-for="opt in options" :key="opt" type="button" :disabled="posting" @click="resolve(opt)">
             {{ opt }}
           </button>
         </div>
         <div class="field">
-          <label for="answer">Your answer</label>
-          <textarea id="answer" v-model="answer" maxlength="4000" required></textarea>
+          <label for="answer">{{ duty.approval_required ? "Answer or instructions (optional)" : "Your answer" }}</label>
+          <textarea id="answer" v-model="answer" maxlength="4000" :required="!duty.approval_required"></textarea>
         </div>
         <div>
-          <button class="primary" type="submit" :disabled="posting || !answer">
+          <button v-if="!duty.approval_required" class="primary" type="submit" :disabled="posting || !answer">
             {{ posting ? "Sending…" : "Send answer" }}
           </button>
         </div>

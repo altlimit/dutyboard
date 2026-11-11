@@ -45,10 +45,11 @@ export function sortColumn(status, rows) {
 }
 
 export const STATUS_COLUMNS = [
+  { key: "note", label: "Notes", hint: "Ideas, context and files. Ask an agent to suggest duties when you are ready.", hidden: true },
   {
     key: "needs_decision",
     label: "Needs you",
-    hint: "An agent asked a question and moved on. Answer to put the duty back in the queue.",
+    hint: "Questions and suggested duties awaiting your answer or approval.",
   },
   { key: "queued", label: "Queued", hint: "Waiting for an agent to claim it, in the order an agent will take them." },
   { key: "active", label: "In progress", hint: "Claimed by an agent right now." },
@@ -91,6 +92,7 @@ export function expiryChoices(days) {
 export const ALL_STATUSES = ["queued", "active", "needs_decision", "blocked", "done", "failed"];
 
 const LABELS = {
+  note: "Note",
   queued: "Queued",
   active: "In progress",
   needs_decision: "Needs you",
@@ -111,6 +113,8 @@ export const priorityLabel = (p) => (PRIORITIES.find((x) => x.key === p) || { la
  * a board's owner could add one, so its creator IS the owner the row already names.
  */
 export function originLabel(duty, me, verb = "from") {
+  if (duty.source_note_id && duty.kind !== "note_review") return "created from note";
+  if (duty.origin_board_id) return `${verb} board ${duty.origin_board_id}`;
   if (duty.origin === "agent") return `${verb} an agent`;
   if (duty.origin === "api") return `${verb} ${duty.created_by_name || "an integration"} (API)`;
   const creator = duty.created_by || duty.owner_uid;

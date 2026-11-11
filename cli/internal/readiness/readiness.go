@@ -35,9 +35,11 @@ const (
 
 // Item is one line of the checklist.
 type Item struct {
-	Key   string `json:"key"`
-	Label string `json:"label"`
-	State string `json:"state"`
+	Models      []runner.Model `json:"models,omitempty"`
+	ModelsError string         `json:"models_error,omitempty"`
+	Key         string         `json:"key"`
+	Label       string         `json:"label"`
+	State       string         `json:"state"`
 	// Needed is true when a board this machine works needs it; Boards names them.
 	Needed bool     `json:"needed"`
 	Boards []string `json:"boards,omitempty"`
@@ -83,16 +85,19 @@ func Check(ctx context.Context, linked []board.BoardView) Report {
 	var items []Item
 	for _, s := range agents {
 		it := agentItem(s)
+		if s.Ready() {
+			models, err := runner.Models(ctx, s.Agent)
+			it.Models = models
+			if err != nil {
+				it.ModelsError = "Model discovery failed. Check sign-in, update the CLI, then check again."
+			}
+		}
 		for _, b := range linked {
-			name := ""
-			if b.Runner != nil {
-				name = b.Runner.Agent
-			}
-			if name == "" {
-				name = runner.DefaultAgent
-			}
-			if name == s.Agent {
-				it.Boards = append(it.Boards, b.ProjectID)
+			for _, choice := range b.Runner.Choices() {
+				if choice.Agent == s.Agent {
+					it.Boards = append(it.Boards, b.ProjectID)
+					break
+				}
 			}
 		}
 		it.Needed = len(it.Boards) > 0

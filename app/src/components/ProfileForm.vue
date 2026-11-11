@@ -1,7 +1,8 @@
 <script setup>
 import { computed } from "vue";
+import AgentPriority from "./AgentPriority.vue";
 import { expiryChoices } from "../lib/duties.js";
-import { AGENTS, CODEX_PERMISSION_MODES, CURSOR_PERMISSION_MODES, DEPLOY_METHODS, EFFORTS, GIT_MODES, PERMISSION_MODES, PROJECT_TYPES, agentLabel, mcpServerDraft, noRepo } from "../lib/runners.js";
+import { CODEX_PERMISSION_MODES, DEPLOY_METHODS, GIT_MODES, PERMISSION_MODES, PROJECT_TYPES, mcpServerDraft, noRepo } from "../lib/runners.js";
 
 // The questions a board is created with, and edited with later: what the project is, how its work
 // lands, and how agents run on it. The model is a draft from lib/runners.js `profileDraft`; the
@@ -13,16 +14,15 @@ const draft = defineModel({ type: Object, required: true });
 // `offerNewRepo`, on a board being made: its repository can be a new one, made on GitHub by one of your
 // machines, instead of a URL. The parent fills the `new-repo` slot with what to make and binds `creating`.
 const creating = defineModel("creating", { type: Boolean, default: false });
-defineProps({ idPrefix: { type: String, default: "pf" }, disabled: { type: Boolean, default: false }, offerNewRepo: { type: Boolean, default: false } });
+defineProps({ machines: { type: Array, default: () => [] }, idPrefix: { type: String, default: "pf" }, disabled: { type: Boolean, default: false }, offerNewRepo: { type: Boolean, default: false } });
 
-const modes = computed(() =>
-  draft.value.agent === "codex" ? CODEX_PERMISSION_MODES : draft.value.agent === "cursor" ? CURSOR_PERMISSION_MODES : PERMISSION_MODES,
-);
-const agentName = computed(() => agentLabel(draft.value.agent));
+const modes = computed(() => {
+  const choices = draft.value.options ?? [{ agent: draft.value.agent }];
+  return choices.length && choices.every((o) => o.agent === "claude-code") ? PERMISSION_MODES : CODEX_PERMISSION_MODES;
+});
 // `files`: no repository — one-off tasks, or an account run through its MCP servers (`service`).
 const files = computed(() => noRepo(draft.value.workspace));
 const service = computed(() => draft.value.workspace === "service");
-const agentNeeds = computed(() => (AGENTS.find((a) => a.key === draft.value.agent) || AGENTS[0]).install);
 
 const addRepo = () => {
   draft.value.repos = [...(draft.value.repos || []), { name: "", repo_url: "", default_branch: "", test_command: "" }];
@@ -263,13 +263,7 @@ const removeServer = (i) => {
 
   <fieldset class="stack" :disabled="disabled">
     <legend class="label">How agents run on it</legend>
-    <div class="choices" role="radiogroup" aria-label="Which agent works its duties">
-      <label v-for="a in AGENTS" :key="a.key" class="choice">
-        <input v-model="draft.agent" type="radio" :name="`${idPrefix}-agent`" :value="a.key" />
-        {{ a.label }}
-      </label>
-    </div>
-    <p class="hint">Each machine working this board needs {{ agentNeeds }}. One without it says so on the Machines page.</p>
+    <AgentPriority v-model="draft" :machines="machines" :id-prefix="idPrefix" :disabled="disabled" />
     <div class="field">
       <label :for="`${idPrefix}-parallel`">Duties at once</label>
       <input :id="`${idPrefix}-parallel`" v-model.number="draft.parallel" type="number" min="1" max="10" />
@@ -279,16 +273,6 @@ const removeServer = (i) => {
         Each duty works in its own git worktree, so several can run side by side. Start with 1, and raise it
         once the board has rules and a test command to check merges against.
       </p>
-    </div>
-    <div class="field">
-      <label :for="`${idPrefix}-model`">Model <span class="muted">(optional)</span></label>
-      <input :id="`${idPrefix}-model`" v-model="draft.model" maxlength="80" :placeholder="`${agentName}'s default`" />
-    </div>
-    <div class="field">
-      <label :for="`${idPrefix}-effort`">Effort</label>
-      <select :id="`${idPrefix}-effort`" v-model="draft.effort">
-        <option v-for="e in EFFORTS" :key="e" :value="e">{{ e || `${agentName}'s default` }}</option>
-      </select>
     </div>
     <div class="field">
       <label :for="`${idPrefix}-perm`">Permissions</label>

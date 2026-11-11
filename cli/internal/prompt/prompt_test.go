@@ -123,3 +123,31 @@ func TestEveryKindRenders(t *testing.T) {
 		t.Errorf("what the schedule's check found is not handed to the session:\n%s", out)
 	}
 }
+
+func TestNoteReviewAndApprovedWorkCarrySource(t *testing.T) {
+	in := Input{Duty: board.Duty{ID: "review", Kind: "note_review", Title: "Review note", SourceNoteID: "note_1"}, Rules: "Keep private material private."}
+	sys, err := System(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, err := Duty(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"duty_suggest", "person approves", "Do not integrate", in.Rules} {
+		if !strings.Contains(sys, want) {
+			t.Errorf("review instructions missing %q", want)
+		}
+	}
+	if !strings.Contains(task, "note_1") || !strings.Contains(task, "suggestions_cursor") {
+		t.Fatal("review is missing source or history pagination")
+	}
+	in.Duty.Kind = "work"
+	task, err = Duty(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(task, "note_1") || !strings.Contains(task, "approved by a person") {
+		t.Fatal("approved work lost its source")
+	}
+}

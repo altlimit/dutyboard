@@ -271,10 +271,29 @@ func (d *Daemon) execute(dctx, rctx context.Context, run *Run, duty *board.Duty,
 			d.settleStopped(dctx, run, v)
 			return
 		}
+		// Re-read policy between attempts, including while every option is cooling down.
+		policy := v
+		policy.Runner = d.view(run.Board).Runner
+		choice, until, choiceErr := d.chooseAgent(rctx, policy, true)
+		if choiceErr != nil {
+			d.park(dctx, run, v, "No configured agent can continue this duty: "+choiceErr.Error())
+			return
+		}
+		if !until.IsZero() {
+			// Keep the claim and worktree but release this machine's session slot.
+			// The scheduler resumes the held duty once a choice becomes available.
+			_ = state.SaveRunRecord(run.DutyID, &rec)
+			d.setNotice(dctx, run.Board, "All configured agent options are at their usage limit; next reset "+until.Format(time.RFC3339))
+			d.wakeAt(until)
+			return
+		}
+		v = withChoice(policy, choice)
+		var switched bool
+		resume, switched = prepareChoice(&rec, choice, resume)
 		rulesAt, rules := d.rulesFor(dctx, run.Board)
 		in := prompt.Input{
 			Duty: *duty, Board: v, Rules: rules, RulesAt: rulesAt, Branch: spec.Branch(), Worktree: path,
-			Mode: string(modeFor(dctx, v, spec)), Resuming: resume, Attempt: rec.Attempts,
+			Mode: string(modeFor(dctx, v, spec)), Resuming: resume || switched, Attempt: rec.Attempts,
 			ProjectRoot: spec.Repo, LocalDir: spec.CopyFrom, Tools: d.tools.Describe(), PrepFailed: prepFailed,
 			Repos: d.promptRepos(dctx, run, v), Check: rec.Check,
 		}
@@ -317,8 +336,11 @@ func (d *Daemon) execute(dctx, rctx context.Context, run *Run, duty *board.Duty,
 			return
 		}
 
+		if switched {
+			task += "\n\nThis duty is continuing with a different agent/model/effort. The previous session may have left unfinished changes. Read the duty thread, inspect the existing files and git diff, preserve completed work, and continue from that state. Do not assume the previous attempt finished or repeat external actions without checking their outcome."
+		}
 		job := d.job(run, v, path, system, task, rec, resume)
-		logPath := state.Path("logs", run.Board, run.DutyID, time.Now().Format("20060102-150405")+".jsonl")
+		logPath := state.Path("logs", run.Board, run.DutyID, time.Now().Format("20060102-150405.000000000")+".jsonl")
 		_ = os.MkdirAll(filepath.Dir(logPath), 0o755)
 		logFile, _ := os.Create(logPath)
 		if logFile != nil {
@@ -326,7 +348,7 @@ func (d *Daemon) execute(dctx, rctx context.Context, run *Run, duty *board.Duty,
 		}
 		rec.Repos = run.openRepos()
 		_ = state.SaveRunRecord(run.DutyID, &rec)
-		run.set("working", "")
+		run.set("working", choice.Agent+" · "+choice.Model+" · "+choice.Effort)
 		d.report(dctx, run.Board)
 
 		agent, err := runner.For(agentName(v))
@@ -352,31 +374,6 @@ func (d *Daemon) execute(dctx, rctx context.Context, run *Run, duty *board.Duty,
 			// The daemon is stopping. The duty stays held; the next start resumes it.
 			_ = state.SaveRunRecord(run.DutyID, &rec)
 			return
-		}
-
-		if outcome.Limited {
-			until := outcome.ResetsAt
-			if until.IsZero() || time.Until(until) > 6*time.Hour {
-				until = time.Now().Add(30 * time.Minute)
-			}
-			d.mu.Lock()
-			if until.After(d.limitedUntil) {
-				d.limitedUntil = until
-			}
-			d.mu.Unlock()
-			d.log.Printf("the agent's plan limit was reached; waiting until %s", until.Format(time.Kitchen))
-			run.set("limited", "plan limit; resumes at "+until.Format(time.RFC3339))
-			d.report(dctx, run.Board)
-			select {
-			case <-dctx.Done():
-				return
-			case <-rctx.Done():
-			case <-time.After(time.Until(until)):
-			}
-			resume = true
-			if !run.byBoard.Load() {
-				continue
-			}
 		}
 
 		fresh, err := d.api.Get(dctx, run.Board, run.DutyID)
@@ -410,6 +407,19 @@ func (d *Daemon) execute(dctx, rctx context.Context, run *Run, duty *board.Duty,
 			if fresh.AssignedAgentID != run.Agent {
 				_ = state.SaveRunRecord(run.DutyID, nil)
 				return
+			}
+			if outcome.Limited && !run.byBoard.Load() {
+				until := outcome.ResetsAt
+				if until.IsZero() || !until.After(time.Now()) {
+					until = time.Now().Add(30 * time.Minute)
+				}
+				d.markLimited(choice, until)
+				_ = state.SaveRunRecord(run.DutyID, &rec)
+				d.log.Printf("%s/%s reached its usage limit until %s; trying the next configured option", choice.Agent, choice.Model, until.Format(time.RFC3339))
+				_ = d.api.Checkpoint(dctx, run.Board, run.DutyID, run.Agent, "note", fmt.Sprintf("%s (%s) reached its usage limit. The runner will try the next enabled option; existing work is kept.", choice.Agent, choice.Model), "", false)
+				fresh.Notes = duty.Notes
+				duty, resume = fresh, true
+				continue
 			}
 			rec.Attempts++
 			_ = state.SaveRunRecord(run.DutyID, &rec)
@@ -575,6 +585,7 @@ func (d *Daemon) job(run *Run, v board.BoardView, path, system, task string, rec
 		Env:      append(d.tools.SessionEnv(), "DUTYBOARD_RUN_TOKEN="+run.Token, "DUTYBOARD_HOME="+state.Home()),
 	}
 	if r := v.Runner; r != nil {
+		j.NativeEffort = r.Options != nil
 		if r.Model != "" {
 			j.Model = r.Model
 		}

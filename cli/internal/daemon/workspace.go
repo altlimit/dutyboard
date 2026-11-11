@@ -14,7 +14,6 @@ import (
 
 	"github.com/altlimit/dutyboard/cli/internal/board"
 	"github.com/altlimit/dutyboard/cli/internal/deploy"
-	"github.com/altlimit/dutyboard/cli/internal/runner"
 	"github.com/altlimit/dutyboard/cli/internal/state"
 	"github.com/altlimit/dutyboard/cli/internal/worktree"
 )
@@ -58,9 +57,13 @@ func (d *Daemon) ensureWorkspaces(ctx context.Context) {
 	d.mu.Unlock()
 	for _, v := range views {
 		problem := ""
+		choice, _, readyErr := d.chooseAgent(ctx, v, false)
+		if readyErr == nil {
+			v = withChoice(v, choice)
+		}
 		_, missing := d.boardMCPServers(v)
-		if err := d.agentReady(ctx, v); err != nil {
-			problem = err.Error()
+		if readyErr != nil {
+			problem = readyErr.Error()
 		} else if v.Service() && len(missing) > 0 {
 			// A board run through its MCP servers has nothing to work with without them: a session started
 			// anyway could only fail, or go looking for another way into the account.
@@ -77,6 +80,9 @@ func (d *Daemon) ensureWorkspaces(ctx context.Context) {
 		}
 		d.setProblem(ctx, v.ProjectID, problem)
 		notices := []string{}
+		if _, until, err := d.chooseAgent(ctx, v, true); err == nil && !until.IsZero() {
+			notices = append(notices, "All configured agent options are at their usage limit; next reset "+until.Format(time.RFC3339))
+		}
 		if n := d.deployNotice(ctx, v); n != "" {
 			notices = append(notices, n)
 		}
@@ -257,16 +263,6 @@ func (d *Daemon) retireClone(ctx context.Context, dir string) {
 	if err := os.RemoveAll(dir); err == nil {
 		d.log.Printf("removed %s, which the board no longer uses", dir)
 	}
-}
-
-// agentReady says why this machine cannot run the agent a board's duties are worked by, if it cannot:
-// a board is not worked by a machine that would only fail every duty it claimed.
-func (d *Daemon) agentReady(ctx context.Context, v board.BoardView) error {
-	agent, err := runner.For(agentName(v))
-	if err != nil {
-		return err
-	}
-	return agent.Check(ctx)
 }
 
 // ghReady reports whether the GitHub CLI is signed in, remembered for a few minutes.

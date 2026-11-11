@@ -1914,8 +1914,19 @@ async function main() {
       .duty_id;
 
   const outsiderArgs = {
+    "/board/access/set": () => ({ project_id: projectId, source_project_id: "other", level: "full" }),
+    "/board/access/remove": () => ({ project_id: projectId, source_project_id: "other" }),
+    "/board/access/list": () => ({ project_id: projectId }),
+    "/board/call": () => ({ project_id: projectId, operation: "board_rules" }),
+    // Discovery is scoped to the caller's source board and never lists incoming grants.
+    "/board/links": null,
+    "/duty/list": () => ({ project_id: projectId }),
     "/duty/poll": () => ({ project_id: projectId }),
     "/duty/claim": (d) => ({ duty_id: d }),
+    "/note/create": () => ({ project_id: projectId, title: "no", brief: "no" }),
+    "/note/process": (id) => ({ note_id: id }),
+    "/note/clear": (id) => ({ note_id: id }),
+    "/duty/suggest": () => ({ project_id: projectId, title: "no", brief: "no" }),
     "/duty/enqueue": () => ({ project_id: projectId, title: "no", brief: "no" }),
     "/duty/checkpoint": (d) => ({ duty_id: d, message: "no" }),
     "/duty/complete": (d) => ({ duty_id: d, outcome_summary: "no" }),

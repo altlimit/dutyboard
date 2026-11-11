@@ -5,7 +5,8 @@
 //
 //   agent    `Authorization: Bearer db_…` — a project token. Only its SHA-256 is stored,
 //            so the row this resolves to IS the authorisation: the token names exactly one
-//            project and an agent can never name another.
+//            source project. Ordinary handlers stay scoped there; the board-access gateway
+//            separately authorizes each explicitly linked target.
 //   machine  `Authorization: Bearer dbm_…` — a machine key, held by a `dutyboard` daemon.
 //            One key reaches every board the machine is LINKED to, and nothing else. A call
 //            about a board names it in `x-dutyboard-board`; the link row for that board is

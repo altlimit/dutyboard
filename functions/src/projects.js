@@ -8,6 +8,7 @@ import { putOp } from "./store.js";
 import { slugify } from "./ids.js";
 import { isMember, requireHuman, resolveProject } from "./identity.js";
 import { liveConfigured, mintLive } from "./live.js";
+import { sweepBoardAccess } from "./board-access.js";
 import { sweepAttachments } from "./attachments.js";
 import { searchConfigured, unindexDuties } from "./searching.js";
 import { sharedBoards, sweepMembers, syncAccess } from "./members.js";
@@ -230,6 +231,7 @@ export async function deleteProject(ctx, body) {
   }
 
   const removed = {
+    board_access: await sweepBoardAccess(ctx, project.key),
     attachments: await sweepAttachments(ctx, { field: "project_id", value: project.key }),
     threads: await sweep(ctx, "threads", project.key),
     duties: await sweep(ctx, "duties", project.key),

@@ -70,10 +70,13 @@ func RemoveWorkspace(board string) error {
 // RunRecord is what the daemon remembers about a duty it has worked, across restarts: which agent
 // holds it, which conversation to resume, and how often a session has stopped without finishing.
 type RunRecord struct {
-	Board    string `json:"board"`
-	Agent    string `json:"agent"`
-	Session  string `json:"session"`
-	Attempts int    `json:"attempts"`
+	ExecutionAgent  string `json:"execution_agent,omitempty"`
+	ExecutionModel  string `json:"execution_model,omitempty"`
+	ExecutionEffort string `json:"execution_effort,omitempty"`
+	Board           string `json:"board"`
+	Agent           string `json:"agent"`
+	Session         string `json:"session"`
+	Attempts        int    `json:"attempts"`
 	// Repos are the board's other repositories the duty has opened a worktree of.
 	Repos []string `json:"repos,omitempty"`
 	// Check is what the schedule's check said when it woke an agent for the duty.

@@ -1,11 +1,12 @@
 <script setup>
-import { computed, onMounted, onUnmounted, ref } from "vue";
+import { computed, onUnmounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { api, subscribeLive } from "../lib/altengine.js";
 import { user as me } from "../lib/session.js";
 import { config } from "../config.js";
 import { ago, expiryChoices, statusLabel } from "../lib/duties.js";
-import { agentLabel, newRepoDraft, noRepo, profileDraft, profilePayload, requestNewRepo, runStateLabel } from "../lib/runners.js";
+import { newRepoDraft, noRepo, profileDraft, profilePayload, requestNewRepo, runnerLimited, runStateLabel } from "../lib/runners.js";
+import BoardAccess from "../components/BoardAccess.vue";
 import ProfileForm from "../components/ProfileForm.vue";
 import NewRepoFields from "../components/NewRepoFields.vue";
 import { DAYS, REPEATS, allZones, browserZone, knownZone, repeatText, runText, scheduleDraft, schedulePayload, zoneOffsets } from "../lib/schedules.js";
@@ -243,8 +244,11 @@ async function retryRunner(r) {
   busy.value = true;
   error.value = "";
   try {
-    const res = await api("/machines/retry", { machine_id: r.machine_id, project_id: props.projectId });
-    retried.value = { ...retried.value, [r.machine_id]: res.online === false ? "It is offline — it checks again when it is back." : "Asked it to check again…" };
+    const res = await api("/machines/retry", { machine_id: r.machine_id, project_id: props.projectId, reset_limits: runnerLimited(r) });
+    const message = res.online === false
+      ? (runnerLimited(r) ? "Retry saved for when it reconnects." : "It is offline — it checks again when it is back.")
+      : "Asked it to check again…";
+    retried.value = { ...retried.value, [r.machine_id]: message };
     // Its answer arrives as a new report; give it a moment, then read the runners again.
     setTimeout(async () => {
       await loadRunners();
@@ -342,6 +346,7 @@ const confirmDelete = ref("");
 const role = ref(null); // "owner" | "member"
 const isOwner = computed(() => role.value === "owner");
 const ownerName = ref("");
+const boardName = ref("");
 
 const members = ref([]);
 const maxMembers = ref(0);
@@ -448,8 +453,11 @@ async function load() {
   try {
     // Who you are here, and whether this deployment has search — the same call the board
     // itself makes, so a warm path rather than an endpoint invented for two facts.
-    const board = await api("/board/open", { project_id: props.projectId });
+    const projectId = props.projectId;
+    const board = await api("/board/open", { project_id: projectId });
+    if (projectId !== props.projectId) return;
     role.value = board.role || "owner";
+    boardName.value = board.project?.name || projectId;
     ownerName.value = (board.project && board.project.owner_name) || "";
     searchable.value = board.search === true;
     hasProfile.value = !!(board.project && (board.project.profile || board.project.runner));
@@ -598,7 +606,12 @@ async function deleteBoard() {
 // channel rather than showing what was true when the page opened.
 let socket = null;
 let runnersTimer = null;
-onMounted(() => {
+watch(() => props.projectId, () => {
+  if (socket) socket.close();
+  if (runnersTimer) clearTimeout(runnersTimer);
+  runnersTimer = null;
+  role.value = null;
+  boardName.value = "";
   load();
   socket = subscribeLive({ projectId: props.projectId }, (frame) => {
     if (!frame || !frame.data || frame.data.t !== "runner" || runnersTimer) return;
@@ -607,7 +620,7 @@ onMounted(() => {
       await loadRunners();
     }, 800);
   });
-});
+}, { immediate: true });
 onUnmounted(() => {
   if (socket) socket.close();
   if (runnersTimer) clearTimeout(runnersTimer);
@@ -623,6 +636,7 @@ const tabs = computed(() => [
   { key: "rules", label: "Rules", alert: !!rules.value.draft },
   { key: "recurring", label: "Recurring", count: schedules.value.length },
   { key: "members", label: "Members", count: members.value.length },
+  { key: "access", label: "Board access" },
   ...(isOwner.value ? [{ key: "tokens", label: "Tokens" }] : []),
   ...(isOwner.value || searchable.value ? [{ key: "advanced", label: "Advanced" }] : []),
 ]);
@@ -661,6 +675,7 @@ function tabKey(event) {
 
     <div>
       <h1>Board settings</h1>
+      <p class="muted small">{{ boardName || projectId }}</p>
       <p v-if="role === 'member'" class="muted">
         You are a member of this board{{ ownerName ? `, which ${ownerName} owns` : "" }}. Members do
         the work on a board — adding duties, answering questions, sending work back. The owner
@@ -706,7 +721,7 @@ function tabKey(event) {
           <template v-if="!isOwner">Only the owner can change it: some of these are commands a machine runs.</template>
         </p>
         <p v-if="profileNotice" class="notice" role="status" style="margin: 0">{{ profileNotice }}</p>
-        <ProfileForm v-model="profile" id-prefix="set" :disabled="!isOwner || busy" />
+        <ProfileForm v-model="profile" :machines="runners" id-prefix="set" :disabled="!isOwner || busy" />
         <div v-if="isOwner"><button class="primary" type="submit" :disabled="busy">Save</button></div>
       </form>
     </div>
@@ -745,7 +760,7 @@ function tabKey(event) {
         </div>
         <p style="margin: 0">
           {{ freeMachines.length ? "Or add another computer" : "On the computer that should do the work" }} — with
-          {{ agentLabel(profile.agent) }} installed and signed in:
+          the agents you want to enable installed and signed in:
         </p>
         <pre class="token" style="white-space: pre-wrap">{{ linkCommand }}</pre>
         <div class="row">
@@ -781,7 +796,7 @@ function tabKey(event) {
             </span>
             <span v-if="r.problem" class="notice notice--warn small" style="flex-basis: 100%; margin: 0">{{ r.problem }}</span>
             <span v-if="r.notice" class="notice small" style="flex-basis: 100%; margin: 0">{{ r.notice }}</span>
-            <button v-if="(r.problem || r.notice) && (isOwner || (me && r.owner_uid === me.uid))" type="button" class="link small" :disabled="busy" @click="retryRunner(r)">
+            <button v-if="(r.problem || r.notice || runnerLimited(r)) && (isOwner || (me && r.owner_uid === me.uid))" type="button" class="link small" :disabled="busy" @click="retryRunner(r)">
               Retry now<span class="sr-only"> on {{ r.machine_name }}</span>
             </button>
             <span v-if="retried[r.machine_id]" class="small muted" role="status">{{ retried[r.machine_id] }}</span>
@@ -1308,6 +1323,9 @@ function tabKey(event) {
         </form>
       </section>
     </div>
+    <section v-if="tab === 'access'" id="panel-access" role="tabpanel" aria-labelledby="tab-access" tabindex="0">
+      <BoardAccess :project-id="projectId" :owner="isOwner" />
+    </section>
     </div>
   </div>
 </template>

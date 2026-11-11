@@ -70,6 +70,7 @@ type Job struct {
 	Resume       bool
 	Name         string // a label for the session, where the agent keeps one
 	Model        string // the board's choice, in the agent's terms; "" for the agent's default
+	NativeEffort bool   // effort came from this CLI's model catalog
 	Effort       string
 	// SessionDir is a private folder for the session's own files (an MCP config, say). The agent may
 	// write there; the runner removes it when the session ends.

@@ -88,7 +88,9 @@ type Daemon struct {
 	ghCheckedAt  time.Time
 	zoneChecked  map[string]time.Time
 	readiness    readinessState
-	limitedUntil time.Time
+	limits       map[string]time.Time
+	limitWakeAt  time.Time
+	quotaRetries map[string]string
 	paused       bool
 	sweepDue     bool
 	sweptAt      time.Time
@@ -459,13 +461,15 @@ func (d *Daemon) tick(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if err := d.applyQuotaRetries(p.QuotaRetries); err != nil {
+		d.log.Printf("retrying usage limits: %v", err)
+	}
 	d.mu.Lock()
 	d.paused = p.Paused
 	for _, b := range p.Boards {
 		d.polled[b.ProjectID] = b
 	}
 	d.stopMissing(p.Boards)
-	limited := time.Now().Before(d.limitedUntil)
 	maxSessions := 3
 	if d.me != nil && d.me.Machine.MaxSessions > 0 {
 		maxSessions = d.me.Machine.MaxSessions
@@ -480,6 +484,10 @@ func (d *Daemon) tick(ctx context.Context) error {
 	// Every linked board gets its clone here, before anything is claimed on it — a board linked from
 	// the console, or whose repository just changed, is ready by the time its duties are.
 	d.ensureWorkspaces(ctx)
+	// The set of held duties can change while the quota notice stays the same.
+	for _, b := range p.Boards {
+		d.report(ctx, b.ProjectID)
+	}
 	// What duties need from this machine, for the console's checklist — in the background, since it
 	// asks every agent's CLI.
 	d.checkReadiness(ctx)
@@ -487,7 +495,7 @@ func (d *Daemon) tick(ctx context.Context) error {
 	// database and the board does not.
 	d.syncZones(ctx, p.Boards)
 	d.sweepFinished(ctx)
-	if p.Paused || limited {
+	if p.Paused {
 		return nil
 	}
 
@@ -509,6 +517,12 @@ func (d *Daemon) tick(ctx context.Context) error {
 			}
 			// A board is ready once it has its clone — or, with no repository, as soon as it is linked.
 			if (d.folder(b.ProjectID) == "" && !d.view(b.ProjectID).Folder()) || d.problem(b.ProjectID) != "" {
+				continue
+			}
+			if _, until, err := d.chooseAgent(ctx, d.view(b.ProjectID), true); err != nil || !until.IsZero() {
+				if !until.IsZero() {
+					d.wakeAt(until)
+				}
 				continue
 			}
 			if d.startOne(ctx, b, started, tried) {
@@ -711,6 +725,13 @@ func (d *Daemon) report(ctx context.Context, boardID string) {
 		}
 	}
 	problem, notice := d.problems[boardID], d.notices[boardID]
+	if strings.Contains(notice, "All configured agent options are at their usage limit") {
+		for _, active := range d.polled[boardID].Active {
+			if active.Mine && d.runs[active.DutyID] == nil {
+				runs = append(runs, board.Run{DutyID: active.DutyID, State: "limited", Detail: notice})
+			}
+		}
+	}
 	d.mu.Unlock()
 	sort.Slice(runs, func(i, j int) bool { return runs[i].DutyID < runs[j].DutyID })
 	key := fmt.Sprint(runs, problem, notice)
