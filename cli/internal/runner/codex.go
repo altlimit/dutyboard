@@ -122,9 +122,11 @@ func codexArgs(j Job) (args, env []string) {
 	if j.Access.Mode == "bypassPermissions" {
 		args = append(args, "--dangerously-bypass-approvals-and-sandbox")
 	} else {
-		// Nobody is there to approve anything, so nothing asks; what commands may write is kept to
-		// the worktree and the folders a duty needs, and they may reach the network (installs, docs).
-		config("approval_policy", "never")
+		// Git metadata remains protected even inside writable roots. Let Codex's automatic
+		// reviewer approve necessary commands (including commits), without waiting for a person.
+		// "never" rejects those requests and prevents a sandboxed duty from finishing.
+		config("approval_policy", "on-request")
+		config("approvals_reviewer", "auto_review")
 		config("sandbox_mode", "workspace-write")
 		config("sandbox_workspace_write.network_access", true)
 		if len(j.Writable) > 0 {

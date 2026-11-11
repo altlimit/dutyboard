@@ -41,7 +41,7 @@ export const AGENTS = [
 ];
 /** Codex has a sandbox rather than Claude Code's modes: the board keeps one value, read per agent. */
 export const CODEX_PERMISSION_MODES = [
-  { key: "acceptEdits", label: "Sandboxed to its worktree (recommended)" },
+  { key: "acceptEdits", label: "Automatic permissions with sandbox (recommended)" },
   { key: "bypassPermissions", label: "No sandbox (sandboxed machines only)" },
 ];
 /** Cursor runs every command unattended either way; the choice is whether its sandbox stays on. */

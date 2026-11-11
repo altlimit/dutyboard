@@ -617,11 +617,14 @@ Each selected agent receives the same duty, rules, instructions, worktree and MC
 
 - **Claude Code** runs as `claude -p` with the board's permission mode, the tools it may use, and an
   MCP config of exactly the board's servers.
-- **Codex** runs as `codex exec --json`, never asking for approval, with its sandbox limited to the
-  worktree plus the clone's git folder and the tools folder, and network access on. A board set to
+- **Codex** runs as `codex exec --json`, with `approval_policy = "on-request"` and
+  `approvals_reviewer = "auto_review"`: eligible approval requests go to Codex's automatic reviewer,
+  not a person at the terminal. Its sandbox permits worktree and tools-folder writes with network
+  access on. Codex still protects Git metadata even when its directory is listed as writable, so
+  Git staging and commits can require automatic review. Use an up-to-date Codex CLI that supports
+  automatic review. A board set to
   bypass permissions runs it without the sandbox. Each board-provided MCP server uses
-  `default_tools_approval_mode = "approve"` so its tools run unattended: Codex's `approval_policy = "never"`
-  alone rejects calls that still require approval. DutyBoard's own access checks and human-only
+  `default_tools_approval_mode = "approve"` so its tools run unattended. DutyBoard's own access checks and human-only
   approvals still apply. Its MCP servers' secrets reach it through its
   environment, never its command line. It resumes the session it started when a parked duty comes
   back.

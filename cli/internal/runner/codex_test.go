@@ -18,7 +18,8 @@ func TestCodexArgs(t *testing.T) {
 	line := strings.Join(args, " ")
 	for _, want := range []string{
 		`exec --json --skip-git-repo-check`,
-		`-c approval_policy="never"`,
+		`-c approval_policy="on-request"`,
+		`-c approvals_reviewer="auto_review"`,
 		`-c sandbox_mode="workspace-write"`,
 		`-c sandbox_workspace_write.network_access=true`,
 		`-c sandbox_workspace_write.writable_roots=["/clone/.git", "/tools"]`,
@@ -76,6 +77,12 @@ func TestCodexMCPApprovalOnNewAndResumedSessions(t *testing.T) {
 			}
 			if mode == "auto" && (!contains(args, `sandbox_mode="workspace-write"`) || contains(args, "--dangerously-bypass-approvals-and-sandbox")) {
 				t.Errorf("MCP approval must preserve the sandbox: %q", args)
+			}
+			if mode == "auto" && (!contains(args, `approval_policy="on-request"`) || !contains(args, `approvals_reviewer="auto_review"`) || contains(args, `approval_policy="never"`)) {
+				t.Errorf("new and resumed sandboxed sessions need automatic review for Git writes: %q", args)
+			}
+			if mode == "bypassPermissions" && (contains(args, `approval_policy="on-request"`) || contains(args, `approvals_reviewer="auto_review"`)) {
+				t.Errorf("full access must not be replaced by automatic review: %q", args)
 			}
 		}
 	}

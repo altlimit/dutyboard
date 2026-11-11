@@ -8,6 +8,31 @@ import (
 	"github.com/altlimit/dutyboard/cli/internal/hints"
 )
 
+func TestCodexGitApprovalInstructions(t *testing.T) {
+	for _, tc := range []struct {
+		agent, mode string
+		want        bool
+	}{
+		{"codex", "acceptEdits", true},
+		{"codex", "", true},
+		{"codex", "bypassPermissions", false},
+		{"claude-code", "acceptEdits", false},
+		{"cursor", "acceptEdits", false},
+	} {
+		in := Input{Board: board.BoardView{Runner: &board.Runner{Agent: tc.agent, PermissionMode: tc.mode}}}
+		out, err := System(in)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := strings.Contains(out, "Codex approval requests are handled by its automatic reviewer"); got != tc.want {
+			t.Errorf("%s/%s: automatic review instructions = %v, want %v", tc.agent, tc.mode, got, tc.want)
+		}
+		if tc.want && !strings.Contains(out, "respect the denial and do not work around it") {
+			t.Error("instructions must distinguish a sandbox error from a review denial")
+		}
+	}
+}
+
 func TestEveryKindRenders(t *testing.T) {
 	p := &board.Profile{Type: "game", Description: "A game", TestCommand: "tools/test.sh", Stack: []string{"Godot"}}
 	p.Deploy.Method = "altengine"
