@@ -1,4 +1,5 @@
 <script setup>
+import BoardNav from "../components/BoardNav.vue";
 import { computed, onUnmounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { api, getDocs, query, subscribeLive } from "../lib/altengine.js";
@@ -289,6 +290,7 @@ onUnmounted(() => {
 
 <template>
   <div class="wrap wrap--narrow stack">
+    <BoardNav :project-id="projectId" :active="duty?.kind === 'note' ? 'notes' : 'board'" />
     <p style="margin: 0">
       <router-link :to="{ name: duty?.kind === 'note' ? 'notes' : 'board', params: { projectId } }">← {{ duty?.kind === 'note' ? 'Back to Notes' : 'Back to the board' }}</router-link>
     </p>

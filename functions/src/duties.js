@@ -379,6 +379,7 @@ export async function getDuty(ctx, body) {
     ...(linked ? { suggestions: linked.rows.map(d => ({ ...briefOf(d, { full: true }), review_duty_id: d.spawned_by, outcome_summary: d.outcome_summary || null })), suggestions_cursor: linked.cursor } : {}),
     duty: {
       ...briefOf(duty, { full: true }),
+      ...(duty.kind === "note" ? { has_suggestions: await hasNoteSuggestions(ctx, duty) } : {}),
       ...(duty.kind === "note" && project?.notes_review_duty_id ? { review_duty_id: project.notes_review_duty_id } : {}),
       outcome_summary: duty.outcome_summary || null,
       last_question: duty.last_question || null,
@@ -652,12 +653,13 @@ function pickLane(duty, board, active, projectKey) {
 
 // The first source retains the existing index, including suggestions made before
 // multi-note reviews. Additional sources have independent links, written atomically.
-async function noteSuggestions(ctx, note, value) {
+async function noteSuggestions(ctx, note, value, since = 0) {
+  const recent = since ? [{ field: "created_at", op: ">", value: since - 1 }] : [];
   const cursor = str(value, "suggestions_cursor", { max: 4000, fallback: "" });
   let rows = [];
   if (!cursor.startsWith("sources:")) {
     const page = await ctx.store.query("duties", {
-      where: [{ field: "project_id", op: "=", value: note.project_id }, { field: "source_note_id", op: "=", value: note.key }, { field: "kind", op: "=", value: "work" }],
+      where: [{ field: "project_id", op: "=", value: note.project_id }, { field: "source_note_id", op: "=", value: note.key }, { field: "kind", op: "=", value: "work" }, ...recent],
       order: [{ field: "created_at", dir: "desc" }], limit: 25, cursor: cursor || undefined,
     });
     rows = page.rows;
@@ -665,12 +667,28 @@ async function noteSuggestions(ctx, note, value) {
     if (rows.length === 25) return { rows, cursor: "sources:" };
   }
   const page = await ctx.store.query("note_sources", {
-    where: [{ field: "project_id", op: "=", value: note.project_id }, { field: "note_id", op: "=", value: note.key }],
+    where: [{ field: "project_id", op: "=", value: note.project_id }, { field: "note_id", op: "=", value: note.key }, ...recent],
     order: [{ field: "created_at", dir: "desc" }], limit: 25 - rows.length,
     cursor: cursor.startsWith("sources:") ? cursor.slice(8) || undefined : undefined,
   });
   const duties = await ctx.store.getMany("duties", page.rows.map(r => r.duty_id));
   return { rows: [...rows, ...page.rows.map(r => duties.get(r.duty_id)).filter(d => d?.project_id === note.project_id)], cursor: page.cursor ? `sources:${page.cursor}` : null };
+}
+
+// Clearing eligibility keeps provenance intact. Each new suggestion records the note's
+// current round. Legacy proposals count until a note is explicitly cleared by this
+// version (older clear actions did not detach suggestion links). Deleted duties
+// are absent from this lookup and therefore no longer prevent another suggestion.
+async function hasNoteSuggestions(ctx, note) {
+  let cursor;
+  do {
+    const page = await noteSuggestions(ctx, note, cursor, note.suggestions_cleared_at || 0);
+    if (page.rows.some(d => d.source_note_rounds
+      ? (d.source_note_rounds[note.key] || "initial") === (note.suggestion_round || "initial")
+      : !note.suggestions_cleared_at)) return true;
+    cursor = page.cursor;
+  } while (cursor);
+  return false;
 }
 
 export const sourceNoteIDs = duty => duty.source_note_ids || (duty.source_note_id ? [duty.source_note_id] : []);
@@ -684,9 +702,9 @@ export async function listNotes(ctx, body) {
     cursor: str(body.cursor, "cursor", { max: 4000, fallback: "" }) || undefined,
   });
   const review = project.notes_review_duty_id ? await ctx.store.get("duties", project.notes_review_duty_id) : null;
-  return { notes: page.rows.map(d => ({ ...briefOf(d, { full: true }), attachment_count: d.attachment_count || 0, created_at: d.created_at })),
+  return { notes: await Promise.all(page.rows.map(async d => ({ ...briefOf(d, { full: true }), has_suggestions: await hasNoteSuggestions(ctx, d), attachment_count: d.attachment_count || 0, created_at: d.created_at }))),
     cursor: page.rows.length === 100 ? page.cursor : null,
-    review: review ? briefOf(review, { full: true }) : null };
+    review: review && UNFINISHED.includes(review.status) ? briefOf(review, { full: true }) : null };
 }
 
 export async function moveNote(ctx, body) {
@@ -721,7 +739,7 @@ export async function processNote(ctx, body) {
   const project = await notesProject(ctx, body);
   if (project.notes_review_duty_id) {
     const review = await ctx.store.get("duties", project.notes_review_duty_id);
-    if (review) return filedAlready(review);
+    if (review && UNFINISHED.includes(review.status)) return filedAlready(review);
   }
   const notes = [];
   let cursor;
@@ -734,10 +752,12 @@ export async function processNote(ctx, body) {
   const legacyIDs = [...new Set(notes.map(n => n.review_duty_id).filter(Boolean))];
   const legacy = await ctx.store.getMany("duties", legacyIDs);
   if ([...legacy.values()].some(r => UNFINISHED.includes(r.status))) throw conflict("finish or cancel the existing note review first");
+  const eligible = notes.filter(n => !n.has_suggestions);
+  if (!eligible.length) throw badRequest("all notes already have linked suggestions; clear a note link to suggest again");
   return enqueueDuty(ctx, {
-    project_id: project.key, title: `Suggest duties from ${notes.length} ${notes.length === 1 ? "note" : "notes"}`,
-    brief: `Review ALL source_note_ids on this review, including each note's files, discussion and linked suggestions. Consider related notes together; one proposed duty can use several notes. Use duty_suggest with source_note_ids naming the notes that support each proposal, a complete brief and an optional question. Avoid duplicating existing work. Every suggestion requires human approval. Do not implement, change accounts, schedule work, commit, integrate or deploy. Finish with duty_complete and the suggested IDs, or explain why none are needed. Notes added after this review was requested belong to the next review.`,
-  }, { reviewNotes: notes.map(n => n.id) });
+    project_id: project.key, title: `Suggest duties from ${eligible.length} ${eligible.length === 1 ? "note" : "notes"}`,
+    brief: `This review includes only notes without a current linked suggestion. Review ALL source_note_ids on this review, including each note's files, discussion and linked suggestions. Consider related notes together; one proposed duty can use several notes. Use duty_suggest with source_note_ids naming the notes that support each proposal, a complete brief and an optional question. Avoid duplicating existing work. Every suggestion requires human approval. Do not implement, change accounts, schedule work, commit, integrate or deploy. Finish with duty_complete and the suggested IDs, or explain why none are needed. Notes added after this review was requested belong to the next review.`,
+  }, { reviewNotes: eligible.map(n => n.id), reviewAfter: project.notes_review_duty_id || project.notes_review_round || "initial" });
 }
 
 export async function clearNoteSuggestions(ctx, body) {
@@ -752,8 +772,11 @@ export async function clearNoteSuggestions(ctx, body) {
     const review = await ctx.store.get("duties", note.review_duty_id);
     if (review && UNFINISHED.includes(review.status)) throw conflict("finish or cancel the current review before clearing its link");
   }
-  const ops = [putOp("projects", project.key, { ...stripMeta(project), notes_review_duty_id: null, notes_review_round: dutyId() })];
-  if (note) ops.push(putOp("duties", note.key, { ...stripMeta(note), review_duty_id: null, suggestion_round: dutyId(), updated_at: Date.now() }));
+  // note_id clears only this note's eligibility link. Keep the board review pointer
+  // so retries of a new review still deduplicate against the same predecessor.
+  const ops = note
+    ? [putOp("duties", note.key, { ...stripMeta(note), review_duty_id: null, suggestion_round: dutyId(), suggestions_cleared_at: Date.now(), updated_at: Date.now() })]
+    : [putOp("projects", project.key, { ...stripMeta(project), notes_review_duty_id: null, notes_review_round: dutyId() })];
   await ctx.store.transaction(ops);
   await ctx.publish(project.key, null, { t: "notes" });
   if (note) await ctx.publish(note.project_id, note.key, { t: "duty", id: note.key, status: "note" });
@@ -808,7 +831,7 @@ export async function enqueueDuty(ctx, body, internal = {}) {
   // what makes that hold when two retries race; the read first is what makes the common case
   // (a retry long after the first went through) an answer rather than an error.
   const externalRef = str(body.external_ref, "external_ref", { max: 128, fallback: "" }) || null;
-  const apiRef = internal.reviewNotes ? `notes-review:${project.key}:${project.notes_review_round || "initial"}`
+  const apiRef = internal.reviewNotes ? `notes-review:${project.key}:${internal.reviewAfter || project.notes_review_round || "initial"}`
     : review ? `note-suggestion:${review.key}:${externalRef || str(body.title, "title", { required: true, max: 200 })}`
     : externalRef ? `${refOwner(ctx.caller)}:${externalRef}` : null;
   if (apiRef) {
@@ -860,6 +883,7 @@ export async function enqueueDuty(ctx, body, internal = {}) {
     source_note_id: sources[0]?.key || internal.reviewNotes?.[0] || null,
     source_note_ids: review ? sources.map(n => n.key) : internal.reviewNotes || null,
     ...(internal.reviewNotes ? { review_scope: "board" } : {}),
+    ...(review ? { source_note_rounds: Object.fromEntries(sources.map(n => [n.key, n.suggestion_round || "initial"])) } : {}),
     approval_required: !!review,
     priority,
     prio_rank: RANK[priority],

@@ -584,7 +584,10 @@ async function main() {
       await call("/duty/cancel", { duty_id: noteEvent.bypass.duty_id, reason: "Reject this suggestion." }, human);
     }
     await call("/note/clear", { note_id: note.duty_id }, human);
+    const eligibleNotes = (await call("/note/list", { project_id: boardId }, human)).notes;
+    check("clearing one source leaves the other linked", eligibleNotes.find(n => n.id === note.duty_id)?.has_suggestions === false && eligibleNotes.find(n => n.id === secondNote.duty_id)?.has_suggestions === true);
     const anotherReview = await call("/note/process", { note_id: note.duty_id }, human);
+    check("the next review includes only the cleared note", JSON.stringify((await get(anotherReview.duty_id)).source_note_ids) === JSON.stringify([note.duty_id]));
     const rereviewed = await until("note reviewed again", async () => (await get(anotherReview.duty_id)).status === "done", 30_000);
     const again = events(log).find(e => e.event === "note-review" && e.dutyId === anotherReview.duty_id);
     check("clearing allows a fresh review which sees the previous suggestions and their status", !!rereviewed && anotherReview.duty_id !== review.duty_id && again?.source?.suggestions?.some(d => d.id === suggested && d.status === "done") && again?.source?.suggestions?.some(d => d.status === "failed"), again?.source);

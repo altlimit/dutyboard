@@ -70,7 +70,7 @@ Only the receiving board's owner can grant or revoke access.
 Notes are source material outside the runnable queue. They appear as a separate sticky board in **Notes**. Use **`note_list`** to browse them,
 or **`duty_list`** with `status: "needs_decision"` to inspect Needs you. Pass the returned `cursor`
 until it is null. Reading a note never authorizes implementing it. A person chooses **Suggest
-duties** to queue a separate `note_review` duty; only work that review after it is assigned to you.
+duties** to queue a separate `note_review` duty for notes without current linked suggestions; only work that review after it is assigned to you.
 
 1. Read ALL `source_note_ids` on the review (legacy: `source_note_id`) using **`duty_get`**,
    every note's discussion with **`duty_thread`**, and its files
@@ -91,10 +91,12 @@ During a review, do not implement, integrate, install, deploy, change accounts o
 nor an ordinary enqueue can bypass that gate. Approved work retains `source_note_ids` (legacy: `source_note_id`): read all
 sources and the human answer, then implement only the approved brief.
 
-After a review ends, a person may **Clear and suggest again**. This starts a new review; it does
-not erase past suggestions or their source links. Read that history before suggesting again.
-Each review records the notes present when requested; newly added notes belong to the next review.
-Creating notes, starting/clearing reviews and approving/rejecting suggestions are human actions,
+Each **Suggest duties** request after a review ends snapshots only notes without current linked suggestions.
+`note_list` and `duty_get` expose `has_suggestions` on notes. A person can **Clear link** on one note
+to make it eligible again; past duties and source history remain. Deleting a suggestion removes it
+from current link tracking. Read history before suggesting again. Notes with no proposal remain eligible;
+newly added notes belong to the next review. Do not extend a review beyond its `source_note_ids`.
+Creating notes, starting reviews, clearing note links and approving/rejecting suggestions are human actions,
 not agent MCP tools.
 
 ## Work that comes back

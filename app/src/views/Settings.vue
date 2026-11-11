@@ -1,4 +1,5 @@
 <script setup>
+import BoardNav from "../components/BoardNav.vue";
 import { computed, onUnmounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { api, subscribeLive } from "../lib/altengine.js";
@@ -671,7 +672,7 @@ function tabKey(event) {
 
 <template>
   <div class="wrap wrap--settings stack">
-    <p><router-link :to="{ name: 'board', params: { projectId } }">← Back to the board</router-link></p>
+    <BoardNav :project-id="projectId" :name="boardName" active="settings" />
 
     <div>
       <h1>Board settings</h1>

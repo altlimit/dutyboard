@@ -212,7 +212,7 @@ main:focus { outline: none; }
   border-radius: 6px;
 }
 .iconbtn:hover:not(:disabled) { background: var(--surface-2); color: var(--text); border-color: var(--border); }
-.navlink.router-link-active { color: var(--text); background: var(--surface-2); }
+.navlink.router-link-active, .navlink--active { color: var(--text); background: var(--surface-2); }
 
 /* --- controls ----------------------------------------------------------- */
 button, .btn {

@@ -1,4 +1,5 @@
 <script setup>
+import BoardNav from "../components/BoardNav.vue";
 import { computed, onUnmounted, ref, watch } from "vue";
 import { api, putSigned, subscribeLive } from "../lib/altengine.js";
 import { plain } from "../lib/markdown.js";
@@ -9,9 +10,9 @@ const props = defineProps({ projectId: { type: String, required: true } });
 const board = ref(null), notes = ref([]), review = ref(null);
 const loading = ref(true), error = ref(""), notice = ref(""), busy = ref(false), saving = ref(false);
 const showForm = ref(false), title = ref(""), brief = ref(""), files = ref([]), upload = ref("");
-const dragging = ref(null), moving = ref(new Set());
+const dragging = ref(null), moving = ref(new Set()), clearing = ref(new Set());
 let socket, timer, generation = 0;
-const terminal = computed(() => review.value && ["done", "failed"].includes(review.value.status));
+const eligible = computed(() => notes.value.filter(n => !n.has_suggestions));
 const position = (n, i) => n.note_position || { x: 24 + (i % 3) * 300, y: 24 + Math.floor(i / 3) * 300 };
 const canvasSize = computed(() => ({
   width: `${Math.max(920, ...notes.value.map((n, i) => position(n, i).x + 300))}px`,
@@ -71,12 +72,20 @@ async function add() {
   } catch (err) { error.value = err.message; }
   finally { saving.value = false; upload.value = ""; }
 }
-async function suggest(clear = false) {
+async function clearLink(n) {
+  const current = generation;
+  clearing.value.add(n.id); error.value = notice.value = "";
+  try {
+    await api("/note/clear", { note_id: n.id });
+    if (current === generation) await load();
+  } catch (err) { if (current === generation) error.value = err.message; }
+  finally { clearing.value.delete(n.id); }
+}
+async function suggest() {
   busy.value = true; error.value = notice.value = "";
   try {
-    if (clear) await api("/note/clear", { project_id: props.projectId });
     await api("/note/process", { project_id: props.projectId });
-    notice.value = "Review requested. An agent will consider all notes together; suggested duties will wait in Needs you for approval.";
+    notice.value = "Review requested. An agent will consider notes without linked suggestions together; suggested duties will wait in Needs you for approval.";
     await load();
   } catch (err) { error.value = err.message; }
   finally { busy.value = false; }
@@ -118,20 +127,20 @@ function nudge(event, n, i) {
 
 <template>
   <div class="wrap wrap--board stack notes-page">
-    <p><router-link :to="{ name: 'board', params: { projectId } }">← {{ board?.name || projectId }}</router-link></p>
+    <BoardNav :project-id="projectId" :name="board?.name" active="notes" />
     <div class="row row--between">
       <div><h1>Notes</h1><p class="muted">Ideas, references and files for {{ board?.name || 'this board' }}.</p></div>
       <div class="row">
         <button @click="load" :disabled="loading">Refresh</button>
         <button class="primary" @click="showForm = !showForm" :aria-expanded="showForm" :disabled="saving">{{ showForm ? 'Cancel' : 'Add note' }}</button>
-        <button v-if="!review" @click="suggest()" :disabled="busy || saving || !notes.length">{{ busy ? 'Requesting…' : 'Suggest duties' }}</button>
-        <button v-else-if="terminal" @click="suggest(true)" :disabled="busy || saving || !notes.length">{{ busy ? 'Requesting…' : 'Clear and suggest again' }}</button>
+        <button v-if="eligible.length" @click="suggest()" :disabled="busy || saving || !!review || !!clearing.size">{{ busy ? 'Requesting…' : 'Suggest duties' }}</button>
       </div>
     </div>
-    <p class="hint">Suggest duties reviews all notes together. Related notes can become one duty, which waits for your approval in Needs you.</p>
-    <p v-if="review" class="notice"><router-link :to="{ name: 'duty', params: { projectId, dutyId: review.id } }">{{ review.title }}</router-link> · {{ statusLabel(review.status) }}. {{ terminal ? 'Review history and source links stay when you suggest again.' : 'Notes added now will be included in the next review.' }}</p>
+    <p v-if="notes.length" class="hint">Suggest duties reviews notes without a linked suggestion. Related notes can become one duty, which waits for your approval in Needs you. Clear a note’s link to include it again; existing duties and source history stay.</p>
+    <p v-if="notes.length && !review" class="hint">{{ eligible.length ? `${eligible.length} ${eligible.length === 1 ? 'note ready' : 'notes ready'} for suggestions.` : 'All notes have linked suggestions. Add a note or clear a link to suggest again.' }}</p>
+    <p v-if="notes.length && review" class="notice"><router-link :to="{ name: 'duty', params: { projectId, dutyId: review.id } }">{{ review.title }}</router-link> · {{ statusLabel(review.status) }}. Notes added now will be included in the next review.</p>
     <p v-if="error" class="notice notice--error" role="alert">{{ error }}</p>
-    <p v-if="notice" class="notice" role="status">{{ notice }}</p>
+    <p v-if="notes.length && notice && review" class="notice" role="status">{{ notice }}</p>
     <form v-if="showForm" class="panel stack note-form" @submit.prevent="add" @paste="paste">
       <div class="field"><label for="note-title">Title</label><input id="note-title" v-model="title" required maxlength="200" :disabled="saving" /></div>
       <div class="field"><label for="note-body">Note</label><textarea id="note-body" v-model="brief" maxlength="4000" :required="!files.length" :disabled="saving" placeholder="An idea, a question, or something the board should know…"></textarea></div>
@@ -148,10 +157,12 @@ function nudge(event, n, i) {
       <div class="notes-scroll" aria-label="Notes board">
         <div class="notes-canvas" :style="canvasSize">
           <article v-for="(n, i) in notes" :key="n.id" class="sticky" :class="[`sticky--${i % 4}`, { 'sticky--moving': dragging?.id === n.id }]" :style="cardStyle(n, i)">
-            <button class="sticky__handle" :disabled="moving.has(n.id)" :aria-label="`Move ${n.title}. Use arrow keys to arrange.`" @pointerdown="startDrag($event, n, i)" @pointermove="drag($event, n)" @pointerup="drop($event, n)" @pointercancel="drop($event, n, true)" @keydown="nudge($event, n, i)"><span aria-hidden="true">⠿</span> {{ moving.has(n.id) ? 'Saving…' : 'Move' }}</button>
+            <button class="sticky__handle" :aria-disabled="moving.has(n.id) || undefined" :aria-label="`Move ${n.title}. Use arrow keys to arrange.`" @pointerdown="startDrag($event, n, i)" @pointermove="drag($event, n)" @pointerup="drop($event, n)" @pointercancel="drop($event, n, true)" @keydown="nudge($event, n, i)"><span aria-hidden="true">⠿</span></button>
             <h2><router-link :to="{ name: 'duty', params: { projectId, dutyId: n.id } }">{{ n.title }}</router-link></h2>
             <p class="sticky__body">{{ plain(n.brief) }}</p>
-            <div class="sticky__footer"><span v-if="n.attachment_count">{{ n.attachment_count }} {{ n.attachment_count === 1 ? 'file' : 'files' }} · </span><router-link :to="{ name: 'duty', params: { projectId, dutyId: n.id } }">Open note &amp; suggestions →</router-link></div>
+            <div class="sticky__footer"><span v-if="n.attachment_count">{{ n.attachment_count }} {{ n.attachment_count === 1 ? 'file' : 'files' }} · </span><router-link :to="{ name: 'duty', params: { projectId, dutyId: n.id } }">Open note &amp; suggestions →</router-link>
+              <div v-if="n.has_suggestions" class="sticky__links"><span>Linked</span><button class="sticky__clear" :aria-label="`Clear suggestion link for ${n.title}`" :disabled="!!review || clearing.has(n.id)" @click="clearLink(n)">Clear link</button></div>
+            </div>
           </article>
         </div>
       </div>
@@ -160,7 +171,6 @@ function nudge(event, n, i) {
 </template>
 
 <style scoped>
-.notes-page > p:first-child { margin-bottom: 0; }
 .note-form { max-width: 700px; }
 .notes-scroll { overflow: auto; max-height: 78vh; border: 1px solid var(--border); border-radius: 12px; background-color: var(--bg); background-image: radial-gradient(var(--border) 1px, transparent 1px); background-size: 20px 20px; }
 .notes-canvas { position: relative; }
@@ -170,9 +180,13 @@ function nudge(event, n, i) {
 .sticky:focus-within { z-index: 4; }
 .sticky a { color: inherit; }.sticky h2 { font-size: 1.12rem; line-height: 1.35; margin: 6px 0 8px; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .sticky h2 a { text-decoration: none; }.sticky h2 a:hover { text-decoration: underline; }
-.sticky__handle { background: transparent; color: #514a3b; border: 0; padding: 0 4px; min-height: 28px; align-self: flex-start; cursor: grab; touch-action: none; font-size: .8rem; }
+.sticky__handle { background: transparent; color: #514a3b; border: 0; padding: 0; width: 32px; min-height: 28px; align-self: flex-start; cursor: grab; touch-action: none; font-size: 1.1rem; }
+.sticky__handle:hover:not(:disabled), .sticky__handle:active { background: #30291d14; color: #30291d; }
 .sticky__handle:active { cursor: grabbing; }.sticky__handle:focus-visible { outline: 2px solid #514a3b; outline-offset: 2px; }
 .sticky__body { margin: 0; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 5; -webkit-box-orient: vertical; overflow: hidden; }
+.sticky__links { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 4px; }
+.sticky__clear { color: inherit; background: transparent; border: 0; padding: 2px 0; font-size: inherit; text-decoration: underline; min-height: 28px; }
+.sticky__clear:hover:not(:disabled) { color: #30291d; background: #30291d14; }
 .sticky__footer { margin-top: auto; padding-top: 12px; font-size: .8rem; }
 @media (max-width: 700px) {
   .drag-hint, .sticky__handle { display: none; }

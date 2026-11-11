@@ -13,4 +13,4 @@ The person answered your question: {{.Duty.UnblockedContext.HumanResolution}}
 {{.From}} added: {{.Message}}
 {{end}}
 
-Consider the notes together. Each duty_suggest must include source_note_ids for the 1–50 notes that support that proposal. Related notes can support one duty; one note can support several duties. Read all notes in this review before deciding what to suggest. Notes added afterward belong to the next review.
+Consider the notes together. Each duty_suggest must include source_note_ids for the 1–50 notes that support that proposal. Related notes can support one duty; one note can support several duties. Read all notes in this review before deciding what to suggest. This snapshot includes only notes without a current linked suggestion when requested. Notes added afterward belong to the next review. A person can clear one note link to include it again; suggestion history remains and must still be checked.

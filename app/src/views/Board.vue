@@ -1,4 +1,5 @@
 <script setup>
+import BoardNav from "../components/BoardNav.vue";
 import { computed, onUnmounted, reactive, ref, watch } from "vue";
 import { aggregate, api, putSigned, query, subscribeLive } from "../lib/altengine.js";
 import { STATUS_COLUMNS, PRIORITIES, expiryChoices, ago, columnOrder, sortColumn } from "../lib/duties.js";
@@ -571,6 +572,7 @@ onUnmounted(() => {
 
 <template>
   <div class="wrap wrap--board stack">
+    <BoardNav :project-id="projectId" :name="board?.name" active="board" />
     <div class="row row--between">
       <div>
         <h1>{{ board ? board.name : projectId }}</h1>
@@ -610,7 +612,6 @@ onUnmounted(() => {
         <button class="primary" type="button" @click="showForm = !showForm" :aria-expanded="showForm">
           {{ showForm ? "Cancel" : "Add duty" }}
         </button>
-        <router-link class="btn" :to="{ name: 'notes', params: { projectId } }">Notes</router-link>
       </div>
     </div>
 
