@@ -44,6 +44,8 @@ assert.deepEqual((await call("board_profile")).runner.options, options);
 // A real note review using only advertised MCP operations on the agent side.
 const note = await createNote(ctx(owner), { project_id: "a", title: "Export idea", brief: "Export totals to CSV." });
 assert.equal((await call("duty_list", { status: "note" })).duties[0].id, note.duty_id);
+assert.equal((await call("note_list")).notes[0].id, note.duty_id);
+assert.ok(tools.find(t => t.name === "duty_suggest").inputSchema.properties.source_note_ids);
 await refused("duty_claim", { duty_id: note.duty_id });
 await refused("duty_suggest", { title: "Too early", brief: "No held review" });
 const review = await processNote(ctx(owner), { note_id: note.duty_id });
@@ -66,6 +68,7 @@ await refused("duty_complete", { duty_id: suggestion.duty_id, outcome_summary: "
 await setBoardAccess(ctx(owner), { project_id: "b", source_project_id: "a", level: "full" });
 assert.equal((await call("board_links")).boards[0].level, "full");
 assert.equal((await call("board_call", { project_id: "b", operation: "board_rules" })).body, "Rules on b");
+assert.deepEqual((await call("board_call", { project_id: "b", operation: "note_list" })).notes, []);
 await refused("board_call", { project_id: "b", operation: "duty_enqueue", arguments: args });
 await call("duty_complete", { duty_id: review.duty_id, outcome_summary: `Proposed ${suggestion.duty_id}` });
 await resolveDuty(ctx(owner), { duty_id: suggestion.duty_id, approve: true, resolution_text: "Approved; exclude archived." });
@@ -80,7 +83,7 @@ assert.deepEqual((await call("board_links")).boards, []);
 await refused("board_call", { project_id: "b", operation: "board_rules" });
 const submit = { ...agent, scope: "submit" };
 const submitNames = (await rpc("tools/list", {}, submit)).result.tools.map(t => t.name);
-for (const name of ["duty_list", "duty_suggest", "board_links", "board_call", "board_profile", "duty_attachment_delete"]) {
+for (const name of ["note_list", "duty_list", "duty_suggest", "board_links", "board_call", "board_profile", "duty_attachment_delete"]) {
   assert.ok(!submitNames.includes(name));
   await refused(name, {}, submit);
 }

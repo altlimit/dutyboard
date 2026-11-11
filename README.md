@@ -664,13 +664,15 @@ every other part of the profile that makes a machine run something.
 
 ## Notes and suggested duties
 
-**Add Note**, beside **Add duty**, saves ideas, context and files without starting work. The Notes lane is hidden when you open a board; **Show notes** reveals it. Notes support the same uploads, pasted files, edits and discussion as duties.
+Open **Notes** from a board to collect ideas, context and files on a separate sticky board. Use **Add note**, then drag cards by their handles to arrange them. Positions are saved for everyone on the board. Arrow keys also move a focused handle (Shift for larger steps). On phones, notes stack vertically without dragging. Notes support uploads, pasted files, edits and discussion without entering the runnable queue.
 
-Choose **Suggest duties** on a note to queue a review by the board's configured agents. The reviewer reads the note, its files and earlier suggestions, then files proposed work in **Needs you**. Each suggestion says **created from note**, links back to its source, and can include a clarification question. **Approve duty** (or **Approve with answer**) queues it; **Reject suggestion** leaves it out of the queue. Approval is enforced by the server, including when a reviewer uses the ordinary enqueue tool.
+**Suggest duties** queues one review of all notes currently on the board. The reviewer reads every note, its files, discussion and prior suggestions, then considers them together. Several notes can support one duty. Every proposal goes to **Needs you**, links to its source notes, and waits for **Approve duty** or **Approve with answer**. **Reject suggestion** keeps it out of the queue. The server enforces this gate even if the reviewer uses ordinary enqueue.
 
-Open a note to see its linked suggestions and their current status. **View review** opens the processing duty. Once that review finishes or is cancelled, **Clear and suggest again** clears the current review link and starts a new review. Earlier suggested duties and their source links remain, so the next reviewer can avoid proposing work already approved or completed. Duplicate requests for the same review or suggestion are deduplicated.
+Open any note to see its linked duties and their status. The Notes page links to the current review. After it finishes or is cancelled, **Clear and suggest again** starts a fresh review without erasing previous proposals or source links. A review records the notes present when requested; later additions join the next review. The agent should use existing links to avoid proposing work already approved or completed.
 
-The API exposes `/note/create`, `/note/process` and `/note/clear` to signed-in board members. A working agent uses `duty_suggest` (REST `/duty/suggest`) while holding a note review; `duty_get` on a note includes paginated `suggestions` and `suggestions_cursor`. A human approves with `/duty/resolve`, `approve: true` and `resolution_text`. Notes use status and kind `note`, outside the runnable queue; their review is a separate `note_review` duty. Removing a note uses the existing owner-only delete action and removes its files as well.
+Signed-in board members use `/note/create`, `/note/list`, `/note/move` (`note_id`, `x`, `y`), `/note/process` and `/note/clear` (`project_id`). The older `note_id` review/clear arguments remain accepted and resolve to that note's board. Agents read notes through `note_list` and, during a held review, use `duty_suggest` with `source_note_ids` naming 1–50 supporting notes per proposal. All must belong to the review. One source can be inferred for single-note reviews. The review itself can include up to the board limit of 500 notes. New notes and proposals expose `source_note_ids` where applicable; `source_note_id` remains as a legacy alias for the first source.
+
+`duty_get` on a note includes paginated `suggestions` and `suggestions_cursor`; follow every page to include all sources and earlier reviews. A human approves with `/duty/resolve`, `approve: true` and `resolution_text`. Notes retain internal status/kind `note` for compatibility, but have no lane in the console. Their review is a separate `note_review` duty. Owner-only deletion removes a note's files and tracking links; existing proposed duties retain their source IDs. The runner instructions and MCP schemas explain combined reviews and approval boundaries.
 
 ## Work that comes round again
 
@@ -924,8 +926,10 @@ only when you first try it hosted.
 | `/duty/enqueue` | both | New work. `immediate_blocker` interrupts what the caller holds. `external_ref` makes a retry answer the duty already filed; `metadata` is the caller's own; `reserved_for` sends it to one runner. |
 | `/duty/get` | both | One duty or note; notes include paginated linked suggestions with `suggestions_cursor`. |
 | `/duty/list` | both | Browse lanes without claiming; `status`, `limit` and `cursor`. Not available to submit tokens. |
-| `/duty/suggest` | agent | During a held note review, file an approval-required suggestion linked to the note. |
-| `/note/create` · `/note/process` · `/note/clear` | human | Add a note, queue its review, or clear a finished review link while keeping suggestion history. |
+| `/duty/suggest` | agent | During a held review, file an approval-required suggestion linked to its supporting `source_note_ids`. |
+| `/note/list` | both | Read notes, positions and the current board review; follow `cursor`. |
+| `/note/create` · `/note/move` | human | Add a note or save its card position on the Notes board. |
+| `/note/process` · `/note/clear` | human | Review all notes on `project_id`, or clear a finished review while preserving suggestions and sources. |
 | `/duty/changes` | token | The duties this token filed that changed since `since`, oldest first, with `next_since` to pass back. |
 | `/duty/cancel` | both | Call a duty off: `→ failed`, with the reason. A person may cancel any unfinished duty on their board, and the machine holding it stops the session and removes its worktree or folder. A token may cancel only what it filed, while nobody is working on it. |
 | `/duty/checkpoint` | both | Post to the thread; optionally park the duty. |

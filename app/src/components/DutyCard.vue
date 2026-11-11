@@ -1,6 +1,5 @@
 <script setup>
 import { computed } from "vue";
-import NoteActions from "./NoteActions.vue";
 import QuotaRetry from "./QuotaRetry.vue";
 import { ago, originLabel, priorityLabel } from "../lib/duties.js";
 import { activityLine } from "../lib/runners.js";
@@ -30,6 +29,7 @@ const showPriority = computed(() => d.value.priority === "immediate_blocker");
         <span v-if="showPriority" class="badge badge--immediate_blocker">{{ priorityLabel(d.priority) }}</span>
         <span v-if="d.kind === 'setup' || d.kind === 'rules'" class="badge badge--active">{{ d.kind }}</span>
         <span class="badge">{{ originLabel(d, user) }}</span>
+        <span v-if="d.source_note_ids?.length || d.source_note_id" class="badge">Created from {{ d.source_note_ids?.length || 1 }} {{ (d.source_note_ids?.length || 1) === 1 ? 'note' : 'notes' }}</span>
         <span v-if="d.assigned_agent_id" class="nowrap">
           <span class="sr-only">{{ d.status === "active" ? "held by " : "last worked by " }}</span>{{ d.assigned_agent_id }}
         </span>
@@ -53,7 +53,6 @@ const showPriority = computed(() => d.value.priority === "immediate_blocker");
         {{ plain(d.outcome_summary) }}
       </span>
     </router-link>
-    <NoteActions v-if="d.kind === 'note'" :note="d" :project-id="projectId" @changed="$emit('changed')" />
     <QuotaRetry v-if="d.status === 'active'" :activity="activity" :project-id="projectId" :owner-uid="d.owner_uid" />
   </article>
 </template>

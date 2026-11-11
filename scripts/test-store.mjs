@@ -8,12 +8,13 @@ const store = {
   getOrFail: async (c, k) => { const row = table(c).get(k); if (!row) throw new Error("not found"); return row; },
   getMany: async (c, keys) => new Map(keys.filter(k => table(c).has(k)).map(k => [k, table(c).get(k)])),
   putOne: async (c, k, data) => { table(c).set(k, { ...structuredClone(data), key: k }); return k; },
-  query: async (c, { where, limit = 100, order = [] } = {}) => {
+  query: async (c, { where, limit = 100, order = [], cursor } = {}) => {
     const rows = [...table(c).values()].filter(r => matches(r, where)).sort((a, b) => {
       for (const { field, dir } of order) if (a[field] !== b[field]) return (a[field] < b[field] ? -1 : 1) * (dir === "desc" ? -1 : 1);
       return 0;
     });
-    return { rows: rows.slice(0, limit), cursor: null };
+    const offset = cursor ? Number(cursor.replace("test:", "")) : 0;
+    return { rows: rows.slice(offset, offset + limit), cursor: rows.length > offset + limit ? `test:${offset + limit}` : null };
   },
   countAtMost: async (c, where, cap) => [...table(c).values()].filter(r => matches(r, where)).slice(0, cap).length,
   ensureUniqueIndex: async () => true,

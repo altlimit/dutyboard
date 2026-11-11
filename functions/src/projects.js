@@ -235,6 +235,7 @@ export async function deleteProject(ctx, body) {
     attachments: await sweepAttachments(ctx, { field: "project_id", value: project.key }),
     threads: await sweep(ctx, "threads", project.key),
     duties: await sweep(ctx, "duties", project.key),
+    note_sources: await sweep(ctx, "note_sources", project.key),
     agents: await sweep(ctx, "agents", project.key),
     tokens: await sweep(ctx, "tokens", project.key),
     // Each holding the secret its token's deliveries were signed with.

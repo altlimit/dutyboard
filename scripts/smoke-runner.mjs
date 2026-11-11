@@ -556,6 +556,7 @@ async function main() {
     const note = await call("/note/create", { project_id: boardId, title: "Export idea", brief: "An export would help.", expect_files: 1 }, human);
     await call("/duty/attach", { duty_id: note.duty_id, name: "context.txt", content_type: "text/plain", content_base64: Buffer.from("Export context").toString("base64") }, human);
     check("saving a note leaves it outside the runnable queue", (await get(note.duty_id)).status === "note");
+    const secondNote = await call("/note/create", { project_id: boardId, title: "CSV format", brief: "Export should quote commas and include column headers." }, human);
     const mainBeforeReview = sh("git", ["--git-dir", remote, "rev-parse", "main"]);
     const reviews = await Promise.all([call("/note/process", { note_id: note.duty_id }, human), call("/note/process", { note_id: note.duty_id }, human)]);
     check("two review requests track the same review duty", reviews[0].duty_id === reviews[1].duty_id);
@@ -567,11 +568,14 @@ async function main() {
     check("review MCP instructions and tool discovery enforce review-only work", reviewStart?.mcpReview && reviewStart?.tools.includes("duty_suggest") && !reviewStart.tools.includes("duty_integrate") && !reviewStart.tools.includes("duty_schedule_create") && reviewStart.linkedOperations.includes("board_rules") && !reviewStart.linkedOperations.includes("duty_enqueue"), reviewStart?.tools);
     check("ordinary work is not offered the note-review suggestion tool", !codexStart?.mcpReview && !codexStart?.tools.includes("duty_suggest"));
     check("the board agent reads the source note and its attachment", !!reviewed && noteEvent?.source?.duty?.id === note.duty_id && noteEvent?.attachments?.attachments?.some(a => a.name === "context.txt"), noteEvent);
+    check("the reviewer reads all notes together", noteEvent?.sourceIDs?.includes(secondNote.duty_id) && noteEvent?.sources?.length === 2, noteEvent);
     check("a review finishes without landing changes and cannot integrate", !!reviewed && noteEvent?.refused && !noteEvent?.completeError && sh("git", ["--git-dir", remote, "rev-parse", "main"]) === mainBeforeReview, noteEvent);
     check("suggestions and ordinary enqueue during a review both wait for human approval", noteEvent?.first?.status === "needs_decision" && noteEvent?.bypass?.status === "needs_decision", noteEvent);
     check("retrying a suggestion does not duplicate it", noteEvent?.first?.duty_id === noteEvent?.retry?.duty_id);
     const tracked = await call("/duty/get", { duty_id: note.duty_id }, human);
     check("the note tracks its suggested duties and current review", tracked.suggestions?.length === 2 && tracked.duty.review_duty_id === review.duty_id, tracked);
+    const secondaryTracked = await call("/duty/get", { duty_id: secondNote.duty_id }, human);
+    check("one suggestion is linked from both source notes", secondaryTracked.suggestions?.some(d => d.id === noteEvent?.first?.duty_id), secondaryTracked);
     const suggested = noteEvent?.first?.duty_id;
     if (suggested) {
       await call("/duty/resolve", { duty_id: suggested, resolution_text: "Approved, include column names.", approve: true }, human);

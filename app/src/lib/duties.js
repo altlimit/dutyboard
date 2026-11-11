@@ -45,7 +45,6 @@ export function sortColumn(status, rows) {
 }
 
 export const STATUS_COLUMNS = [
-  { key: "note", label: "Notes", hint: "Ideas, context and files. Ask an agent to suggest duties when you are ready.", hidden: true },
   {
     key: "needs_decision",
     label: "Needs you",

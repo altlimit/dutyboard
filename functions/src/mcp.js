@@ -17,7 +17,7 @@
 // look to most clients like the server broke.
 
 import { HttpError, badRequest, json, readBoundedText } from "./http.js";
-import { listDuties, suggestDuty, pollDuties, claimDuty, enqueueDuty, checkpointDuty, completeDuty, failDuty, listThread, getDuty, cancelDuty, listChanges, PRIORITIES, THREAD_KINDS } from "./duties.js";
+import { listNotes, listDuties, suggestDuty, pollDuties, claimDuty, enqueueDuty, checkpointDuty, completeDuty, failDuty, listThread, getDuty, cancelDuty, listChanges, PRIORITIES, THREAD_KINDS } from "./duties.js";
 import { deleteAttachment, attachToDuty, listAttachments, MAX_BYTES, MAX_INLINE_BYTES } from "./attachments.js";
 import { searchDuties } from "./searching.js";
 import { createSchedule, deleteSchedule, listSchedules, scheduleHistory, updateSchedule } from "./schedules.js";
@@ -51,7 +51,7 @@ LINKED BOARDS
 Use board_links to discover boards this board can access. Use board_call with the receiving project_id, operation and normal tool arguments. Ordinary tools stay on your own board. READ is for context; WRITE also files work for that board; FULL allows the agent actions named in the link, without bypassing human approvals. Read the target rules before filing or changing work. Links are directional and never transitively inherited. Use duty_list to browse any lane, including notes and Needs you, and pass its returned cursor to continue. Use a stable external_ref for cross-board duties. Include source_duty_id when you hold a source duty; the daemon supplies it automatically. A link never switches your workspace or grants another board's MCP credentials. If access is refused, refresh board_links; do not work around the grant.
 
 REVIEWING NOTES
-A note_review duty asks for suggestions only. Read its source note, attachments and thread, and the existing suggestions returned by duty_get on the note. Use duty_suggest with a clear brief and optional question. Each proposal stays in Needs you until a person approves it. Never implement or schedule the proposed work during the review. Complete the review with a summary of what you suggested and the suggestion IDs. Follow suggestions_cursor through every page from duty_get. Notes themselves are not runnable. People trigger reviews with Suggest duties and can Clear and suggest again after a review ends; old suggestions and source links remain. Do not duplicate approved or completed work. Only a person may approve or reject suggestions.
+A note_review duty asks for suggestions only. Notes live in a separate board view, not a duty lane. Read ALL source_note_ids on the review, each note's files and thread, and all existing linked suggestions. Consider the notes together: several notes can support one proposal. Pass source_note_ids for the 1–50 supporting notes to duty_suggest or duty_enqueue. Older single-note reviews can use source_note_id. Use note_list to browse all notes, following its cursor. The review records the notes present when requested; later notes belong to the next review. Use duty_suggest with a clear brief and optional question. Each proposal stays in Needs you until a person approves it. Never implement or schedule the proposed work during the review. Complete the review with a summary of what you suggested and the suggestion IDs. Follow suggestions_cursor through every page from duty_get. Notes themselves are not runnable. People trigger reviews with Suggest duties and can Clear and suggest again after a review ends; old suggestions and source links remain. Do not duplicate approved or completed work. Only a person may approve or reject suggestions.
 
 RUNNER SELECTION AND USAGE LIMITS
 board_profile returns runner.use_machine_defaults: true means inherit this machine's enabled list and order; otherwise runner.options is the board priority override (or legacy runner.agent/model/effort). The daemon chooses among combinations enabled on this machine and falls back when usage is exhausted, keeping the same duty and workspace. Resume from checkpoints and verify existing changes. Model catalogs come from installed CLIs; do not invent model names or edit runner configuration. Machine availability, board priorities and Refresh models are owner controls. After a server-side account or usage fix, the board or machine owner can use Retry now to clear usage cooldowns; Refresh models and Check again do not do that. Agents cannot reset usage, change access grants, or approve notes through MCP.
@@ -119,11 +119,17 @@ const TOOLS = [
     inputSchema: { type: "object", properties: { attachment_id: s("Attachment to remove.") }, required: ["attachment_id"] }, handler: deleteAttachment,
   },
   {
-    name: "duty_suggest", title: "Suggest a duty from the note being reviewed",
-    description: "While holding a note_review duty, create proposed work in Needs you. It cannot run until a human explicitly approves. The source note and review are linked automatically. Reuse external_ref for retries. Read the source note with duty_get, which includes links to existing suggestions, and inspect its files with duty_attachments first. Never implement the suggestion during the review.",
+    name: "note_list", title: "Read the board's notes",
+    description: "Read a page of notes from the separate Notes board, with saved card positions and the latest board-wide review. Follow cursor until null. Notes are context, never runnable work. A review's source_note_ids records the notes included when the human requested it; notes added later belong to the next review.",
+    inputSchema: { type: "object", properties: { cursor: s("Cursor returned by the previous page.") } }, handler: listNotes,
+  },
+  {
+    name: "duty_suggest", title: "Suggest a duty from board notes",
+    description: "While holding a note_review, create proposed work in Needs you. Read ALL source_note_ids on the review, their files, threads and existing suggestions first. Consider related notes together; one duty can have several source notes. Supply source_note_ids naming the 1–50 notes supporting this proposal, all from the held review. Source links persist after approval, and each note lists its linked proposals. The duty cannot run until a human explicitly approves. Reuse external_ref for retries. Never implement the suggestion during the review.",
     inputSchema: { type: "object", properties: {
       title: s("Short title of the proposed work."), brief: s("What should be done and how to verify it."),
       question: s("Optional clarification or approval question for the person."),
+      source_note_ids: { type: "array", items: { type: "string" }, minItems: 1, maxItems: 50, description: "Notes from this review that support this proposal. Required for reviews containing more than one note; one source is inferred for legacy single-note reviews." },
       priority: s("Priority after approval.", { enum: PRIORITIES }),
       external_ref: s("Stable reference for this suggestion within the review, to avoid duplicates."),
       agent_id: s("The agent holding the review."),
@@ -170,6 +176,7 @@ const TOOLS = [
         brief: s("What needs doing and why, in a few sentences. This is what a future agent reads with no other context."),
         priority: s("How it schedules.", { enum: PRIORITIES, default: "next" }),
         spawned_by: s("The duty you were working on when you found this."),
+        source_note_ids: { type: "array", items: { type: "string" }, minItems: 1, maxItems: 50, description: "During a note review, notes supporting this proposal. Required for multi-note reviews; prefer duty_suggest." },
         agent_id: s("Which agent you are. Defaults to the id configured on this connection."),
         external_ref: s("Your own id for this request. Filing the same external_ref again answers the duty already filed (existing: true) instead of a second one."),
         metadata: { type: "object", description: "Your own fields, up to 2KB of JSON, handed back on every read of the duty." },
@@ -182,7 +189,7 @@ const TOOLS = [
   {
     name: "duty_get",
     title: "Read one duty",
-    description: "Read a duty or note. Returns duty with its status, brief, source_note_id or origin_board_id/origin_duty_id when present, and outcome_summary once finished. A note also returns suggestions and suggestions_cursor: repeat with that cursor until null to inspect every linked proposal, including older reviews. approval_required means a person must explicitly approve before any work starts.",
+    description: "Read a duty or note. Returns duty with its status, brief, source_note_ids (legacy source_note_id) or origin_board_id/origin_duty_id when present, and outcome_summary once finished. A note also returns suggestions and suggestions_cursor: repeat with that cursor until null to inspect every linked proposal, including older reviews. approval_required means a person must explicitly approve before any work starts.",
     inputSchema: {
       type: "object",
       properties: { duty_id: s("The duty or note to read."), suggestions_cursor: s("For a note, the suggestions_cursor returned by the previous page of linked suggestions.") },

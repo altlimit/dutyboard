@@ -406,5 +406,33 @@
       ],
       "for": "incoming grants configured by the target owner"
     }
+  ],
+  "note_sources": [
+    {
+      "fields": [
+        "project_id",
+        "note_id",
+        "created_at:desc"
+      ],
+      "for": "secondary source notes linked to suggested duties"
+    },
+    {
+      "fields": [
+        "duty_id"
+      ],
+      "for": "delete source links with their duty"
+    },
+    {
+      "fields": [
+        "note_id"
+      ],
+      "for": "delete source links with their note"
+    },
+    {
+      "fields": [
+        "project_id"
+      ],
+      "for": "delete board source links"
+    }
   ]
 }

@@ -203,15 +203,20 @@ if (title.includes("[linked]")) {
 }
 
 if (/Your review duty is/.test(prompt)) {
-  const sourceID = (prompt.match(/Source note: `(duty_[0-9A-Z]+)`/) || [])[1];
-  const source = await tool("duty_get", { duty_id: sourceID });
-  const attached = await tool("duty_attachments", { duty_id: sourceID });
-  const first = await tool("duty_suggest", { title: "Suggested export", brief: "Add a CSV export and verify its contents.", external_ref: "export" });
-  const retry = await tool("duty_suggest", { title: "Suggested export", brief: "Add a CSV export and verify its contents.", external_ref: "export" });
-  const bypass = await tool("duty_enqueue", { title: "Suggested documentation", brief: "Explain the export.", priority: "immediate_blocker" });
+  const review = await tool("duty_get", { duty_id: dutyId });
+  const sourceIDs = review.data?.duty?.source_note_ids || [review.data?.duty?.source_note_id];
+  const sources = [], files = [];
+  for (const sourceID of sourceIDs) {
+    sources.push(await tool("duty_get", { duty_id: sourceID }));
+    files.push(await tool("duty_attachments", { duty_id: sourceID }));
+  }
+  const [source] = sources, [attached] = files;
+  const first = await tool("duty_suggest", { title: "Suggested export", brief: "Add a CSV export and verify its contents.", external_ref: "export", source_note_ids: sourceIDs });
+  const retry = await tool("duty_suggest", { title: "Suggested export", brief: "Add a CSV export and verify its contents.", external_ref: "export", source_note_ids: sourceIDs });
+  const bypass = await tool("duty_enqueue", { title: "Suggested documentation", brief: "Explain the export.", source_note_ids: sourceIDs, priority: "immediate_blocker" });
   const refused = await tool("duty_integrate");
   const complete = await tool("duty_complete", { duty_id: dutyId, outcome_summary: "Suggested export and documentation; awaiting human approval." });
-  record({ event: "note-review", dutyId, source: source.data, attachments: attached.data, first: first.data, retry: retry.data, bypass: bypass.data, refused: refused.isError, completeError: complete.isError ? complete.text : null });
+  record({ event: "note-review", dutyId, sourceIDs, sources: sources.map(s => s.data), source: source.data, attachments: attached.data, first: first.data, retry: retry.data, bypass: bypass.data, refused: refused.isError, completeError: complete.isError ? complete.text : null });
   finish("reviewed note");
 }
 

@@ -11,7 +11,7 @@ const keyOf = (source, target) => `${target}:${source}`;
 
 // An explicit allowlist keeps new tools closed until their permission is decided.
 export const BOARD_OPERATIONS = Object.freeze({
-  duty_list: "read", duty_get: "read", duty_thread: "read", duty_search: "read",
+  note_list: "read", duty_list: "read", duty_get: "read", duty_thread: "read", duty_search: "read",
   duty_attachments: "read", board_profile: "read", board_rules: "read",
   duty_schedule_list: "read", duty_schedule_history: "read",
   duty_enqueue: "write", duty_attach: "write",

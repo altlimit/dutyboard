@@ -29,7 +29,7 @@ import { setWebhook, testWebhook, withWebhooks } from "./webhooks.js";
 import { openBoard, createProject, listProjects, listRunners, renameProject, deleteProject } from "./projects.js";
 import { attachToDuty, listAttachments, deleteAttachment } from "./attachments.js";
 import {
-  listDuties, createNote, processNote, clearNoteSuggestions, suggestDuty,
+  listDuties, listNotes, moveNote, createNote, processNote, clearNoteSuggestions, suggestDuty,
   pollDuties,
   claimDuty,
   enqueueDuty,
@@ -113,6 +113,8 @@ const ROUTES = {
   "/board/links": linkedBoards,
   "/board/call": callLinkedBoard,
   "/duty/list": listDuties,
+  "/note/list": listNotes,
+  "/note/move": moveNote,
   "/note/create": createNote,
   "/note/process": processNote,
   "/note/clear": clearNoteSuggestions,

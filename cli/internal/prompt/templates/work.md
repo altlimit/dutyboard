@@ -24,9 +24,9 @@ Read the note before the brief, and `duty_thread` before you change anything.
 # {{.Duty.Title}}
 
 {{.Duty.Brief}}
-{{- if .Duty.SourceNoteID}}
+{{- if or .Duty.SourceNoteIDs .Duty.SourceNoteID}}
 
-This duty was suggested from note `{{.Duty.SourceNoteID}}` and approved by a person. Read that note with `duty_get` and its files with `duty_attachments` for the source context. The approved duty's brief and human answer define the work; other suggestions on the note are separate duties.
+This duty was suggested from notes {{if .Duty.SourceNoteIDs}}{{range .Duty.SourceNoteIDs}}`{{.}}` {{end}}{{else}}`{{.Duty.SourceNoteID}}`{{end}}and approved by a person. Read ALL those notes with `duty_get`, their threads with `duty_thread` and their files with `duty_attachments` for the source context. The approved duty's brief and human answer define the work; other suggestions on the note are separate duties.
 {{- end}}
 
 {{- if .Check}}

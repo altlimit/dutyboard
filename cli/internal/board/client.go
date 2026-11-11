@@ -585,18 +585,19 @@ func (c *Client) ReportRepo(ctx context.Context, requestID, repoURL string) erro
 
 // Duty is a duty as /duty/get and /duty/claim return it.
 type Duty struct {
-	SourceNoteID     string `json:"source_note_id"`
-	ID               string `json:"id"`
-	Title            string `json:"title"`
-	Brief            string `json:"brief"`
-	Priority         string `json:"priority"`
-	Kind             string `json:"kind"`
-	Status           string `json:"status"`
-	AssignedAgentID  string `json:"assigned_agent_id"`
-	OutcomeSummary   string `json:"outcome_summary"`
-	LastQuestion     string `json:"last_question"`
-	AttachmentCount  int    `json:"attachment_count"`
-	ExpectFiles      int    `json:"expect_files"` // files the person filing it was still attaching
+	SourceNoteID     string   `json:"source_note_id"`
+	SourceNoteIDs    []string `json:"source_note_ids"`
+	ID               string   `json:"id"`
+	Title            string   `json:"title"`
+	Brief            string   `json:"brief"`
+	Priority         string   `json:"priority"`
+	Kind             string   `json:"kind"`
+	Status           string   `json:"status"`
+	AssignedAgentID  string   `json:"assigned_agent_id"`
+	OutcomeSummary   string   `json:"outcome_summary"`
+	LastQuestion     string   `json:"last_question"`
+	AttachmentCount  int      `json:"attachment_count"`
+	ExpectFiles      int      `json:"expect_files"` // files the person filing it was still attaching
 	UnblockedContext *struct {
 		LastQuestion    string `json:"last_question"`
 		HumanResolution string `json:"human_resolution"`

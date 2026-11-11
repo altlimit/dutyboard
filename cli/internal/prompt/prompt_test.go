@@ -167,12 +167,17 @@ func TestNoteReviewAndApprovedWorkCarrySource(t *testing.T) {
 	if !strings.Contains(task, "note_1") || !strings.Contains(task, "suggestions_cursor") {
 		t.Fatal("review is missing source or history pagination")
 	}
+	in.Duty.SourceNoteIDs = []string{"note_1", "note_2"}
+	task, err = Duty(in)
+	if err != nil || !strings.Contains(task, "note_2") || !strings.Contains(task, "source_note_ids") {
+		t.Fatal("combined review lost source notes or suggestion provenance instructions")
+	}
 	in.Duty.Kind = "work"
 	task, err = Duty(in)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(task, "note_1") || !strings.Contains(task, "approved by a person") {
+	if !strings.Contains(task, "note_1") || !strings.Contains(task, "note_2") || !strings.Contains(task, "approved by a person") {
 		t.Fatal("approved work lost its source")
 	}
 }

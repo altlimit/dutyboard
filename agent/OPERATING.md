@@ -67,29 +67,33 @@ Only the receiving board's owner can grant or revoke access.
 
 ## Notes and human-approved suggestions
 
-Notes are source material outside the runnable queue. Use **`duty_list`** with `status: "note"`
-to browse them, or `status: "needs_decision"` to inspect Needs you. Pass the returned `cursor`
+Notes are source material outside the runnable queue. They appear as a separate sticky board in **Notes**. Use **`note_list`** to browse them,
+or **`duty_list`** with `status: "needs_decision"` to inspect Needs you. Pass the returned `cursor`
 until it is null. Reading a note never authorizes implementing it. A person chooses **Suggest
 duties** to queue a separate `note_review` duty; only work that review after it is assigned to you.
 
-1. Read `source_note_id` using **`duty_get`**, its discussion with **`duty_thread`**, and its files
+1. Read ALL `source_note_ids` on the review (legacy: `source_note_id`) using **`duty_get`**,
+   every note's discussion with **`duty_thread`**, and its files
    with **`duty_attachments`**. Read the review's thread too when resuming.
-2. Inspect the note's `suggestions`, following **`suggestions_cursor`** through all pages with
+2. Inspect each note's `suggestions`, following **`suggestions_cursor`** through all pages with
    `duty_get`. Check their statuses and outcomes to avoid duplicating approved or completed work.
 3. Call **`duty_suggest`** for each actionable proposal, with a specific title, complete brief,
    acceptance criteria, optional clarification `question`, and a stable `external_ref` for retries.
-   The server links it to the note and review, with `approval_required: true` in Needs you.
+   Include `source_note_ids` naming the 1–50 notes supporting that proposal. Consider notes together;
+   several related notes can support a single duty. The server links all sources and the review,
+   with `approval_required: true` in Needs you.
 4. Complete the review with the suggestion IDs and a short summary. If nothing is actionable,
    explain why. If essential input cannot be read, park the review with a concrete question.
 
 During a review, do not implement, integrate, install, deploy, change accounts or schedule work.
 `duty_enqueue` also creates approval-required suggestions during a review. Only a person may
 **Approve duty**, **Approve with answer**, or **Reject suggestion**; neither FULL board access
-nor an ordinary enqueue can bypass that gate. Approved work retains `source_note_id`: read the
-source and human answer, then implement only the approved brief.
+nor an ordinary enqueue can bypass that gate. Approved work retains `source_note_ids` (legacy: `source_note_id`): read all
+sources and the human answer, then implement only the approved brief.
 
 After a review ends, a person may **Clear and suggest again**. This starts a new review; it does
 not erase past suggestions or their source links. Read that history before suggesting again.
+Each review records the notes present when requested; newly added notes belong to the next review.
 Creating notes, starting/clearing reviews and approving/rejecting suggestions are human actions,
 not agent MCP tools.
 

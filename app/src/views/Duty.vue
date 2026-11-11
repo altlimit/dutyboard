@@ -18,6 +18,7 @@ const router = useRouter();
 const PAGE = 25;
 
 const duty = ref(null);
+const sourceNotes = ref([]);
 const entries = ref([]);
 const attachments = ref([]);
 const olderCursor = ref(null);
@@ -74,6 +75,13 @@ async function load() {
       }),
     ]);
     duty.value = (dutyRes.documents || []).map(flat)[0] || null;
+    const ids = duty.value?.source_note_ids || (duty.value?.source_note_id ? [duty.value.source_note_id] : []);
+    const sources = [];
+    for (let i = 0; i < ids.length; i += 100) {
+      const res = await getDocs("duties", ids.slice(i, i + 100));
+      sources.push(...(res.documents || []).map(flat));
+    }
+    sourceNotes.value = ids.map(id => ({ id, title: sources.find(n => n.key === id)?.title || "Deleted or unavailable note", exists: sources.some(n => n.key === id) }));
     // Only when the duty says there is something to list. The count is maintained with the
     // rows, so an empty duty costs nothing — and listing mints a signed URL per file, which
     // is not work to do on the chance that someone attached one.
@@ -252,9 +260,10 @@ async function cancelDuty() {
 
 async function remove() {
   if (!confirm(`Delete "${duty.value.title}" and its thread? This cannot be undone.`)) return;
+  const destination = duty.value.kind === "note" ? "notes" : "board";
   await act(async () => {
     await api("/duty/delete", { duty_id: props.dutyId });
-    router.push({ name: "board", params: { projectId: props.projectId } });
+    router.push({ name: destination, params: { projectId: props.projectId } });
   });
 }
 
@@ -281,7 +290,7 @@ onUnmounted(() => {
 <template>
   <div class="wrap wrap--narrow stack">
     <p style="margin: 0">
-      <router-link :to="{ name: 'board', params: { projectId } }">← Back to the board</router-link>
+      <router-link :to="{ name: duty?.kind === 'note' ? 'notes' : 'board', params: { projectId } }">← {{ duty?.kind === 'note' ? 'Back to Notes' : 'Back to the board' }}</router-link>
     </p>
 
     <p v-if="error" class="notice notice--error" role="alert">{{ error }}</p>
@@ -319,11 +328,11 @@ onUnmounted(() => {
         <QuotaRetry v-if="duty.status === 'active'" :activity="activity" :project-id="projectId" :owner-uid="duty.owner_uid" />
       </div>
 
-      <p v-if="duty.source_note_id" class="notice">
-        {{ duty.kind === "note_review" ? "Reviewing" : "Created from" }}
-        <router-link :to="{ name: 'duty', params: { projectId, dutyId: duty.source_note_id } }">this note</router-link>.
-        <span v-if="duty.approval_required && needsAnswer">This suggestion will not be worked until you approve it.</span>
-      </p>
+      <div v-if="sourceNotes.length" class="notice">
+        <p style="margin-top: 0">{{ duty.kind === "note_review" ? "Reviewing" : "Created from" }} {{ sourceNotes.length }} {{ sourceNotes.length === 1 ? 'note' : 'notes' }}:</p>
+        <ul><li v-for="source in sourceNotes" :key="source.id"><router-link v-if="source.exists" :to="{ name: 'duty', params: { projectId, dutyId: source.id } }">{{ source.title }}</router-link><span v-else>{{ source.title }}</span></li></ul>
+        <p v-if="duty.approval_required && needsAnswer">This suggestion will not be worked until you approve it.</p>
+      </div>
       <section v-if="duty.kind === 'note'" class="panel">
         <NoteActions :note="duty" :project-id="projectId" full @changed="load" />
       </section>
