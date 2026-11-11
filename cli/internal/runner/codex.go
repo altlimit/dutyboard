@@ -146,6 +146,10 @@ func codexArgs(j Job) (args, env []string) {
 	}
 	for _, s := range j.MCPServers {
 		key := "mcp_servers." + tomlKey(s.Name)
+		// These are the servers authorized for this board's unattended session. "never"
+		// only prevents approval prompts; it does not approve MCP calls. Codex's "auto"
+		// tool policy can still require approval, which would then reject the call.
+		config(key+".default_tools_approval_mode", "approve")
 		if s.URL != "" {
 			config(key+".url", s.URL)
 			if len(s.Secrets) > 0 {

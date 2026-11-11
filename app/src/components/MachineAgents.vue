@@ -20,6 +20,12 @@ watch(model, () => { effort.value = ""; });
 const choice = computed(() => ({ agent: agent.value, model: model.value, effort: effort.value }));
 const canAdd = computed(() => item.value && item.value.state !== "todo" && options.value.length < 30 && !options.value.some((o) => optionKey(o) === optionKey(choice.value)));
 function add() { options.value.push({ ...choice.value }); dirty.value = true; }
+function move(i, delta) {
+  const next = [...options.value];
+  [next[i], next[i + delta]] = [next[i + delta], next[i]];
+  options.value = next;
+  dirty.value = true;
+}
 function remove(i) { options.value.splice(i, 1); dirty.value = true; }
 function save() { emit("save", options.value.map((o) => ({ ...o }))); }
 // Only acknowledge a successful save; failed requests leave the draft intact.
@@ -34,16 +40,20 @@ watch(() => JSON.stringify(props.machine.agent_options), (value) => {
       <h3 :id="`options-${machine.machine_id}`" style="margin: 0">Available agents and models</h3>
       <button type="button" class="link small" :disabled="disabled || !machine.online" @click="emit('refresh')">Refresh models</button>
     </div>
-    <p class="hint">Enable the combinations this machine may run. Boards choose their order of preference.</p>
+    <p class="hint">Enable combinations and order them by preference. Boards use this order by default; a board can override it.</p>
     <p v-if="machine.agent_options == null" class="notice small">Existing boards still use their previous agent settings. Saving here makes this list the machine's allowed combinations.</p>
-    <ul v-if="options.length" class="stack" style="padding-left: 1.25rem">
+    <ol v-if="options.length" class="stack" style="padding-left: 1.25rem">
       <li v-for="(o, i) in options" :key="optionKey(o)">
         <div class="row row--between">
           <span style="overflow-wrap: anywhere; min-width: 0">{{ optionLabel(o) }}</span>
+          <div class="row">
+            <button type="button" :disabled="disabled || i === 0" :aria-label="`Move ${optionLabel(o)} up`" @click="move(i, -1)">Move up</button>
+            <button type="button" :disabled="disabled || i === options.length - 1" :aria-label="`Move ${optionLabel(o)} down`" @click="move(i, 1)">Move down</button>
           <button type="button" class="link small" :disabled="disabled" :aria-label="`Remove ${optionLabel(o)}`" @click="remove(i)">Remove</button>
+          </div>
         </div>
       </li>
-    </ul>
+    </ol>
     <p v-else class="muted small">No combinations enabled. Saving an empty list stops this machine from starting new agent sessions.</p>
     <fieldset class="stack" :disabled="disabled">
       <legend class="sr-only">Add an available combination</legend>

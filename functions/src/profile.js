@@ -343,6 +343,14 @@ export function agentOptions(value, field = "agent_options") {
 export function mergeRunner(stored, input) {
   const next = { ...RUNNER_DEFAULTS, ...(stored || {}) };
   const r = obj(input, "runner");
+  // Keep saved single-agent settings and explicit lists; new boards inherit unless
+  // their caller supplied a selection. A partial settings update preserves the mode.
+  if (!stored) next.use_machine_defaults = !["agent", "model", "effort", "options"].some(k => has(r, k));
+  if (["agent", "model", "effort", "options"].some(k => has(r, k)) && !has(r, "use_machine_defaults")) next.use_machine_defaults = false;
+  if (has(r, "use_machine_defaults")) {
+    if (typeof r.use_machine_defaults !== "boolean") throw badRequest("'runner.use_machine_defaults' must be a boolean");
+    next.use_machine_defaults = r.use_machine_defaults;
+  }
   if (has(r, "agent")) next.agent = oneOf(r.agent, "runner.agent", RUNNER_AGENTS);
   if (has(r, "model")) next.model = str(r.model, "runner.model", { max: 80 });
   if (has(r, "effort")) next.effort = r.effort ? oneOf(r.effort, "runner.effort", EFFORTS) : "";

@@ -3,6 +3,7 @@ package readiness
 import (
 	"testing"
 
+	"github.com/altlimit/dutyboard/cli/internal/board"
 	"github.com/altlimit/dutyboard/cli/internal/runner"
 )
 
@@ -38,5 +39,44 @@ func TestTodoAndRank(t *testing.T) {
 	}
 	if !(rank(r.Items[2]) < rank(r.Items[0]) && rank(r.Items[0]) < rank(r.Items[1])) {
 		t.Fatal("a needed todo should rank before a needed ok, before anything not needed")
+	}
+}
+
+func TestAgentAlternativesAreNotRequirements(t *testing.T) {
+	yes, no := true, false
+	ready := runner.Status{Agent: "codex", Installed: true, SignedIn: &yes}
+	missing := runner.Status{Agent: "cursor"}
+	signedOut := runner.Status{Agent: "claude-code", Installed: true, SignedIn: &no}
+	codex, cursor, claude := board.AgentOption{Agent: "codex"}, board.AgentOption{Agent: "cursor"}, board.AgentOption{Agent: "claude-code"}
+	enabled := []board.AgentOption{cursor, claude, codex}
+	linked := []board.BoardView{{ProjectID: "inherited", Runner: &board.Runner{UseMachineDefaults: true}}, {ProjectID: "override", Runner: &board.Runner{Options: enabled}}}
+	required, anyReady := requiredAgents([]runner.Status{missing, signedOut, ready}, linked, enabled)
+	if !anyReady || len(required["cursor"]) != 0 || len(required["claude-code"]) != 0 || len(required["codex"]) != 2 {
+		t.Fatalf("optional fallback is blocking: %v", required)
+	}
+	// Explicit single-agent overrides still need their selected agent.
+	linked = []board.BoardView{{ProjectID: "pinned", Runner: &board.Runner{Options: []board.AgentOption{cursor}}}}
+	required, _ = requiredAgents([]runner.Status{missing, ready}, linked, enabled)
+	if len(required["cursor"]) != 1 {
+		t.Fatal("unusable explicit override hidden")
+	}
+	// A ready CLI not enabled on this machine is not a usable fallback.
+	linked[0].Runner.Options = []board.AgentOption{cursor, codex}
+	required, _ = requiredAgents([]runner.Status{missing, ready}, linked, []board.AgentOption{cursor})
+	if len(required["cursor"]) != 1 || len(required["codex"]) != 0 {
+		t.Fatal("disabled agent counted as a fallback")
+	}
+	// Unknown sign-in status is usable, matching the runner's existing behavior.
+	ready.SignedIn = nil
+	required, _ = requiredAgents([]runner.Status{missing, ready}, linked, enabled)
+	if len(required["cursor"]) != 0 {
+		t.Fatal("unknown sign-in status blocked fallback")
+	}
+	// None ready asks for one agent, not three separate mandatory installs.
+	for _, linked := range [][]board.BoardView{nil, linked} {
+		required, anyReady = requiredAgents([]runner.Status{{Agent: "codex"}, missing, signedOut}, linked, enabled)
+		if anyReady || len(required) != 0 {
+			t.Fatal("all unavailable should use the aggregate setup prompt")
+		}
 	}
 }

@@ -41,10 +41,10 @@ function check(label, cond, detail) {
   }
 }
 
-async function call(path, body, token, { board } = {}) {
+async function call(path, body, token, { board, version } = {}) {
   const res = await fetch(API + path, {
     method: "POST",
-    headers: { "content-type": "application/json", ...(token ? { authorization: `Bearer ${token}` } : {}), ...(board ? { "x-dutyboard-board": board } : {}) },
+    headers: { "content-type": "application/json", ...(token ? { authorization: `Bearer ${token}` } : {}), ...(board ? { "x-dutyboard-board": board } : {}), ...(version ? { "x-dutyboard-version": version } : {}) },
     body: JSON.stringify(body || {}),
   });
   const json = await res.json().catch(() => ({}));
@@ -118,7 +118,7 @@ async function main() {
           { name: "absent", url: "https://mcp.example.com/mcp", secrets: ["Authorization"], note: "Nobody set its secret here" },
         ],
       },
-      runner: { parallel: 1 },
+      runner: { parallel: 1, agent: "claude-code" },
     },
     human,
   );
@@ -360,7 +360,7 @@ async function main() {
 
     // --- a board of one-off tasks: files in, files out, no repository ------------
     const errands = `errands-${Date.now().toString(36)}`;
-    await call("/projects/create", { name: "Errands", project_id: errands, profile: { workspace: "files", description: "Things to print." }, runner: { parallel: 1 } }, human);
+    await call("/projects/create", { name: "Errands", project_id: errands, profile: { workspace: "files", description: "Things to print." }, runner: { parallel: 1, agent: "claude-code" } }, human);
     const putOn = await call("/machine/request", { machine_id: paired.machine_id, project_id: errands }, human);
     const ready = await until("errands ready", async () => {
       const m = (await call("/machines/list", {}, human)).machines[0];
@@ -623,6 +623,23 @@ async function main() {
     const retriedQuota = await until("manual quota retry completes", async () => (await get(exhausted.duty_id)).status === "done", 30_000);
     check("Retry now clears the cooldown and resumes held work before the reset time", !!retriedQuota);
     check("the manual retry preserves changes made on the server", !!retriedQuota && sh("git", ["--git-dir", remote, "show", "main:quota-recovered.txt"]).includes("account fixed"));
+
+    // Machine defaults are live, ordered and do not copy the board's saved override.
+    const machineDefaults = [{ agent: "codex", model: "", effort: "" }, { agent: "claude-code", model: "", effort: "" }];
+    await call("/machines/update", { machine_id: paired.machine_id, agent_options: machineDefaults }, human);
+    await call("/projects/profile", { project_id: boardId, runner: { use_machine_defaults: true } }, human);
+    const oldPoll = await call("/machine/poll", {}, paired.machine_key, { version: "2.27.0" });
+    check("older runners do not work a board using machine defaults", !oldPoll.boards?.some(b => b.project_id === boardId), oldPoll.boards?.map(b => b.project_id));
+    async function defaultDuty(title) {
+      const duty = await call("/duty/enqueue", { project_id: boardId, title, brief: "Use the configured default or override." }, human);
+      await until(title, async () => (await get(duty.duty_id)).status === "done", 30_000);
+      return events(log).find(e => e.event === "start" && e.dutyId === duty.duty_id);
+    }
+    check("machine defaults ignore the saved board override", (await defaultDuty("Inherit machine choices"))?.agent === "codex");
+    await call("/machines/update", { machine_id: paired.machine_id, agent_options: [...machineDefaults].reverse() }, human);
+    check("changing machine priority updates inheriting boards", (await defaultDuty("Follow reordered machine choices"))?.agent === "claude");
+    await call("/projects/profile", { project_id: boardId, runner: { use_machine_defaults: false, options: [machineDefaults[0]] } }, human);
+    check("an explicit board override wins over machine order", (await defaultDuty("Use board override"))?.agent === "codex");
   } finally {
     daemon.kill("SIGTERM");
     await sleep(500);

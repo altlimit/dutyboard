@@ -585,7 +585,7 @@ func (d *Daemon) job(run *Run, v board.BoardView, path, system, task string, rec
 		Env:      append(d.tools.SessionEnv(), "DUTYBOARD_RUN_TOKEN="+run.Token, "DUTYBOARD_HOME="+state.Home()),
 	}
 	if r := v.Runner; r != nil {
-		j.NativeEffort = r.Options != nil
+		j.NativeEffort = r.UseMachineDefaults || r.Options != nil
 		if r.Model != "" {
 			j.Model = r.Model
 		}

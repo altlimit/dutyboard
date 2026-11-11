@@ -398,12 +398,17 @@ name that repository, or to create one.
 
 Each machine enables combinations of agent, model and effort under **Machines → Available agents
 and models**. Models and effort levels come from its installed CLI, refreshed at startup, every
-half hour, or with **Refresh models**. Each board chooses a priority list from those combinations.
+half hour, or with **Refresh models**. Boards use each machine's saved order by default, with an optional board priority override.
 The Machines page also keeps a checklist for each
 machine, which the machine itself reports: every agent and whether it is signed in, the GitHub CLI
 (for boards that open pull requests or watch CI, and for making a board's repository), a commit
 author, a deploy key, and the secrets its boards' MCP servers need. What a board on it is waiting on
-comes first. It is checked at start, every half hour, and when you press **Check again**.
+comes first. Missing or signed-out alternatives remain visible as optional setup when another
+allowed agent can work the board. If no agent is ready, the checklist asks you to install or sign
+in to one, not all three. An explicit board override still needs at least one of its enabled
+choices. The board overview shows **Runner needs attention** only when none of its online
+runners can work it; a working alternative keeps the board ready. It is checked at start,
+every half hour, and when you press **Check again**.
 
 From that checklist the machine's owner can have it:
 
@@ -562,10 +567,21 @@ A repository with no remote leaves the work on the duty's branch.
 ### Claude Code, Codex or Cursor
 
 Under **Machines → Available agents and models**, add the agent/model/effort combinations a machine
-may use and save its availability. Under **Settings → How agents run on it**, select combinations
-from linked machines and move them up or down into priority order. A new board can select from your
-machines before linking them. Each machine tries the first enabled, installed and signed-in choice
-in the board's order; priorities apply within a machine, not across machines racing to claim work.
+may use, move them up or down into priority order, and save its availability. New boards use
+**machine defaults**: each machine tries its own saved list in order, skipping unavailable or
+usage-limited choices. Changing that machine's list updates all boards inheriting it.
+
+Under **Settings → How agents run on it**, choose **Override for this board** to select a board
+priority list from enabled combinations. **Use machine default** switches back to inheritance;
+save the settings to apply it. The saved override is retained for switching back later. A board
+override is still limited to combinations enabled on each machine. Priorities apply within a
+machine, not across machines racing to claim work. A new board can preview your machines before
+linking them; only linked machines work its duties.
+
+The owner's `/projects/profile` API sets `runner.use_machine_defaults: true` to inherit, or
+`false` to use the saved override. Sending `runner.options` without a mode selects a board
+override; unrelated partial updates preserve the current mode. Machine availability and its
+order come from `agent_options` on `/machines/update`.
 
 Model discovery does not run an inference task: Codex uses its app-server `model/list` protocol,
 Claude Code uses its initialization response, and Cursor uses `--list-models`. Efforts are the
@@ -590,10 +606,12 @@ request a quota retry.
 
 Ordinary task failures still follow the existing retry policy; they do not silently switch agents.
 
-Existing single-agent boards retain their settings until edited. Once machine availability is saved,
+Existing single-agent settings and explicit board lists remain overrides until you choose **Use machine default**. Once machine availability is saved,
 only its enabled combinations may start; an empty list disables new sessions. Explicit board priority
-lists need matching machine availability and dutyboard 2.27.0 or later. An empty board list starts no
-work. Update the runner and provision the console/function together when adopting this feature.
+lists need matching machine availability and dutyboard 2.27.0 or later. An empty board override starts no
+work. Machine defaults require dutyboard 2.28.0 or later; a machine with no saved enabled
+combinations cannot run an inheriting board. An empty machine list disables new sessions there.
+Update the runner and provision the console/function together when adopting this feature.
 
 Each selected agent receives the same duty, rules, instructions, worktree and MCP servers:
 
@@ -601,11 +619,14 @@ Each selected agent receives the same duty, rules, instructions, worktree and MC
   MCP config of exactly the board's servers.
 - **Codex** runs as `codex exec --json`, never asking for approval, with its sandbox limited to the
   worktree plus the clone's git folder and the tools folder, and network access on. A board set to
-  bypass permissions runs it without the sandbox. Its MCP servers' secrets reach it through its
+  bypass permissions runs it without the sandbox. Each board-provided MCP server uses
+  `default_tools_approval_mode = "approve"` so its tools run unattended: Codex's `approval_policy = "never"`
+  alone rejects calls that still require approval. DutyBoard's own access checks and human-only
+  approvals still apply. Its MCP servers' secrets reach it through its
   environment, never its command line. It resumes the session it started when a parked duty comes
   back.
 - **Cursor** runs as `cursor-agent -p --output-format stream-json`, trusting the worktree and running
-  commands unattended (`--force`); a board set to bypass permissions also turns its sandbox off. Its
+  commands and MCP tools unattended (`--force --approve-mcps`); a board set to bypass permissions also turns its sandbox off. Its
   CLI has no flag for MCP config or extra instructions, so the runner writes the board's servers into
   the worktree's `.cursor/mcp.json` for the session — hidden from git and put back afterwards, a
   command server's secrets kept in an `envFile` outside the worktree — and puts the instructions at
@@ -867,7 +888,7 @@ while interactive connections get the poll/claim loop. The standalone equivalent
 
 | Feature | Agent MCP workflow | Human controls |
 | --- | --- | --- |
-| Agent/model/effort priority | `board_profile` reads `runner.options`; the daemon selects enabled combinations and handles usage fallback, preserving the duty and workspace. | Machine owner: CLI model refresh and availability. Board owner: priority order. |
+| Agent/model/effort priority | `board_profile` reads `runner.use_machine_defaults` and `runner.options`; the daemon inherits each machine's order or applies the board override to enabled combinations and handles usage fallback, preserving the duty and workspace. | Machine owner: CLI model refresh, availability and default order. Board owner: inherit or override priority. |
 | Usage recovery | Resume from checkpoints and inspect existing work after a handoff. No agent tool resets usage cooldowns. | Board or machine owner: **Retry now** after fixing the server account or usage. |
 | Notes and files | `duty_list` with `status: "note"`; `duty_get`, `duty_thread`, `duty_attachments` for contents. | Board members: add notes/files and **Suggest duties**. |
 | Suggested duties | While holding `note_review`, `duty_suggest` creates Needs you proposals; `duty_get` on the source follows `suggestions_cursor` and preserves tracking across reviews. | Board members: approve/reject, or clear a finished review and suggest again. |

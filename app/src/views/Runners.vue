@@ -5,7 +5,7 @@ import { api } from "../lib/altengine.js";
 import { config } from "../config.js";
 import { ago } from "../lib/duties.js";
 import MachineAgents from "../components/MachineAgents.vue";
-import { AGENTS, runnerLimited, runStateLabel } from "../lib/runners.js";
+import { AGENTS, runnerLimited, runStateLabel, readinessStatus } from "../lib/runners.js";
 import { CONSOLE_VERSION, differs, serviceVersion } from "../lib/version.js";
 
 // Your machines: the computers running `dutyboard` for you, what each is working on, and the
@@ -48,7 +48,6 @@ const shown = (m) => {
   return items.filter((it) => it.needed || it.state === "ok" || AGENTS.some((a) => a.key === it.key));
 };
 const unneeded = (m) => (m.links.length ? readiness(m).filter((it) => !it.needed && it.state !== "ok" && !AGENTS.some((a) => a.key === it.key)) : []);
-const mark = (state) => (state === "ok" ? "✓" : state === "todo" ? "!" : "?");
 
 // Installs and sign-ins asked for from here, followed until they finish: an open one shows on its
 // checklist line — the link to open, the code to enter, a field for what to paste back.
@@ -332,11 +331,12 @@ onUnmounted(() => {
             {{ m.online ? "Not reported yet. A machine checks within a minute of starting; one running an older dutyboard never does — update it." : "Shown once it is online." }}
           </p>
           <ul v-else class="ready__list">
-            <li v-for="it in shown(m)" :key="it.key" :class="`ready__item ready__item--${it.state}`">
-              <span class="ready__mark" aria-hidden="true">{{ mark(it.state) }}</span>
+            <li v-for="it in shown(m)" :key="it.key" :class="`ready__item ready__item--${readinessStatus(it).tone}`">
+              <span class="ready__mark" aria-hidden="true">{{ readinessStatus(it).mark }}</span>
               <div>
                 <strong>{{ it.label }}</strong>
-                <span class="sr-only">: {{ it.state === "ok" ? "ready" : it.state === "todo" ? "needs fixing" : "unknown" }}</span>
+                <span v-if="readinessStatus(it).tone === 'optional'" class="small muted"> · {{ readinessStatus(it).label }}</span>
+                <span v-else class="sr-only">: {{ readinessStatus(it).label }}</span>
                 <span v-if="it.boards && it.boards.length" class="small muted"> — for {{ it.boards.join(", ") }}</span>
                 <p v-if="it.detail" class="small" style="margin: 0.1rem 0 0">{{ it.detail }}</p>
                 <p v-if="it.fix && it.state !== 'ok' && !toolRequest(m, it.key)" class="small" style="margin: 0.2rem 0 0">
@@ -486,6 +486,7 @@ onUnmounted(() => {
 .ready__mark { font-weight: 700; text-align: center; }
 .ready__item--ok .ready__mark { color: var(--ok); }
 .ready__item--todo .ready__mark { color: var(--warn); }
+.ready__item--optional .ready__mark,
 .ready__item--unknown .ready__mark { color: var(--text-dim); }
 .ready code { overflow-wrap: anywhere; }
 .ready code + .link { margin-left: 0.4rem; }

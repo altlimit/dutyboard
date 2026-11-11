@@ -273,7 +273,7 @@ func showReadiness(ctx context.Context, u *ui.UI, api *board.Client) {
 		return
 	}
 	u.Step("What duties need from this machine")
-	rep := readiness.Check(ctx, me.Links)
+	rep := readiness.Check(ctx, me.Links, me.Machine.AgentOptions)
 	for _, it := range rep.Items {
 		if !it.Needed && len(me.Links) > 0 && it.State != readiness.OK {
 			continue // nothing here needs it: not worth a warning
@@ -288,14 +288,18 @@ func showReadiness(ctx context.Context, u *ui.UI, api *board.Client) {
 		case readiness.Unknown:
 			u.Say("? %s", line)
 		default:
-			u.Warn("%s", line)
+			if it.Needed {
+				u.Warn("%s", line)
+			} else {
+				u.Say("%s (optional)", line)
+			}
 			if it.Fix != "" {
 				u.Note("    %s", it.Fix)
 			}
 		}
 	}
 	if len(me.Links) == 0 {
-		u.Note("No board is on this machine yet. Each board chooses its agent; this machine needs that one signed in.")
+		u.Note("No board is on this machine yet. Enable at least one installed, signed-in agent on Machines. New boards inherit those choices unless overridden.")
 	}
 }
 

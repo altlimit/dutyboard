@@ -64,18 +64,7 @@ func (d *Daemon) chooseAgent(ctx context.Context, v board.BoardView, respectLimi
 	d.mu.Unlock()
 	var wait time.Time
 	var problems []string
-	explicit := v.Runner != nil && v.Runner.Options != nil
-	for _, option := range v.Runner.Choices() {
-		allowed := enabled == nil && !explicit // preserve legacy single-agent boards
-		for _, e := range enabled {
-			if e == option {
-				allowed = true
-				break
-			}
-		}
-		if !allowed {
-			continue
-		}
+	for _, option := range v.Runner.AvailableChoices(enabled) {
 		agent, err := runner.For(option.Agent)
 		if err == nil {
 			err = agent.Check(ctx)
@@ -106,7 +95,7 @@ func (d *Daemon) chooseAgent(ctx context.Context, v board.BoardView, respectLimi
 	if len(problems) > 0 {
 		return board.AgentOption{}, time.Time{}, fmt.Errorf("%s", strings.Join(problems, "; "))
 	}
-	return board.AgentOption{}, time.Time{}, fmt.Errorf("no enabled agent/model/effort combination matches this board — enable combinations on Machines and select them in board settings")
+	return board.AgentOption{}, time.Time{}, fmt.Errorf("no enabled agent/model/effort combination matches this board — enable combinations on Machines, or check this board's override")
 }
 
 func withChoice(v board.BoardView, option board.AgentOption) board.BoardView {

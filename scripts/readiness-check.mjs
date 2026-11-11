@@ -1,0 +1,21 @@
+#!/usr/bin/env node
+import assert from 'node:assert/strict';
+import { readinessStatus, runnerSummary } from '../app/src/lib/runners.js';
+const missing = { key: 'cursor', state: 'todo', needed: false, actions: ['install'] };
+assert.deepEqual(readinessStatus(missing), { tone: 'optional', mark: '—', label: 'Not installed' });
+assert.equal(readinessStatus({...missing, actions:['sign_in']}).label,'Not signed in');
+assert.equal(readinessStatus({...missing, needed:true}).tone,'todo');
+assert.equal(readinessStatus({state:'ok',needed:true}).label,'Ready');
+assert.equal(readinessStatus({state:'unknown'}).tone,'unknown');
+assert.equal(readinessStatus({key:'agents',state:'todo',needed:true}).label,'Needs attention');
+const healthy={online:true,problem:'',runs:[]};
+const missingAgent={online:true,problem:'Cursor is not installed',runs:[]};
+assert.deepEqual(runnerSummary([healthy,missingAgent]),{tone:'live',text:'Runner idle'});
+assert.equal(runnerSummary([missingAgent]).text,'Runner needs attention');
+assert.equal(runnerSummary([missingAgent,{...healthy,problem:'Cannot clone repository'}]).tone,'warn');
+assert.equal(runnerSummary([{...healthy,online:false},missingAgent]).tone,'warn');
+assert.equal(runnerSummary([{...missingAgent,online:false}]).text,'Runner offline');
+assert.equal(runnerSummary([{...healthy,runs:[{state:'working'}]},missingAgent]).text,'1 duty running');
+assert.equal(runnerSummary([{...healthy,runs:[{state:'limited'}]}]).text,'Runner at its plan limit');
+assert.equal(runnerSummary([]).text,'No runner');
+console.log('Readiness passed: optional agents are neutral, required blockers remain visible, healthy runners prevent false board warnings, and usage/offline states stay distinct.');

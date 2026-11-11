@@ -12,6 +12,20 @@ assert.deepEqual(mergeRunner(null, { options: [] }).options, []);
 for (const bad of [null, {}, [first, first], [{ agent: "invented" }], [{ ...first, effort: "invented" }], [{ agent: "cursor", model: "auto", effort: "high" }], Array.from({ length: 31 }, (_, i) => ({ ...first, model: `m${i}` }))]) {
   assert.throws(() => agentOptions(bad));
 }
+assert.equal(mergeRunner(null, {}).use_machine_defaults, true);
+assert.equal(mergeRunner(null, { agent: "codex" }).use_machine_defaults, false);
+assert.equal(mergeRunner(null, { options: [first] }).use_machine_defaults, false);
+const inherited = mergeRunner({ options: [first] }, { use_machine_defaults: true });
+assert.equal(inherited.use_machine_defaults, true);
+assert.deepEqual(inherited.options, [first]);
+assert.equal(mergeRunner(inherited, { parallel: 2 }).use_machine_defaults, true);
+assert.equal(mergeRunner(inherited, { options: [second] }).use_machine_defaults, false);
+assert.equal(mergeRunner(inherited, { agent: "codex" }).use_machine_defaults, false);
+assert.equal(mergeRunner(inherited, { use_machine_defaults: false }).use_machine_defaults, false);
+for (const bad of [null, "true", 1, {}]) assert.throws(() => mergeRunner(null, { use_machine_defaults: bad }));
+assert.equal(profilePayload(profileDraft(null, null)).runner.use_machine_defaults, true);
+assert.equal(profilePayload(profileDraft({}, { agent: "codex" })).runner.use_machine_defaults, false);
+assert.equal(profilePayload(profileDraft({}, inherited)).runner.use_machine_defaults, true);
 const draft = profileDraft({}, { options: [second, first], parallel: 2 });
 assert.deepEqual(profilePayload(draft).runner.options, [second, first]);
 assert.equal(profilePayload(profileDraft({}, { agent: "codex", model: "old" })).runner.options, undefined);
@@ -69,6 +83,13 @@ await assert.rejects(() => retryMachine({ ...ctx, caller: { kind: "human", uid: 
 await assert.rejects(() => retryMachine(ctx, { machine_id: "m1", project_id: "not-linked", reset_limits: true }));
 await retryMachine(ctx, { machine_id: "m1", reset_limits: true });
 assert.equal(machine.quota_retries["*"].options, null);
+machine.agent_options = [second];
+project.runner.use_machine_defaults = true;
+await retryMachine({ ...ctx, caller: { kind: "human", uid: "board-owner" } }, { machine_id: "m1", project_id: "board-a", reset_limits: true });
+assert.deepEqual(machine.quota_retries["board-a"].options, [second]);
+machine.agent_options = null;
+await retryMachine(ctx, { machine_id: "m1", project_id: "board-a", reset_limits: true });
+assert.deepEqual(machine.quota_retries["board-a"].options, [], "unconfigured inheritance must not reset all model quotas");
 machine.cli_version = "2.26.0";
 await assert.rejects(() => retryMachine(ctx, { machine_id: "m1", reset_limits: true }));
 console.log("Quota retry: explicit requests, durable state, board/model scope, owner permissions, and older-runner rejection passed.");

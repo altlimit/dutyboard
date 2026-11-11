@@ -2,7 +2,7 @@
 import { computed } from "vue";
 import AgentPriority from "./AgentPriority.vue";
 import { expiryChoices } from "../lib/duties.js";
-import { CODEX_PERMISSION_MODES, DEPLOY_METHODS, GIT_MODES, PERMISSION_MODES, PROJECT_TYPES, mcpServerDraft, noRepo } from "../lib/runners.js";
+import { CODEX_PERMISSION_MODES, DEPLOY_METHODS, GIT_MODES, PERMISSION_MODES, PROJECT_TYPES, mcpServerDraft, noRepo, availableOptions } from "../lib/runners.js";
 
 // The questions a board is created with, and edited with later: what the project is, how its work
 // lands, and how agents run on it. The model is a draft from lib/runners.js `profileDraft`; the
@@ -14,10 +14,10 @@ const draft = defineModel({ type: Object, required: true });
 // `offerNewRepo`, on a board being made: its repository can be a new one, made on GitHub by one of your
 // machines, instead of a URL. The parent fills the `new-repo` slot with what to make and binds `creating`.
 const creating = defineModel("creating", { type: Boolean, default: false });
-defineProps({ machines: { type: Array, default: () => [] }, idPrefix: { type: String, default: "pf" }, disabled: { type: Boolean, default: false }, offerNewRepo: { type: Boolean, default: false } });
+const props = defineProps({ machines: { type: Array, default: () => [] }, idPrefix: { type: String, default: "pf" }, disabled: { type: Boolean, default: false }, offerNewRepo: { type: Boolean, default: false } });
 
 const modes = computed(() => {
-  const choices = draft.value.options ?? [{ agent: draft.value.agent }];
+  const choices = draft.value.use_machine_defaults ? availableOptions(props.machines) : (draft.value.options ?? [{ agent: draft.value.agent }]);
   return choices.length && choices.every((o) => o.agent === "claude-code") ? PERMISSION_MODES : CODEX_PERMISSION_MODES;
 });
 // `files`: no repository — one-off tasks, or an account run through its MCP servers (`service`).

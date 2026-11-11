@@ -77,6 +77,9 @@ function runnerTooOld(ctx, project, machineName) {
 
 /** Why a machine running `version` cannot work `project`; "" when it can. */
 function tooOldFor(project, version, machineName) {
+  if (project?.runner?.use_machine_defaults && olderRelease(version, "2.28.0")) {
+    return `${machineName || "this machine"} needs dutyboard 2.28.0 or later to use machine defaults — run \`alt update altlimit/dutyboard && dutyboard --service\``;
+  }
   if (Array.isArray(project?.runner?.options) && olderRelease(version, "2.27.0")) {
     return `${machineName || "this machine"} needs dutyboard 2.27.0 or later for agent priorities — run \`alt update altlimit/dutyboard && dutyboard --service\``;
   }
@@ -454,7 +457,9 @@ export async function retryMachine(ctx, body) {
   if (body.reset_limits === true) {
     if (olderRelease(row.cli_version, "2.27.0")) throw badRequest("update this machine to dutyboard 2.27.0 or later to retry usage limits");
     const r = project?.runner;
-    const options = project ? (r?.options ?? [{ agent: r?.agent || "claude-code", model: r?.model || "", effort: r?.effort || "" }]) : null;
+    const options = project
+      ? (r?.use_machine_defaults ? (row.agent_options ?? []) : (r?.options ?? [{ agent: r?.agent || "claude-code", model: r?.model || "", effort: r?.effort || "" }]))
+      : null;
     // Persist before publishing: a missed event or an offline machine picks this up on its next poll.
     // Board owners may reset only the models their board uses. The machine owner can reset all.
     const retries = { ...(row.quota_retries || {}) };
@@ -923,6 +928,7 @@ export async function pollMachine(ctx, body) {
     machine_id: caller.machineId,
     paused: !!caller.machineRow.paused,
     quota_retries: caller.machineRow.quota_retries || {},
+    agent_options: caller.machineRow.agent_options ?? null,
     boards: boards.filter(Boolean),
     requests: requests.map(requestView),
   };

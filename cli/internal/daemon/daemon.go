@@ -17,6 +17,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -466,6 +467,14 @@ func (d *Daemon) tick(ctx context.Context) error {
 	}
 	d.mu.Lock()
 	d.paused = p.Paused
+	// Availability is a machine-wide policy, so a missed config event must not
+	// leave the next session using stale choices. Nil keeps older servers compatible.
+	if p.AgentOptions != nil && d.me != nil {
+		if d.me.Machine.AgentOptions == nil || !slices.Equal(d.me.Machine.AgentOptions, p.AgentOptions) {
+			d.readiness.due = true
+		}
+		d.me.Machine.AgentOptions = p.AgentOptions
+	}
 	for _, b := range p.Boards {
 		d.polled[b.ProjectID] = b
 	}

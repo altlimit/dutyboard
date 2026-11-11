@@ -40,7 +40,7 @@ type Item struct {
 	Key         string         `json:"key"`
 	Label       string         `json:"label"`
 	State       string         `json:"state"`
-	// Needed is true when a board this machine works needs it; Boards names them.
+	// Needed marks a ready dependency or a blocker without a usable alternative.
 	Needed bool     `json:"needed"`
 	Boards []string `json:"boards,omitempty"`
 	Detail string   `json:"detail,omitempty"`
@@ -69,7 +69,7 @@ func (r Report) Todo() []Item {
 
 // Check builds the report for the boards this machine works. It asks the agents' CLIs, which is slow,
 // so they are asked at once.
-func Check(ctx context.Context, linked []board.BoardView) Report {
+func Check(ctx context.Context, linked []board.BoardView, enabled []board.AgentOption) Report {
 	var (
 		wg     sync.WaitGroup
 		agents []runner.Status
@@ -82,6 +82,7 @@ func Check(ctx context.Context, linked []board.BoardView) Report {
 	go func() { defer wg.Done(); git = gitItem(ctx) }()
 	wg.Wait()
 
+	required, anyReady := requiredAgents(agents, linked, enabled)
 	var items []Item
 	for _, s := range agents {
 		it := agentItem(s)
@@ -92,16 +93,14 @@ func Check(ctx context.Context, linked []board.BoardView) Report {
 				it.ModelsError = "Model discovery failed. Check sign-in, update the CLI, then check again."
 			}
 		}
-		for _, b := range linked {
-			for _, choice := range b.Runner.Choices() {
-				if choice.Agent == s.Agent {
-					it.Boards = append(it.Boards, b.ProjectID)
-					break
-				}
-			}
-		}
+		it.Boards = required[s.Agent]
 		it.Needed = len(it.Boards) > 0
 		items = append(items, it)
+	}
+
+	if !anyReady {
+		items = append(items, Item{Key: "agents", Label: "An available agent", State: Todo, Needed: true,
+			Detail: "No agent is ready on this machine. Install or sign in to at least one of Claude Code, Codex or Cursor; you do not need all three."})
 	}
 
 	for _, b := range linked {
@@ -128,6 +127,37 @@ func Check(ctx context.Context, linked []board.BoardView) Report {
 	// What a board is waiting on first, then the rest, each in the order above.
 	sort.SliceStable(items, func(i, j int) bool { return rank(items[i]) < rank(items[j]) })
 	return Report{Items: items, CheckedAt: time.Now().UnixMilli()}
+}
+
+// A missing fallback is informational if another allowed agent can work the board.
+// Keep explicit overrides honest: an installed but disallowed agent is no substitute.
+func requiredAgents(agents []runner.Status, linked []board.BoardView, enabled []board.AgentOption) (map[string][]string, bool) {
+	ready := map[string]bool{}
+	anyReady := false
+	for _, agent := range agents {
+		ready[agent.Agent] = agent.Ready()
+		anyReady = anyReady || agent.Ready()
+	}
+	required := map[string][]string{}
+	// With nothing ready, one aggregate item asks for an agent, rather than three installations.
+	if !anyReady {
+		return required, false
+	}
+	for _, b := range linked {
+		choices := b.Runner.AvailableChoices(enabled)
+		usable := false
+		for _, choice := range choices {
+			usable = usable || ready[choice.Agent]
+		}
+		seen := map[string]bool{}
+		for _, choice := range choices {
+			if !seen[choice.Agent] && (ready[choice.Agent] || !usable) {
+				required[choice.Agent] = append(required[choice.Agent], b.ProjectID)
+				seen[choice.Agent] = true
+			}
+		}
+	}
+	return required, true
 }
 
 func rank(it Item) int {

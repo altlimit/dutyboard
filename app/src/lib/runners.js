@@ -109,11 +109,20 @@ export function runnerSummary(runners) {
   const online = runners.filter((r) => r.online !== false);
   const working = runners.reduce((n, r) => n + (r.runs || []).filter((x) => x.state === "working" || x.state === "integrating").length, 0);
   const limited = runners.some((r) => (r.runs || []).some((x) => x.state === "limited"));
-  if (runners.some((r) => r.problem)) return { tone: "warn", text: "Runner needs attention" };
   if (!online.length) return { tone: "off", text: runners.length === 1 ? "Runner offline" : `${runners.length} runners offline` };
+  if (online.every((r) => r.problem)) return { tone: "warn", text: "Runner needs attention" };
   if (limited) return { tone: "warn", text: "Runner at its plan limit" };
   if (working) return { tone: "live", text: `${working} ${working === 1 ? "duty" : "duties"} running` };
-  return { tone: "live", text: online.length === 1 ? "Runner idle" : `${online.length} runners idle` };
+  const ready = online.filter((r) => !r.problem);
+  return { tone: "live", text: ready.length === 1 ? "Runner idle" : `${ready.length} runners idle` };
+}
+
+/** Optional installation/sign-in choices are visible without looking broken. */
+export function readinessStatus(item) {
+  if (item.state === "ok") return { tone: "ok", mark: "✓", label: "Ready" };
+  if (item.state === "todo" && item.needed) return { tone: "todo", mark: "!", label: "Needs attention" };
+  if (item.state === "todo") return { tone: "optional", mark: "—", label: item.actions?.includes("install") ? "Not installed" : item.actions?.includes("sign_in") ? "Not signed in" : "Optional setup" };
+  return { tone: "unknown", mark: "?", label: "Unknown" };
 }
 
 /** A profile as the form edits it, from what the function stores. */
@@ -178,6 +187,7 @@ export function profileDraft(profile, runner) {
     git_author_name: (p.git && p.git.author_name) || "",
     git_author_email: (p.git && p.git.author_email) || "",
     git_ssh_command: (p.git && p.git.ssh_command) || "",
+    use_machine_defaults: runner ? r.use_machine_defaults === true : true,
     options: Array.isArray(r.options) ? r.options.map((o) => ({ ...o })) : runner ? null : [],
     agent: r.agent || "claude-code",
     parallel: r.parallel || 1,
@@ -244,6 +254,7 @@ export function profilePayload(d) {
       },
     },
     runner: {
+      use_machine_defaults: d.use_machine_defaults === true,
       ...(d.options != null ? { options: d.options.map((o) => ({ agent: o.agent, model: o.model || "", effort: o.effort || "" })) } : {}),
       agent: d.agent || "claude-code",
       parallel: Number(d.parallel) || 1,

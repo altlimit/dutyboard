@@ -10,7 +10,10 @@ already holds one duty: do not claim another on the source board. Finish or park
 duty and stop; the daemon chooses the next job.
 
 The machine owner enables agent/model/effort combinations from its installed CLI catalogs.
-The board owner selects their priority order. `board_profile` exposes `runner.options` (or
+New boards inherit that machine's saved order. The board owner can choose an override or use
+**Use machine default** to return to inheritance. `board_profile` exposes
+`runner.use_machine_defaults`: when true, use the current machine's enabled list; otherwise
+`runner.options` supplies the board override (or
 legacy `runner.agent`, `model`, and `effort`), not live availability or remaining usage.
 The daemon selects a matching available combination and tries the next when usage runs out.
 A replacement session keeps the same duty and workspace: read checkpoints and inspect existing

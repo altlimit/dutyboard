@@ -7,6 +7,8 @@ const selected = ref("");
 const available = computed(() => availableOptions(props.machines));
 const choices = computed(() => draft.value.options ?? [{ agent: draft.value.agent, model: draft.value.model, effort: draft.value.effort }]);
 const unused = computed(() => available.value.filter((o) => !choices.value.some((c) => optionKey(c) === optionKey(o))));
+function useMachineDefault() { draft.value.use_machine_defaults = true; selected.value = ""; }
+function override() { draft.value.use_machine_defaults = false; selected.value = ""; }
 function saveChoices(next) { draft.value.options = next; }
 function add() {
   const o = unused.value.find((o) => optionKey(o) === selected.value);
@@ -26,6 +28,24 @@ function availability(o) {
 
 <template>
   <div class="stack">
+    <div class="row">
+      <button type="button" :class="{ 'btn--primary': draft.use_machine_defaults }" :aria-pressed="draft.use_machine_defaults" :disabled="disabled" @click="useMachineDefault">Use machine default</button>
+      <button type="button" :class="{ 'btn--primary': !draft.use_machine_defaults }" :aria-pressed="!draft.use_machine_defaults" :disabled="disabled" @click="override">Override for this board</button>
+    </div>
+    <div v-if="draft.use_machine_defaults" class="stack">
+      <p class="notice small">Using machine defaults. Each machine tries its enabled agents, models and efforts in the order saved on Machines. Changes there apply here automatically.</p>
+      <div v-for="machine in machines" :key="machine.machine_id || machine.name" class="stack" style="gap: 0.3rem">
+        <strong>{{ machine.machine_name || machine.name || machine.machine_id }}</strong>
+        <ol v-if="machine.agent_options?.length" style="margin: 0; padding-left: 1.5rem">
+          <li v-for="o in machine.agent_options" :key="optionKey(o)" style="overflow-wrap: anywhere">{{ optionLabel(o) }}</li>
+        </ol>
+        <p v-else class="hint">No combinations enabled on this machine.</p>
+      </div>
+      <p v-if="!machines.length" class="hint">Link a machine and enable its combinations on <router-link :to="{ name: 'runners' }">Machines</router-link> to start duties.</p>
+      <p class="hint">Manage availability and default order on <router-link :to="{ name: 'runners' }">Machines</router-link>.</p>
+      <p class="hint">When an option reaches its usage limit, the machine tries its next available option and keeps the duty's existing work.</p>
+    </div>
+    <template v-else>
     <p class="hint">Run the first available combination, in this order. If it reaches its usage limit, continue the duty with the next option and keep its existing work.</p>
     <p v-if="draft.options == null" class="notice small">This board still uses its previous single-agent setting. Enable matching combinations on Machines before editing this list.</p>
     <ol v-if="choices.length" class="stack" style="padding-left: 1.5rem">
@@ -52,5 +72,6 @@ function availability(o) {
     </div>
     <div><button type="button" :disabled="disabled || !selected || choices.length >= 30" @click="add">Add to priority list</button></div>
     <p class="hint">A machine skips combinations it has not enabled. When all its choices are exhausted, it waits for a reset. Priorities apply within each machine.</p>
+    </template>
   </div>
 </template>

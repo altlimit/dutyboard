@@ -25,10 +25,12 @@ func TestCodexArgs(t *testing.T) {
 		`-c model_reasoning_effort="xhigh"`,
 		`-c developer_instructions="how\n\"quoted\""`,
 		`-c mcp_servers.dutyboard.command="/bin/dutyboard"`,
+		`-c mcp_servers.dutyboard.default_tools_approval_mode="approve"`,
 		`-c mcp_servers.dutyboard.args=["mcp"]`,
 		`-c mcp_servers.dutyboard.env={"DUTYBOARD_HOME" = "/h"}`,
 		`-c mcp_servers.dutyboard.env_vars=["DUTYBOARD_RUN_TOKEN"]`,
 		`-c mcp_servers.docs.url="https://docs.example/mcp"`,
+		`-c mcp_servers.docs.default_tools_approval_mode="approve"`,
 		`-c mcp_servers.docs.env_http_headers={"Authorization" = "DUTYBOARD_MCP_DOCS_AUTHORIZATION"}`,
 		`-c mcp_servers.docs.enabled_tools=["search"]`,
 	} {
@@ -59,6 +61,23 @@ func TestCodexArgs(t *testing.T) {
 	j.Access.Mode = "bypassPermissions"
 	if args, _ := codexArgs(j); !strings.Contains(strings.Join(args, " "), "--dangerously-bypass-approvals-and-sandbox") {
 		t.Error("a board that bypasses permissions runs Codex without its sandbox")
+	}
+}
+
+func TestCodexMCPApprovalOnNewAndResumedSessions(t *testing.T) {
+	for _, mode := range []string{"auto", "bypassPermissions"} {
+		for _, resume := range []bool{false, true} {
+			j := Job{Prompt: "work", Resume: resume, SessionID: "codex:session",
+				MCPServers: []MCPServer{{Name: "board.tools", Command: "server"}}}
+			j.Access.Mode = mode
+			args, _ := codexArgs(j)
+			if !contains(args, `mcp_servers."board.tools".default_tools_approval_mode="approve"`) {
+				t.Errorf("mode=%s resume=%v: board MCP tools must be approved: %q", mode, resume, args)
+			}
+			if mode == "auto" && (!contains(args, `sandbox_mode="workspace-write"`) || contains(args, "--dangerously-bypass-approvals-and-sandbox")) {
+				t.Errorf("MCP approval must preserve the sandbox: %q", args)
+			}
+		}
 	}
 }
 

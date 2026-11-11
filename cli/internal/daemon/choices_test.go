@@ -173,3 +173,43 @@ func TestExplicitQuotaRetryIsScopedDurableAndAppliedOnce(t *testing.T) {
 		t.Fatal("cleared limits came back after restart")
 	}
 }
+
+func TestMachineDefaultsFollowAvailabilityOrderAndFallback(t *testing.T) {
+	d := choiceDaemon(t)
+	a := board.AgentOption{Agent: "codex", Model: "machine-first", Effort: "high"}
+	b := board.AgentOption{Agent: "codex", Model: "machine-second", Effort: "low"}
+	v := board.BoardView{Runner: &board.Runner{UseMachineDefaults: true, Options: []board.AgentOption{b}}}
+	ctx := context.Background()
+	if _, _, err := d.chooseAgent(ctx, v, true); err == nil {
+		t.Fatal("unconfigured machine inherited a legacy agent")
+	}
+	d.me.Machine.AgentOptions = []board.AgentOption{a, b}
+	if got, _, err := d.chooseAgent(ctx, v, true); err != nil || got != a {
+		t.Fatalf("did not inherit machine order: %v %v", got, err)
+	}
+	d.markLimited(a, time.Now().Add(time.Hour))
+	if got, _, err := d.chooseAgent(ctx, v, true); err != nil || got != b {
+		t.Fatalf("inherited quota fallback failed: %v %v", got, err)
+	}
+	d.limits = map[string]time.Time{}
+	d.me.Machine.AgentOptions = []board.AgentOption{b, a}
+	if got, _, err := d.chooseAgent(ctx, v, true); err != nil || got != b {
+		t.Fatal("machine reorder did not apply")
+	}
+	v.Runner.UseMachineDefaults = false
+	v.Runner.Options = []board.AgentOption{a}
+	if got, _, err := d.chooseAgent(ctx, v, true); err != nil || got != a {
+		t.Fatal("board override did not take priority")
+	}
+	v.Runner.UseMachineDefaults = true
+	d.me.Machine.AgentOptions = []board.AgentOption{}
+	if _, _, err := d.chooseAgent(ctx, v, true); err == nil {
+		t.Fatal("empty inherited list ran work")
+	}
+	// A different machine uses its own list, not a union of linked-machine choices.
+	other := choiceDaemon(t)
+	other.me.Machine.AgentOptions = []board.AgentOption{a}
+	if got, _, err := other.chooseAgent(ctx, v, true); err != nil || got != a {
+		t.Fatal("default leaked between machines")
+	}
+}

@@ -299,8 +299,12 @@ type AgentOption struct {
 	Effort string `json:"effort"`
 }
 
-// Options is nil for a legacy board; an explicit empty list enables no agents.
-func (r *Runner) Choices() []AgentOption {
+// Choices uses this machine's saved order when inherited. Nil or empty machine
+// availability enables nothing; legacy boards retain their single-agent behavior.
+func (r *Runner) Choices(enabled []AgentOption) []AgentOption {
+	if r != nil && r.UseMachineDefaults {
+		return enabled
+	}
 	if r == nil {
 		return []AgentOption{{Agent: "claude-code"}}
 	}
@@ -314,16 +318,37 @@ func (r *Runner) Choices() []AgentOption {
 	return []AgentOption{{Agent: agent, Model: r.Model, Effort: r.Effort}}
 }
 
+// AvailableChoices applies the machine owner's allowlist to the selected policy.
+// An unconfigured machine keeps legacy single-agent boards working, but cannot
+// opt itself into an explicit priority list or machine defaults.
+func (r *Runner) AvailableChoices(enabled []AgentOption) []AgentOption {
+	choices := r.Choices(enabled)
+	if enabled == nil && (r == nil || !r.UseMachineDefaults && r.Options == nil) {
+		return choices
+	}
+	var out []AgentOption
+	for _, choice := range choices {
+		for _, allowed := range enabled {
+			if choice == allowed {
+				out = append(out, choice)
+				break
+			}
+		}
+	}
+	return out
+}
+
 type Runner struct {
-	Options        []AgentOption `json:"options"`
-	Agent          string        `json:"agent"`
-	Model          string        `json:"model"`
-	Effort         string        `json:"effort"`
-	Instructions   string        `json:"instructions"`
-	PermissionMode string        `json:"permission_mode"`
-	AllowedTools   []string      `json:"allowed_tools"`
-	SessionMinutes int           `json:"session_minutes"`
-	Parallel       int           `json:"parallel"`
+	UseMachineDefaults bool          `json:"use_machine_defaults"`
+	Options            []AgentOption `json:"options"`
+	Agent              string        `json:"agent"`
+	Model              string        `json:"model"`
+	Effort             string        `json:"effort"`
+	Instructions       string        `json:"instructions"`
+	PermissionMode     string        `json:"permission_mode"`
+	AllowedTools       []string      `json:"allowed_tools"`
+	SessionMinutes     int           `json:"session_minutes"`
+	Parallel           int           `json:"parallel"`
 }
 
 // BoardView is a board with its profile.
@@ -465,6 +490,7 @@ type QuotaRetry struct {
 }
 
 type Poll struct {
+	AgentOptions []AgentOption         `json:"agent_options"`
 	QuotaRetries map[string]QuotaRetry `json:"quota_retries"`
 	Paused       bool                  `json:"paused"`
 	Boards       []PollBoard           `json:"boards"`

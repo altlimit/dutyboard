@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"slices"
 	"time"
 
 	"github.com/altlimit/dutyboard/cli/internal/board"
@@ -36,12 +37,13 @@ func (d *Daemon) checkReadiness(ctx context.Context) {
 	}
 	r.running, r.due = true, false
 	links := append([]board.BoardView(nil), d.me.Links...)
+	enabled := slices.Clone(d.me.Machine.AgentOptions)
 	d.mu.Unlock()
 
 	d.wg.Add(1)
 	go func() {
 		defer d.wg.Done()
-		rep := readiness.Check(ctx, links)
+		rep := readiness.Check(ctx, links, enabled)
 		body, _ := json.Marshal(rep.Items)
 
 		d.mu.Lock()
