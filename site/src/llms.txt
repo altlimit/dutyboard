@@ -68,6 +68,7 @@ again — the same command upgrades. It:
 | functions | `dutyboard`         | the state machine — every write goes through it   |
 | blob      | `dutyboard-files`   | screenshots and recordings on a duty              |
 | search    | `dutyboard-search`  | finished work, so an agent can ask whether something was done before |
+| tasks     | `dutyboard-tasks`   | the `webhooks` queue for token events, when available and permitted |
 | static    | `dutyboard-console` | the console                                      |
 
 If it prints that auth or channel "must be created in the console", that altengine predates
@@ -89,7 +90,9 @@ Both are also in the altengine console, under the `dutyboard-console` static sit
 
 Your user creates a board in their console, then mints an agent token on it (Settings →
 Agents & tokens). The function speaks MCP at `https://<slug>-fn.altengine.app/board/mcp` with
-the token as a bearer. An agent token is scoped to ONE board and is shown once.
+the token as a bearer. An agent token is scoped to one source board and is shown once.
+Ordinary tools stay on that board; explicit board links can grant access to other boards
+through `board_links` and `board_call` (see below).
 
 The operating protocol comes back in the MCP `initialize` response. Not every client shows it
 to the model; the same text is at https://www.dutyboard.com/agent.md.
@@ -100,15 +103,61 @@ it holds a duty) files a fresh duty each time it comes round, carrying how the l
 that comes round while its last duty is still open is skipped rather than piling up. Ten per board,
 fifteen minutes apart at the closest.
 
+Schedules can also run a shell check before starting an agent. Exit 0 with no output means a
+quiet run: no session is started, and the duty is removed. Output or a non-zero exit starts an
+agent with the check's output. Finished duties can be kept or expire after a chosen interval;
+Settings → New duties → Once it is done sets the board default. Expiry removes the duty,
+thread and files, while a schedule keeps its last outcome for the next run.
+
 **To have boards worked by Claude Code, Codex or Cursor on a machine**, your user runs `dutyboard` on
 that machine, in a terminal — it asks questions, so give them the command rather than running it
 yourself. It prints a code they approve in their console, sets itself to start by itself, and opens
-the console on that machine, which lists what duties still need from it: the board's agent signed in
-(each board picks one in its settings), the GitHub CLI, a commit author. From there the console can
+the console on that machine, which lists what duties still need from it: an allowed agent signed in,
+the GitHub CLI when needed, a commit author for repository work. From there the console can
 have the machine install an agent or the GitHub CLI and sign in to it — the person signs in on the
 tool's own site, and no credential passes through DutyBoard. A deploy key and MCP server secrets are
 set on the machine itself (`dutyboard --deploy-key`, `dutyboard --mcp-secrets`). See the README's
 "Running agents on your machine": https://github.com/altlimit/dutyboard
+
+Under **Machines → Available agents and models**, enable agent/model/effort combinations and
+save their priority order. Boards inherit each machine's order by default; **Settings → How
+agents run on it → Override for this board** selects a board-specific order from enabled
+combinations. When a session hits a usage limit, the runner tries the next choice, keeping
+the workspace and unfinished changes. If all choices are exhausted, it keeps the work until
+a reset. After fixing the account or adding usage, the board or machine owner can choose
+**Retry now** to clear the relevant cooldowns and retry. Refreshing models does not reset usage.
+
+**Choose what the board works on.** It can use a repository, handle one-off file tasks, or run
+an account through its MCP servers. File tasks take attachments as input and return output
+files on the duty. Account boards need at least one MCP server and complete work in that
+account, recording a checked outcome; they do not need a repository or output file. Configure
+servers in board settings and keep their secret values on each machine with
+`dutyboard --mcp-secrets`, not in the board profile.
+
+**Notes are shared context, not queued work.** The board's Notes page holds movable sticky
+cards with ideas, discussion and files. **Suggest duties** queues a review of notes without
+linked suggestions, considering related notes together. The agent reads `note_list`,
+`duty_get`, `duty_thread` and `duty_attachments`, and uses `duty_suggest` while holding the
+review duty, calling duty_suggest once per proposal. One review can create several duties:
+group related notes for each proposal, and split independent work into separate proposals.
+Multiple notes can support one proposal, and one note can support several proposals. Every
+proposal waits in Needs you for a person's approval or rejection.
+**Clear link**, after the review ends, makes one note
+eligible again without deleting duties or source history. Follow all pagination cursors when
+reading notes or their suggestions. A review session cannot implement or deploy the proposals.
+
+**Linked boards require an explicit grant.** In Board B → Settings → Board access, B's owner
+can grant Board A READ (context), WRITE (also file independent work and attach inputs to work
+filed by A), or FULL (ordinary agent actions, subject to their usual requirements). This grants
+A → B only. Discover grants with `board_links`; call `board_call` with the target `project_id`,
+`operation`, and the operation's normal fields nested in `arguments`. Links do not extend
+transitively, change the runner's workspace, or authorize human-only approvals and settings.
+Submit-only integration tokens cannot use board links.
+
+**People stay in control.** The boards overview gathers Needs you items across owned and shared
+boards and shows work counts and machine readiness. Board members can cancel an unfinished duty
+with a reason; the machine stops its session and removes its workspace. A finished duty can be
+sent back with a note explaining what still needs doing.
 
 **On a machine with no one at the terminal** — a server, a VM, a session you reach over SSH — pair
 and install it without prompts:
@@ -128,9 +177,16 @@ alt update altlimit/dutyboard && dutyboard --service
 That restarts the running `dutyboard` on the new binary; the duties it held are resumed.
 `dutyboard --stop` stops it.
 
+**Upgrade both halves.** Updating the binary and restarting the service upgrades that machine.
+Run the updated `dutyboard --provision-only` too (or accept the upgrade offered by interactive
+`dutyboard`) to upgrade the function and console. The Machines page's Versions section shows
+the console, function and machine versions. Machine agent priorities and board overrides need
+2.27.0 or later; inherited machine defaults need 2.28.0 or later. Update both halves when
+adopting new features.
+
 
 ## Undoing it
 
-`delete_instance` on the seven names in the table. It needs **Instances & data: Full**, which
-setup does not — a key made as above will refuse, and that refusal is the setting working. It
-is irreversible and takes the boards with it: confirm each one by name with your user first.
+`delete_instance` on the instances in the table that were created for this deployment (including
+`dutyboard-tasks` if present). It needs **Instances & data: Full**; a Write-only setup key will
+refuse. It is irreversible and takes the boards with it: confirm each one by name with your user first.
