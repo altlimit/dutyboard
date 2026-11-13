@@ -466,18 +466,20 @@ type PollBoard struct {
 	Machines     int    `json:"machines"`
 	RulesVersion int    `json:"rules_version"`
 	Active       []struct {
-		DutyID  string `json:"duty_id"`
-		AgentID string `json:"agent_id"`
-		Kind    string `json:"kind"`
-		Mine    bool   `json:"mine"`
+		AgentOptions []AgentOption `json:"agent_options"`
+		DutyID       string        `json:"duty_id"`
+		AgentID      string        `json:"agent_id"`
+		Kind         string        `json:"kind"`
+		Mine         bool          `json:"mine"`
 	} `json:"active"`
 	Runnable []struct {
-		DutyID   string `json:"duty_id"`
-		Title    string `json:"title"`
-		Priority string `json:"priority"`
-		Kind     string `json:"kind"`
-		Reserved bool   `json:"reserved"`
-		Resumes  bool   `json:"resumes"`
+		AgentOptions []AgentOption `json:"agent_options"`
+		DutyID       string        `json:"duty_id"`
+		Title        string        `json:"title"`
+		Priority     string        `json:"priority"`
+		Kind         string        `json:"kind"`
+		Reserved     bool          `json:"reserved"`
+		Resumes      bool          `json:"resumes"`
 	} `json:"runnable"`
 }
 
@@ -585,19 +587,20 @@ func (c *Client) ReportRepo(ctx context.Context, requestID, repoURL string) erro
 
 // Duty is a duty as /duty/get and /duty/claim return it.
 type Duty struct {
-	SourceNoteID     string   `json:"source_note_id"`
-	SourceNoteIDs    []string `json:"source_note_ids"`
-	ID               string   `json:"id"`
-	Title            string   `json:"title"`
-	Brief            string   `json:"brief"`
-	Priority         string   `json:"priority"`
-	Kind             string   `json:"kind"`
-	Status           string   `json:"status"`
-	AssignedAgentID  string   `json:"assigned_agent_id"`
-	OutcomeSummary   string   `json:"outcome_summary"`
-	LastQuestion     string   `json:"last_question"`
-	AttachmentCount  int      `json:"attachment_count"`
-	ExpectFiles      int      `json:"expect_files"` // files the person filing it was still attaching
+	AgentOptions     []AgentOption `json:"agent_options"`
+	SourceNoteID     string        `json:"source_note_id"`
+	SourceNoteIDs    []string      `json:"source_note_ids"`
+	ID               string        `json:"id"`
+	Title            string        `json:"title"`
+	Brief            string        `json:"brief"`
+	Priority         string        `json:"priority"`
+	Kind             string        `json:"kind"`
+	Status           string        `json:"status"`
+	AssignedAgentID  string        `json:"assigned_agent_id"`
+	OutcomeSummary   string        `json:"outcome_summary"`
+	LastQuestion     string        `json:"last_question"`
+	AttachmentCount  int           `json:"attachment_count"`
+	ExpectFiles      int           `json:"expect_files"` // files the person filing it was still attaching
 	UnblockedContext *struct {
 		LastQuestion    string `json:"last_question"`
 		HumanResolution string `json:"human_resolution"`

@@ -57,7 +57,7 @@ func (d *Daemon) ensureWorkspaces(ctx context.Context) {
 	d.mu.Unlock()
 	for _, v := range views {
 		problem := ""
-		choice, _, readyErr := d.chooseAgent(ctx, v, false)
+		choice, _, readyErr := d.chooseBoardAgent(ctx, v, false)
 		if readyErr == nil {
 			v = withChoice(v, choice)
 		}
@@ -80,7 +80,7 @@ func (d *Daemon) ensureWorkspaces(ctx context.Context) {
 		}
 		d.setProblem(ctx, v.ProjectID, problem)
 		notices := []string{}
-		if _, until, err := d.chooseAgent(ctx, v, true); err == nil && !until.IsZero() {
+		if _, until, err := d.chooseBoardAgent(ctx, v, true); err == nil && !until.IsZero() {
 			notices = append(notices, "All configured agent options are at their usage limit; next reset "+until.Format(time.RFC3339))
 		}
 		if n := d.deployNotice(ctx, v); n != "" {

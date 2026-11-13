@@ -40,6 +40,8 @@
 //      machine is linked are blocked behind it, nothing else is claimed until it finishes, and then
 //      they go back to the front of the queue.
 
+import { dutyAgentOptions } from "./profile.js";
+import { olderRelease } from "./version.js";
 import { notifyNeedsYou } from "./notify.js";
 import { badRequest, conflict, forbidden, notFound, str, oneOf, intIn, clip } from "./http.js";
 import { dutyId, threadId } from "./ids.js";
@@ -201,21 +203,31 @@ export async function pollDuties(ctx, body) {
  * `claimBlocker`, so nothing is offered that the claim would then refuse.
  */
 export async function runnableDuties(ctx, projectKey, agentId, limit) {
-  const { rows } = await ctx.store.query("duties", {
-    where: [
-      { field: "project_id", op: "=", value: projectKey },
-      { field: "status", op: "=", value: "queued" },
-    ],
-    order: [
-      { field: "prio_rank", dir: "asc" },
-      { field: "created_at", dir: "asc" },
-    ],
-    limit: limit + RUNNABLE_OVERFETCH,
-  });
-  const present = await presenceFor(ctx, rows);
-  const now = Date.now();
   const settingUp = await hasUnfinished(ctx, projectKey, [{ field: "kind", op: "=", value: "setup" }]);
-  return firstThingsFirst(rows.filter((d) => !claimBlocker(ctx, d, agentId, present, now) && (!settingUp || d.kind === "setup"))).slice(0, limit);
+  const eligible = [];
+  let cursor = null;
+  let scanned = 0;
+  do {
+    const page = await ctx.store.query("duties", {
+      where: [
+        { field: "project_id", op: "=", value: projectKey },
+        { field: "status", op: "=", value: "queued" },
+      ],
+      order: [
+        { field: "prio_rank", dir: "asc" },
+        { field: "created_at", dir: "asc" },
+      ],
+      limit: limit + RUNNABLE_OVERFETCH,
+      ...(cursor ? { cursor } : {}),
+    });
+    const present = await presenceFor(ctx, page.rows);
+    const now = Date.now();
+    eligible.push(...page.rows.filter((d) => !claimBlocker(ctx, d, agentId, present, now) && (!settingUp || d.kind === "setup")));
+    cursor = page.cursor;
+    scanned += page.rows.length;
+    // Model-specific duties for other machines must not hide later runnable work.
+  } while (cursor && eligible.length < limit && scanned < MAX_OPEN_DUTIES);
+  return firstThingsFirst(eligible).slice(0, limit);
 }
 
 async function hasUnfinished(ctx, projectKey, where) {
@@ -342,6 +354,10 @@ async function presenceFor(ctx, duties) {
   return waiting.length ? machinesPresent(ctx, waiting) : new Map();
 }
 
+export function dutyRunnerTooOld(ctx, duty) {
+  return duty.agent_options != null && ctx.caller.machineId && olderRelease(ctx.clientVersion || ctx.caller.machineRow?.cli_version, "2.30.0");
+}
+
 /**
  * Why `agentId` may not claim this duty, or null when it may.
  *
@@ -350,6 +366,11 @@ async function presenceFor(ctx, duties) {
  * worktree has the half-finished work, but only while that machine is there to pick it up.
  */
 function claimBlocker(ctx, duty, agentId, present, now) {
+  if (dutyRunnerTooOld(ctx, duty)) return "this duty's model priority requires dutyboard 2.30.0 or later";
+  if (duty.agent_options != null && ctx.caller.machineId && !duty.agent_options.some((choice) =>
+    (ctx.caller.machineRow?.agent_options || []).some((allowed) => !allowed.disabled && choice.agent === allowed.agent && (choice.model || "") === (allowed.model || "") && (choice.effort || "") === (allowed.effort || "")))) {
+    return "this machine has no enabled combination matching this duty's model priority";
+  }
   if (duty.kind === "note" || duty.approval_required) return "this note or suggestion needs human approval before it can be worked";
   if (duty.reserved_for && !reservedTo(duty.reserved_for, agentId)) {
     return `duty '${duty.key}' is reserved for '${duty.reserved_for}'`;
@@ -885,6 +906,7 @@ export async function enqueueDuty(ctx, body, internal = {}) {
     ...(internal.reviewNotes ? { review_scope: "board" } : {}),
     ...(review ? { source_note_rounds: Object.fromEntries(sources.map(n => [n.key, n.suggestion_round || "initial"])) } : {}),
     approval_required: !!review,
+    agent_options: dutyAgentOptions(body.agent_options),
     priority,
     prio_rank: RANK[priority],
     origin_board_id: ctx.caller.crossBoard?.source || null,
@@ -1554,6 +1576,7 @@ export async function updateDuty(ctx, body) {
   const now = Date.now();
   const next = { ...stripMeta(duty), updated_at: now };
 
+  if (Object.hasOwn(body, "agent_options")) next.agent_options = dutyAgentOptions(body.agent_options);
   if (body.title != null) next.title = str(body.title, "title", { required: true, max: 200 });
   if (body.brief != null) next.brief = str(body.brief, "brief", { required: true, max: 4000 });
   if (body.priority != null) {
@@ -1782,6 +1805,7 @@ function briefOf(duty, { full = false } = {}) {
     priority: duty.priority,
     origin: duty.origin,
     kind: duty.kind || "work",
+    agent_options: duty.agent_options ?? null,
     unblocked_context: null,
   };
   if (duty.origin_board_id) { out.origin_board_id = duty.origin_board_id; out.origin_duty_id = duty.origin_duty_id || null; }

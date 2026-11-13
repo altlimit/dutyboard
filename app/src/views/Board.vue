@@ -1,4 +1,5 @@
 <script setup>
+import DutyAgentPriority from "../components/DutyAgentPriority.vue";
 import BoardNav from "../components/BoardNav.vue";
 import { computed, onUnmounted, reactive, ref, watch } from "vue";
 import { aggregate, api, putSigned, query, subscribeLive } from "../lib/altengine.js";
@@ -143,7 +144,7 @@ const liveState = ref("connecting");
 const showForm = ref(false);
 /** How long a finished duty stays, as the board's settings say a new one should start. */
 const defaultExpiry = () => (board.value && board.value.profile && board.value.profile.expire_after_days) || 0;
-const blankDraft = () => ({ title: "", brief: "", priority: "next", expire_after_days: defaultExpiry() });
+const blankDraft = () => ({ title: "", brief: "", priority: "next", agent_options: null, expire_after_days: defaultExpiry() });
 const draft = ref(blankDraft());
 const adding = ref(false);
 
@@ -507,6 +508,7 @@ async function attachAll(dutyId, files) {
 }
 
 async function addDuty() {
+  if (draft.value.agent_options?.length === 0) { error.value = "Add a model combination, or use board defaults."; return; }
   adding.value = true;
   error.value = "";
   attachFailed.value = null;
@@ -516,6 +518,7 @@ async function addDuty() {
       title: draft.value.title,
       brief: draft.value.brief,
       priority: draft.value.priority,
+      agent_options: draft.value.agent_options,
       expire_after_days: draft.value.expire_after_days,
       // The files go up once it exists; a runner that claims it first waits for this many.
       expect_files: draftFiles.value.length,
@@ -647,6 +650,7 @@ onUnmounted(() => {
         ></textarea>
         <p class="hint">An agent may pick this up with no other context. Write it for that reader.</p>
       </div>
+      <DutyAgentPriority v-model="draft.agent_options" :runner="board?.runner" :machines="runners" id-prefix="new-duty-models" :disabled="adding" />
       <div class="field">
         <label for="d-priority">Priority</label>
         <select id="d-priority" v-model="draft.priority">

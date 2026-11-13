@@ -27,6 +27,7 @@
 // or late, once — which is why the console shows when the offset was last confirmed.
 
 import { badRequest, forbidden, notFound, str, oneOf, intIn, clip } from "./http.js";
+import { dutyAgentOptions } from "./profile.js";
 import { scheduleId } from "./ids.js";
 import { putOp } from "./store.js";
 import { requireHuman, resolveProject } from "./identity.js";
@@ -234,6 +235,7 @@ export function scheduleView(row, now = Date.now()) {
     title: row.title,
     brief: row.brief,
     priority: row.priority,
+    agent_options: row.agent_options ?? null,
     reserved_for: row.reserved_for || null,
     expire_after_days: row.expire_after_days || 0,
     check: row.check || null,
@@ -316,6 +318,7 @@ export async function updateSchedule(ctx, body) {
     title: has(body, "title") ? body.title : row.title,
     brief: has(body, "brief") ? body.brief : row.brief,
     priority: has(body, "priority") ? body.priority : row.priority,
+    agent_options: has(body, "agent_options") ? body.agent_options : row.agent_options,
     reserved_for: has(body, "reserved_for") ? body.reserved_for : row.reserved_for,
     cron: has(body, "cron") ? body.cron : row.cron,
     tz: has(body, "tz") ? body.tz : row.tz,
@@ -461,6 +464,7 @@ function scheduleFields(ctx, body, now) {
       brief: str(body.brief, "brief", { required: true, max: 4000 }),
       priority,
       prio_rank: RANK[priority],
+      agent_options: dutyAgentOptions(body.agent_options),
       reserved_for: reservationFor(ctx, body),
       cron: cronText,
       tz: str(body.tz, "tz", { max: 64, fallback: "UTC" }) || "UTC",
@@ -697,6 +701,7 @@ async function fireSchedule(ctx, row, now) {
       // The mutex: one occurrence, one duty, whichever tick gets there first.
       fields: {
         fire_key: fireKey(row.key, due),
+        agent_options: row.agent_options ?? null,
         schedule_id: row.key,
         expire_after_days: row.expire_after_days || 0,
         expires_at: null,

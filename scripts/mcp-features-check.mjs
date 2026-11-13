@@ -92,3 +92,15 @@ for (const name of ["note_list", "duty_list", "duty_suggest", "board_links", "bo
 }
 assert.ok(!(await rpc("initialize", {}, submit)).result.instructions.includes("duty_suggest"));
 console.log("MCP features passed: discovery, configuration reads, note review and tracking, approval boundaries, linked-board access and revocation, and submit-token isolation.");
+
+for (const name of ["duty_enqueue", "duty_schedule_create", "duty_schedule_update"]) {
+  assert.ok(tools.find(t => t.name === name).inputSchema.properties.agent_options, `missing duty model schema: ${name}`);
+}
+const modelDuty = await call("duty_enqueue", { title: "Model policy", brief: "Check the selected models", agent_options: options });
+assert.deepEqual((await call("duty_get", { duty_id: modelDuty.duty_id })).duty.agent_options, options);
+await call("duty_claim", { duty_id: modelDuty.duty_id });
+const modelSchedule = (await call("duty_schedule_create", { title: "Model policy", brief: "Check on schedule", cron: "0 9 * * *", agent_options: options })).schedule;
+assert.deepEqual(modelSchedule.agent_options, options);
+await call("duty_schedule_update", { schedule_id: modelSchedule.schedule_id, agent_options: null });
+assert.equal((await store.get("schedules", modelSchedule.schedule_id)).agent_options, null);
+console.log("MCP duty model overrides: schemas, enqueue, reads and recurring create/update passed.");

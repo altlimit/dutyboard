@@ -36,8 +36,8 @@ function availability(o) {
       <p class="notice small">Using machine defaults. Each machine tries its enabled agents, models and efforts in the order saved on Machines. Changes there apply here automatically.</p>
       <div v-for="machine in machines" :key="machine.machine_id || machine.name" class="stack" style="gap: 0.3rem">
         <strong>{{ machine.machine_name || machine.name || machine.machine_id }}</strong>
-        <ol v-if="machine.agent_options?.length" style="margin: 0; padding-left: 1.5rem">
-          <li v-for="o in machine.agent_options" :key="optionKey(o)" style="overflow-wrap: anywhere">{{ optionLabel(o) }}</li>
+        <ol v-if="machine.agent_options?.some((o) => !o.disabled)" style="margin: 0; padding-left: 1.5rem">
+          <li v-for="o in machine.agent_options.filter((o) => !o.disabled)" :key="optionKey(o)" style="overflow-wrap: anywhere">{{ optionLabel(o) }}</li>
         </ol>
         <p v-else class="hint">No combinations enabled on this machine.</p>
       </div>

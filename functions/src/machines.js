@@ -25,8 +25,9 @@ import { mintMachineKey, mintDeviceCode, userCode, machineId, requestId, sha256H
 import { putOp, deleteOp } from "./store.js";
 import { requireHuman, requireMachine, resolveProject, memberKey, linkKey } from "./identity.js";
 import { liveConfigured, mintMachineLive, machinesPresent, publishMachine } from "./live.js";
-import { runnableDuties, activeDuties, seedDuty, stripMeta, blockBehindSetup } from "./duties.js";
-import { isFolderBoard, isServiceBoard, agentOptions, mergeRunner, profileView, repoUrl } from "./profile.js";
+import { olderRelease } from "./version.js";
+import { runnableDuties, dutyRunnerTooOld, MAX_OPEN_DUTIES, activeDuties, seedDuty, stripMeta, blockBehindSetup } from "./duties.js";
+import { isFolderBoard, isServiceBoard, agentOptions, enabledAgentOptions, mergeRunner, profileView, repoUrl } from "./profile.js";
 import { createProjectFor } from "./projects.js";
 import { runDueSchedules } from "./schedules.js";
 
@@ -59,16 +60,6 @@ const FILES_RUNNER = "2.18.0";
  * repository whose URL is missing, the same way.
  */
 const SERVICE_RUNNER = "2.22.0";
-
-/** Whether release `a` is older than release `b`. A build with no release number is never older. */
-function olderRelease(a, b) {
-  const parse = (v) => (/^v?(\d+)\.(\d+)\.(\d+)/.exec(String(v || "")) || []).slice(1).map(Number);
-  const x = parse(a);
-  const y = parse(b);
-  if (x.length !== 3 || y.length !== 3) return false;
-  for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] < y[i];
-  return false;
-}
 
 /** Why the calling machine cannot work `project`, when it is too old to; "" when it can. */
 function runnerTooOld(ctx, project, machineName) {
@@ -391,7 +382,7 @@ export async function updateMachine(ctx, body) {
   if (body.workspace_root != null) next.workspace_root = str(body.workspace_root, "workspace_root", { max: 300 });
   if (Object.hasOwn(body, "agent_options")) {
     if (olderRelease(row.cli_version, "2.27.0")) throw badRequest("update this machine to dutyboard 2.27.0 or later before configuring agent availability");
-    next.agent_options = agentOptions(body.agent_options);
+    next.agent_options = agentOptions(body.agent_options, "agent_options", { toggles: true });
     const report = await ctx.store.get("machine_readiness", row.machine_id);
     for (const option of next.agent_options) {
       // Existing choices survive a temporary discovery failure. New ones must come from the CLI.
@@ -458,8 +449,17 @@ export async function retryMachine(ctx, body) {
     if (olderRelease(row.cli_version, "2.27.0")) throw badRequest("update this machine to dutyboard 2.27.0 or later to retry usage limits");
     const r = project?.runner;
     const options = project
-      ? (r?.use_machine_defaults ? (row.agent_options ?? []) : (r?.options ?? [{ agent: r?.agent || "claude-code", model: r?.model || "", effort: r?.effort || "" }]))
+      ? [...(r?.use_machine_defaults ? (enabledAgentOptions(row.agent_options) ?? []) : (r?.options ?? [{ agent: r?.agent || "claude-code", model: r?.model || "", effort: r?.effort || "" }]))]
       : null;
+    if (project) {
+      const { rows } = await ctx.store.query("duties", {
+        where: [{ field: "project_id", op: "=", value: project.key }, { field: "status", op: "in", value: UNFINISHED }],
+        limit: MAX_OPEN_DUTIES,
+      });
+      for (const duty of rows) for (const option of duty.agent_options || []) {
+        if (!options.some((o) => o.agent === option.agent && o.model === option.model && o.effort === option.effort)) options.push(option);
+      }
+    }
     // Persist before publishing: a missed event or an offline machine picks this up on its next poll.
     // Board owners may reset only the models their board uses. The machine owner can reset all.
     const retries = { ...(row.quota_retries || {}) };
@@ -614,7 +614,7 @@ export async function machineMe(ctx) {
     openRequests(ctx, [caller.machineId]),
   ]);
   return {
-    machine: machineView(caller.machineRow),
+    machine: { ...machineView(caller.machineRow), agent_options: enabledAgentOptions(caller.machineRow.agent_options) },
     links: links.map((l) => {
       const p = projects.get(l.project_id);
       return {
@@ -910,9 +910,10 @@ export async function pollMachine(ctx, body) {
         parallel: (project.runner && project.runner.parallel) || null,
         machines,
         rules_version: project.rules_version || 0,
-        active: active.map((d) => ({ duty_id: d.key, agent_id: d.assigned_agent_id, kind: d.kind || "work", mine: mine(d) })),
+        active: active.map((d) => ({ duty_id: d.key, agent_id: d.assigned_agent_id, kind: d.kind || "work", agent_options: d.agent_options ?? null, mine: mine(d) && !dutyRunnerTooOld(ctx, d) })),
         runnable: runnable.map((d) => ({
           duty_id: d.key,
+          agent_options: d.agent_options ?? null,
           title: d.title,
           priority: d.priority,
           kind: d.kind || "work",
@@ -928,7 +929,7 @@ export async function pollMachine(ctx, body) {
     machine_id: caller.machineId,
     paused: !!caller.machineRow.paused,
     quota_retries: caller.machineRow.quota_retries || {},
-    agent_options: caller.machineRow.agent_options ?? null,
+    agent_options: enabledAgentOptions(caller.machineRow.agent_options),
     boards: boards.filter(Boolean),
     requests: requests.map(requestView),
   };

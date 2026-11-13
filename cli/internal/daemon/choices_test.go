@@ -2,11 +2,14 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"log"
+	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -211,5 +214,124 @@ func TestMachineDefaultsFollowAvailabilityOrderAndFallback(t *testing.T) {
 	other.me.Machine.AgentOptions = []board.AgentOption{a}
 	if got, _, err := other.chooseAgent(ctx, v, true); err != nil || got != a {
 		t.Fatal("default leaked between machines")
+	}
+}
+
+func TestDutyPriorityOverridesBoardWithoutChangingOtherSettings(t *testing.T) {
+	d := choiceDaemon(t)
+	ctx := context.Background()
+	cheap := board.AgentOption{Agent: "codex", Model: "cheap", Effort: "low"}
+	smart := board.AgentOption{Agent: "codex", Model: "smart", Effort: "high"}
+	fallback := board.AgentOption{Agent: "codex", Model: "backup", Effort: "high"}
+	d.me.Machine.AgentOptions = []board.AgentOption{cheap, fallback, smart}
+	v := board.BoardView{Runner: &board.Runner{UseMachineDefaults: true, Options: []board.AgentOption{cheap}, PermissionMode: "acceptEdits", Parallel: 3, Instructions: "Keep these rules"}}
+	override := withDutyOptions(v, []board.AgentOption{smart, fallback})
+	if !v.Runner.UseMachineDefaults || v.Runner.Options[0] != cheap {
+		t.Fatal("duty changed shared board policy")
+	}
+	if override.Runner.PermissionMode != v.Runner.PermissionMode || override.Runner.Parallel != 3 || override.Runner.Instructions != v.Runner.Instructions {
+		t.Fatal("duty changed other runner settings")
+	}
+	if got, _, err := d.chooseAgent(ctx, override, true); err != nil || got != smart {
+		t.Fatalf("duty priority not used: %v %v", got, err)
+	}
+	if got, _, err := d.chooseAgent(ctx, withDutyOptions(v, nil), true); err != nil || got != cheap {
+		t.Fatalf("inheritance changed: %v %v", got, err)
+	}
+	until := time.Now().Add(time.Hour)
+	d.markLimited(smart, until)
+	if got, _, err := d.chooseAgent(ctx, override, true); err != nil || got != fallback {
+		t.Fatalf("duty fallback ignored: %v %v", got, err)
+	}
+	d.markLimited(fallback, until)
+	if _, wait, err := d.chooseAgent(ctx, override, true); err != nil || !wait.Equal(until) {
+		t.Fatalf("exhausted override fell back to board: %v %v", wait, err)
+	}
+	if wait := quotaWait(override.Runner.AvailableChoices(d.me.Machine.AgentOptions), d.limits, time.Now()); !wait.Equal(until) {
+		t.Fatal("override quota status hidden by ready board default")
+	}
+	d.me.Machine.AgentOptions = []board.AgentOption{cheap}
+	if _, _, err := d.chooseAgent(ctx, override, true); err == nil {
+		t.Fatal("override bypassed machine availability")
+	}
+}
+
+func TestBoardReadinessIncludesDutyOverrides(t *testing.T) {
+	d := choiceDaemon(t)
+	ctx := context.Background()
+	cheap := board.AgentOption{Agent: "codex", Model: "cheap"}
+	smart := board.AgentOption{Agent: "codex", Model: "smart"}
+	v := board.BoardView{ProjectID: "board", Runner: &board.Runner{Options: []board.AgentOption{cheap}}}
+	var poll board.PollBoard
+	if err := json.Unmarshal([]byte(`{"project_id":"board","runnable":[{"duty_id":"smart-duty","agent_options":[{"agent":"codex","model":"smart"}]}]}`), &poll); err != nil {
+		t.Fatal(err)
+	}
+	d.polled = map[string]board.PollBoard{"board": poll}
+	d.views = map[string]board.BoardView{"board": v}
+	d.me.Machine.AgentOptions = []board.AgentOption{smart}
+	if got, _, err := d.chooseBoardAgent(ctx, v, false); err != nil || got != smart {
+		t.Fatalf("unavailable board default blocked override: %v %v", got, err)
+	}
+	if d.dutyReady(ctx, "board", nil) {
+		t.Fatal("default duty used another duty's override")
+	}
+	if !d.dutyReady(ctx, "board", []board.AgentOption{smart}) {
+		t.Fatal("override not ready")
+	}
+	d.me.Machine.AgentOptions = []board.AgentOption{cheap, smart}
+	d.markLimited(cheap, time.Now().Add(time.Hour))
+	if got, _, err := d.chooseBoardAgent(ctx, v, true); err != nil || got != smart {
+		t.Fatalf("limited board default blocked override: %v %v", got, err)
+	}
+	// Held duties also have to resume after a daemon restart, with their own priority.
+	if err := json.Unmarshal([]byte(`{"project_id":"board","active":[{"duty_id":"smart-duty","mine":true,"agent_options":[{"agent":"codex","model":"smart"}]}],"runnable":[]}`), &poll); err != nil {
+		t.Fatal(err)
+	}
+	d.polled["board"] = poll
+	if got, _, err := d.chooseBoardAgent(ctx, v, true); err != nil || got != smart {
+		t.Fatalf("held override not ready after restart: %v %v", got, err)
+	}
+}
+
+type choiceTransport func(*http.Request) (*http.Response, error)
+
+func (f choiceTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestClaimSkipsUnavailableAndLimitedDutyOverrides(t *testing.T) {
+	d := choiceDaemon(t)
+	var poll board.PollBoard
+	if err := json.Unmarshal([]byte(`{"project_id":"board","runnable":[
+ {"duty_id":"unavailable","agent_options":[{"agent":"codex","model":"unavailable"}]},
+ {"duty_id":"limited","agent_options":[{"agent":"codex","model":"limited"}]},
+ {"duty_id":"ready","agent_options":[{"agent":"codex","model":"smart"}]}
+ ]}`), &poll); err != nil {
+		t.Fatal(err)
+	}
+	d.me.Machine.AgentOptions = []board.AgentOption{{Agent: "codex", Model: "smart"}, {Agent: "codex", Model: "limited"}}
+	d.views = map[string]board.BoardView{"board": {ProjectID: "board", Runner: &board.Runner{Options: []board.AgentOption{{Agent: "codex", Model: "unavailable"}}}}}
+	d.markLimited(board.AgentOption{Agent: "codex", Model: "limited"}, time.Now().Add(time.Hour))
+	var claims []string
+	d.api = board.New("http://test", "")
+	d.api.HTTP.Transport = choiceTransport(func(r *http.Request) (*http.Response, error) {
+		var body struct {
+			DutyID string `json:"duty_id"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if r.URL.Path != "/duty/claim" {
+			t.Fatalf("unexpected request: %s", r.URL.Path)
+		}
+		claims = append(claims, body.DutyID)
+		return &http.Response{StatusCode: 409, Body: io.NopCloser(strings.NewReader(`{"error":{"code":"CONFLICT","message":"claimed by another"}}`)), Header: make(http.Header)}, nil
+	})
+	if d.startOne(context.Background(), poll, map[string]int{}, map[string]bool{}) {
+		t.Fatal("started a refused claim")
+	}
+	if len(claims) != 1 || claims[0] != "ready" {
+		t.Fatalf("claimed wrong duties: %v", claims)
+	}
+	if d.limitWakeAt.IsZero() {
+		t.Fatal("did not schedule a quota wake")
 	}
 }

@@ -1,7 +1,7 @@
 export function testStore() {
 const collections = new Map();
 const table = (name) => { if (!collections.has(name)) collections.set(name, new Map()); return collections.get(name); };
-const matches = (row, where = []) => where.every(({ field, op, value }) => op === "in" ? value.includes(row[field]) : op === ">" ? row[field] > value : row[field] === value);
+const matches = (row, where = []) => where.every(({ field, op, value }) => op === "in" ? value.includes(row[field]) : op === ">" ? row[field] > value : op === "<=" ? row[field] <= value : row[field] === value);
 const store = {
   delete: async (c, keys) => { let n = 0; for (const k of keys) n += table(c).delete(k) ? 1 : 0; return n; },
   get: async (c, k) => table(c).get(k) || null,

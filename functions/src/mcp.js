@@ -54,7 +54,7 @@ REVIEWING NOTES
 A note_review duty asks for suggestions only. Notes live in a separate board view, not a duty lane. Read ALL source_note_ids on the review, each note's files and thread, and all existing linked suggestions. Consider the notes together: several notes can support one proposal. Pass source_note_ids for the 1–50 supporting notes to duty_suggest or duty_enqueue. Older single-note reviews can use source_note_id. Use note_list to browse all notes, following its cursor. The review snapshots only notes without current linked suggestions; later notes belong to the next review. note_list and duty_get expose has_suggestions for notes; duty_get.suggestions retains the full history. Use duty_suggest with a clear brief and optional question. Each proposal stays in Needs you until a person approves it. Never implement or schedule the proposed work during the review. Complete the review with a summary of what you suggested and the suggestion IDs. Follow suggestions_cursor through every page from duty_get. Notes themselves are not runnable. People trigger each review with Suggest duties and can Clear link on an individual note after a review ends to make it eligible again; old duties and source history remain. Notes with no proposals stay eligible, and deleted suggestions stop counting as links. Do not duplicate approved or completed work. Only a person may approve or reject suggestions.
 
 RUNNER SELECTION AND USAGE LIMITS
-board_profile returns runner.use_machine_defaults: true means inherit this machine's enabled list and order; otherwise runner.options is the board priority override (or legacy runner.agent/model/effort). The daemon chooses among combinations enabled on this machine and falls back when usage is exhausted, keeping the same duty and workspace. Resume from checkpoints and verify existing changes. Model catalogs come from installed CLIs; do not invent model names or edit runner configuration. Machine availability, board priorities and Refresh models are owner controls. After a server-side account or usage fix, the board or machine owner can use Retry now to clear usage cooldowns; Refresh models and Check again do not do that. Agents cannot reset usage, change access grants, or approve notes through MCP.
+board_profile returns runner.use_machine_defaults: true means inherit this machine's enabled list and order; otherwise runner.options is the board priority override (or legacy runner.agent/model/effort). The daemon chooses among combinations enabled on this machine and falls back when usage is exhausted, keeping the same duty and workspace. Resume from checkpoints and verify existing changes. Model catalogs come from installed CLIs; do not invent model names or edit runner configuration. Machine availability, board priorities and Refresh models are owner controls. A duty's agent_options overrides board priority; null inherits it. Recurring schedules copy agent_options to each occurrence. Only combinations enabled on the machine can run. After a server-side account or usage fix, the board or machine owner can use Retry now to clear usage cooldowns; Refresh models and Check again do not do that. Agents cannot reset usage, change access grants, or approve notes through MCP.
 
 WHAT YOU FIND ALONG THE WAY
 Do not widen the duty you are on. A discovery that blocks it: duty_enqueue with priority 'immediate_blocker' and spawned_by set to the duty you are holding — yours parks behind it, you claim the new one, and finishing it returns the parent to the front of the queue on its own. A discovery that does not block it: duty_enqueue with 'next' or 'backlog', then carry on with what you were doing.
@@ -88,6 +88,16 @@ Some work is never finished, only due again — a weekly post, a monthly check o
 const SUBMIT_INSTRUCTIONS = `This connection files work on a DutyBoard and follows it; the board's own agents do the work. duty_enqueue files a duty — give it a brief a person or agent with no other context can act on, and an external_ref (your own id for the request) so a retry answers the duty already filed instead of filing it twice. duty_get reads one as it stands now; duty_changes lists those you filed that moved since a time you pass back; a finished duty's outcome_summary says what was done. duty_attach gives a duty its input files. duty_cancel takes back one nobody has started. You see only the duties this connection filed.`;
 
 const s = (description, extra = {}) => ({ type: "string", description, ...extra });
+
+const dutyOptionsSchema = {
+  type: ["array", "null"], minItems: 1, maxItems: 30,
+  description: "Optional ordered agent/model/effort override for this duty or each new recurring occurrence. Null inherits board defaults. Use only combinations enabled on the machine; do not invent model names.",
+  items: { type: "object", properties: {
+    agent: s("Agent CLI.", { enum: ["claude-code", "codex", "cursor"] }),
+    model: s("Model id enabled on the machine; empty uses the CLI default."),
+    effort: s("Effort enabled for this model; empty uses the CLI default."),
+  }, required: ["agent"] },
+};
 
 const TOOLS = [
   {
@@ -172,6 +182,7 @@ const TOOLS = [
     inputSchema: {
       type: "object",
       properties: {
+        agent_options: dutyOptionsSchema,
         title: s("One line naming the work."),
         brief: s("What needs doing and why, in a few sentences. This is what a future agent reads with no other context."),
         priority: s("How it schedules.", { enum: PRIORITIES, default: "next" }),
@@ -465,6 +476,7 @@ const TOOLS = [
     inputSchema: {
       type: "object",
       properties: {
+        agent_options: dutyOptionsSchema,
         title: s("One line naming the work, used as each filed duty's title."),
         brief: s("What needs doing, every time it comes round. Written for an agent with no other context."),
         cron: s("Five fields — minute, hour, day of the month, month, day of the week. '0 9 * * 1' is 9am every Monday."),
@@ -502,6 +514,7 @@ const TOOLS = [
     inputSchema: {
       type: "object",
       properties: {
+        agent_options: dutyOptionsSchema,
         schedule_id: s("The schedule, from duty_schedule_list."),
         title: s("A new title for the duties it files."),
         brief: s("A new brief."),

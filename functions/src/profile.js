@@ -320,7 +320,7 @@ export function mergeProfile(stored, input) {
 }
 
 /** An ordered board policy or a machine's explicitly enabled combinations. */
-export function agentOptions(value, field = "agent_options") {
+export function agentOptions(value, field = "agent_options", { toggles = false } = {}) {
   if (!Array.isArray(value)) throw badRequest(`'${field}' must be an array`);
   const options = list(value, field, {
     max: 30,
@@ -332,13 +332,28 @@ export function agentOptions(value, field = "agent_options") {
         effort: o.effort ? oneOf(o.effort, `${f}.effort`, EFFORTS) : "",
       };
       if (option.agent === "cursor" && option.effort) throw badRequest("Cursor chooses effort through its model; leave effort at default");
+      if (toggles && Object.hasOwn(o, "disabled")) {
+        if (typeof o.disabled !== "boolean") throw badRequest(`'${f}.disabled' must be a boolean`);
+        if (o.disabled) option.disabled = true;
+      }
       return option;
     },
   });
-  const keys = options.map((o) => JSON.stringify(o));
+  const keys = options.map((o) => JSON.stringify([o.agent, o.model, o.effort]));
   if (new Set(keys).size !== keys.length) throw badRequest(`'${field}' contains duplicate combinations`);
   return options;
 }
+
+/** Null inherits the board; an override must have at least one fallback choice. */
+export function dutyAgentOptions(value) {
+  if (value == null) return null;
+  const options = agentOptions(value);
+  if (!options.length) throw badRequest("'agent_options' must contain at least one combination, or be null to use board defaults");
+  return options;
+}
+
+/** Preserve null (legacy availability) versus an explicitly empty enabled list. */
+export const enabledAgentOptions = (options) => options == null ? null : options.filter((o) => !o.disabled).map(({ agent, model, effort }) => ({ agent, model, effort }));
 
 export function mergeRunner(stored, input) {
   const next = { ...RUNNER_DEFAULTS, ...(stored || {}) };

@@ -274,6 +274,7 @@ func (d *Daemon) execute(dctx, rctx context.Context, run *Run, duty *board.Duty,
 		// Re-read policy between attempts, including while every option is cooling down.
 		policy := v
 		policy.Runner = d.view(run.Board).Runner
+		policy = withDutyOptions(policy, duty.AgentOptions)
 		choice, until, choiceErr := d.chooseAgent(rctx, policy, true)
 		if choiceErr != nil {
 			d.park(dctx, run, v, "No configured agent can continue this duty: "+choiceErr.Error())

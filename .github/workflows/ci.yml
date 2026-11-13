@@ -47,6 +47,7 @@ jobs:
       # text becomes markup the renderer did not build.
       - run: node scripts/markdown-check.mjs
       - run: node scripts/agent-options-check.mjs
+      - run: node scripts/duty-options-check.mjs
       - run: node scripts/readiness-check.mjs
       - run: node scripts/notes-check.mjs
       - run: node scripts/board-access-check.mjs

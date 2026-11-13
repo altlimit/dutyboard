@@ -58,6 +58,7 @@ export const optionLabel = (o) => `${agentLabel(o.agent)} · ${o.model || "CLI d
 export function availableOptions(machines = []) {
   const options = new Map();
   for (const m of machines) for (const o of m.agent_options || []) {
+    if (o.disabled) continue;
     const key = optionKey(o);
     if (!options.has(key)) options.set(key, { ...o, machines: [] });
     const names = options.get(key).machines;

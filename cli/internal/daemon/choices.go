@@ -95,7 +95,67 @@ func (d *Daemon) chooseAgent(ctx context.Context, v board.BoardView, respectLimi
 	if len(problems) > 0 {
 		return board.AgentOption{}, time.Time{}, fmt.Errorf("%s", strings.Join(problems, "; "))
 	}
-	return board.AgentOption{}, time.Time{}, fmt.Errorf("no enabled agent/model/effort combination matches this board — enable combinations on Machines, or check this board's override")
+	return board.AgentOption{}, time.Time{}, fmt.Errorf("no enabled agent/model/effort combination matches this duty — enable combinations on Machines, or check the duty and board priorities")
+}
+
+// A duty overrides only model selection. Permissions, parallelism and other board
+// settings remain inherited. Nil follows the board; an explicit list replaces it.
+func withDutyOptions(v board.BoardView, options []board.AgentOption) board.BoardView {
+	if options == nil {
+		return v
+	}
+	r := board.Runner{}
+	if v.Runner != nil {
+		r = *v.Runner
+	}
+	r.UseMachineDefaults, r.Options = false, options
+	v.Runner = &r
+	return v
+}
+
+// Board readiness must consider overrides too: an unavailable board default must
+// not block a duty which can use another model. Individual claims check their own policy.
+func (d *Daemon) chooseBoardAgent(ctx context.Context, v board.BoardView, respectLimits bool) (board.AgentOption, time.Time, error) {
+	d.mu.Lock()
+	b := d.polled[v.ProjectID]
+	d.mu.Unlock()
+	policies := []board.BoardView{v}
+	for _, a := range b.Active {
+		if a.Mine && a.AgentOptions != nil {
+			policies = append(policies, withDutyOptions(v, a.AgentOptions))
+		}
+	}
+	for _, r := range b.Runnable {
+		if r.AgentOptions != nil {
+			policies = append(policies, withDutyOptions(v, r.AgentOptions))
+		}
+	}
+	var wait time.Time
+	var problem error
+	for _, policy := range policies {
+		option, until, err := d.chooseAgent(ctx, policy, respectLimits)
+		if err == nil && until.IsZero() {
+			return option, until, nil
+		}
+		if !until.IsZero() && (wait.IsZero() || until.Before(wait)) {
+			wait = until
+		}
+		if problem == nil {
+			problem = err
+		}
+	}
+	if !wait.IsZero() {
+		return board.AgentOption{}, wait, nil
+	}
+	return board.AgentOption{}, time.Time{}, problem
+}
+
+func (d *Daemon) dutyReady(ctx context.Context, boardID string, options []board.AgentOption) bool {
+	_, until, err := d.chooseAgent(ctx, withDutyOptions(d.view(boardID), options), true)
+	if !until.IsZero() {
+		d.wakeAt(until)
+	}
+	return err == nil && until.IsZero()
 }
 
 func withChoice(v board.BoardView, option board.AgentOption) board.BoardView {
@@ -195,4 +255,19 @@ func (d *Daemon) applyQuotaRetries(requests map[string]board.QuotaRetry) error {
 	runner.ForgetChecks()
 	d.log.Printf("cleared requested usage cooldowns; retrying available agents")
 	return nil
+}
+
+// Quota status is per duty: a ready board default does not hide a waiting override.
+func quotaWait(choices []board.AgentOption, limits map[string]time.Time, now time.Time) time.Time {
+	var wait time.Time
+	for _, choice := range choices {
+		until := limits[limitKey(choice)]
+		if !until.After(now) {
+			return time.Time{}
+		}
+		if wait.IsZero() || until.Before(wait) {
+			wait = until
+		}
+	}
+	return wait
 }

@@ -1,4 +1,5 @@
 <script setup>
+import DutyAgentPriority from "../components/DutyAgentPriority.vue";
 import BoardNav from "../components/BoardNav.vue";
 import { computed, onUnmounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
@@ -29,6 +30,7 @@ async function saveProfile() {
   profileNotice.value = "";
   try {
     await api("/projects/profile", { project_id: props.projectId, ...profilePayload(profile.value) });
+    savedRunner.value = profilePayload(profile.value).runner;
     hasProfile.value = true;
     profileNotice.value = "Saved. Machines working this board use it from their next duty.";
   } catch (err) {
@@ -102,6 +104,7 @@ async function saveSchedule() {
   error.value = "";
   scheduleNotice.value = "";
   try {
+    if (draft.agent_options?.length === 0) throw new Error("Add a model combination, or use board defaults.");
     const payload = schedulePayload(draft);
     if (draft.schedule_id) {
       await api("/schedules/update", { project_id: props.projectId, schedule_id: draft.schedule_id, ...payload });
@@ -200,6 +203,7 @@ async function saveRules() {
 
 // Machines working this board, whoever's they are.
 const runners = ref([]);
+const savedRunner = ref(null);
 
 // A board with no repository yet can have one of your machines make it on GitHub. What it is doing
 // about that comes with the runners, and so does the repository once it is made.
@@ -462,6 +466,7 @@ async function load() {
     ownerName.value = (board.project && board.project.owner_name) || "";
     searchable.value = board.search === true;
     hasProfile.value = !!(board.project && (board.project.profile || board.project.runner));
+    savedRunner.value = board.project?.runner || null;
     profile.value = profileDraft(board.project && board.project.profile, board.project && board.project.runner);
     runners.value = board.runners || [];
     await Promise.all([
@@ -942,6 +947,8 @@ function tabKey(event) {
             <label for="sch-brief">What needs doing, every time</label>
             <textarea id="sch-brief" v-model="scheduleForm.brief" required rows="4" maxlength="4000" placeholder="Written for an agent with no other context — what to write, where it goes, what done looks like." />
           </div>
+          <DutyAgentPriority :key="scheduleForm.schedule_id || 'new'" v-model="scheduleForm.agent_options" :runner="savedRunner" :machines="runners" id-prefix="schedule-models" :disabled="busy" />
+          <p class="hint">This model priority is copied to each new occurrence. Changes here apply to future duties.</p>
           <div class="field">
             <label for="sch-repeat">Repeat</label>
             <select id="sch-repeat" v-model="scheduleForm.repeat">

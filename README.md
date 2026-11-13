@@ -567,7 +567,8 @@ A repository with no remote leaves the work on the duty's branch.
 ### Claude Code, Codex or Cursor
 
 Under **Machines → Available agents and models**, add the agent/model/effort combinations a machine
-may use, move them up or down into priority order, and save its availability. New boards use
+may use, move them up or down into priority order, and save its availability. Disable or enable a
+saved combination without removing it or losing its position. New boards use
 **machine defaults**: each machine tries its own saved list in order, skipping unavailable or
 usage-limited choices. Changing that machine's list updates all boards inheriting it.
 
@@ -581,7 +582,21 @@ linking them; only linked machines work its duties.
 The owner's `/projects/profile` API sets `runner.use_machine_defaults: true` to inherit, or
 `false` to use the saved override. Sending `runner.options` without a mode selects a board
 override; unrelated partial updates preserve the current mode. Machine availability and its
-order come from `agent_options` on `/machines/update`.
+order come from `agent_options` on `/machines/update`. A machine option with `disabled: true` is
+kept in settings but excluded from execution; omit it or set it to false to enable the option.
+
+When adding or editing a duty, or under **Settings → Recurring duties**, choose **Override for this
+duty** to select and order enabled model/effort combinations from the linked machines. This takes
+precedence over the board's list, so a demanding duty can prefer a smarter model while ordinary
+duties keep using the defaults. **Use board defaults** restores inheritance. Each machine still
+skips combinations it has not enabled; priorities apply within that machine. Add more choices on
+Machines first. Changes to an active duty apply at its next agent session.
+
+The duty and schedule APIs accept `agent_options: [{"agent":"codex","model":"your-model-id","effort":"high"}]`.
+Omit the field on updates to keep the saved selection, or send `null` to inherit board defaults.
+An override needs 1–30 distinct combinations. A recurring schedule copies its override to each
+new duty; editing the schedule changes future occurrences, while existing duties can be edited
+individually. Duty overrides require dutyboard 2.30.0 or later; older machines cannot claim them.
 
 Model discovery does not run an inference task: Codex uses its app-server `model/list` protocol,
 Claude Code uses its initialization response, and Cursor uses `--list-models`. Efforts are the

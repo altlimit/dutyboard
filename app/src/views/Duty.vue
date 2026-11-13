@@ -1,10 +1,11 @@
 <script setup>
+import DutyAgentPriority from "../components/DutyAgentPriority.vue";
 import BoardNav from "../components/BoardNav.vue";
 import { computed, onUnmounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { api, getDocs, query, subscribeLive } from "../lib/altengine.js";
 import { ALL_STATUSES, PRIORITIES, THREAD_KIND_LABELS, ago, exactTime, expiryChoices, originLabel, priorityLabel, statusLabel } from "../lib/duties.js";
-import { activityByDuty, activityLine } from "../lib/runners.js";
+import { activityByDuty, activityLine, optionLabel } from "../lib/runners.js";
 import NoteActions from "../components/NoteActions.vue";
 import QuotaRetry from "../components/QuotaRetry.vue";
 import Attachments from "../components/Attachments.vue";
@@ -19,6 +20,8 @@ const router = useRouter();
 const PAGE = 25;
 
 const duty = ref(null);
+const boardRunner = ref(null);
+const machines = ref([]);
 const sourceNotes = ref([]);
 const entries = ref([]);
 const attachments = ref([]);
@@ -67,14 +70,16 @@ const options = computed(() => {
 async function load() {
   error.value = "";
   try {
-    const [dutyRes, threadRes] = await Promise.all([
+    const [dutyRes, threadRes, boardRes] = await Promise.all([
       getDocs("duties", [props.dutyId]),
       query("threads", {
         where: [{ field: "duty_id", op: "=", value: props.dutyId }],
         order: [{ field: "created_at", dir: "desc" }],
         limit: PAGE,
       }),
+      api("/board/profile", { project_id: props.projectId }),
     ]);
+    boardRunner.value = boardRes.runner || null;
     duty.value = (dutyRes.documents || []).map(flat)[0] || null;
     const ids = duty.value?.source_note_ids || (duty.value?.source_note_id ? [duty.value.source_note_id] : []);
     const sources = [];
@@ -141,6 +146,7 @@ function resetEdit() {
     title: duty.value.title,
     brief: duty.value.brief,
     priority: duty.value.priority,
+    agent_options: duty.value.agent_options?.map((o) => ({ ...o })) ?? null,
     status: duty.value.status,
     expire_after_days: duty.value.expire_after_days || 0,
   };
@@ -176,6 +182,7 @@ function refreshActivity() {
     activityTimer = null;
     try {
       const res = await api("/board/runners", { project_id: props.projectId });
+      machines.value = res.runners || [];
       activity.value = activityByDuty(res.runners)[props.dutyId] || null;
     } catch {
       /* keeps what it had */
@@ -245,6 +252,7 @@ const addNote = () =>
 
 const saveEdits = () =>
   act(async () => {
+    if (edit.value.agent_options?.length === 0) throw new Error("Add a model combination, or use board defaults.");
     await api("/duty/update", { duty_id: props.dutyId, ...edit.value });
     editing.value = false;
   }, "Saved.");
@@ -361,6 +369,8 @@ onUnmounted(() => {
             <label for="e-brief">Brief</label>
             <textarea id="e-brief" v-model="edit.brief" required maxlength="4000" rows="7"></textarea>
           </div>
+          <DutyAgentPriority v-if="duty.kind !== 'note'" v-model="edit.agent_options" :runner="boardRunner" :machines="machines" id-prefix="edit-duty-models" :disabled="posting" />
+          <p v-if="duty.status === 'active'" class="hint">Model changes apply when the next agent session starts.</p>
           <div v-if="duty.kind !== 'note'" class="field">
             <label for="e-priority">Priority</label>
             <select id="e-priority" v-model="edit.priority">
@@ -395,6 +405,7 @@ onUnmounted(() => {
         </form>
       </div>
 
+      <p v-if="!editing && duty.kind !== 'note'" class="hint">Model priority: {{ duty.agent_options?.length ? duty.agent_options.map(optionLabel).join(' → ') : 'Board defaults' }}</p>
       <Attachments :duty-id="dutyId" :items="attachments" :busy="posting" :accept-paste="editing" @changed="load" />
 
       <div v-if="duty.outcome_summary" class="panel" :style="`border-left: 3px solid var(--${duty.status === 'failed' ? 'danger' : 'ok'})`">

@@ -528,12 +528,6 @@ func (d *Daemon) tick(ctx context.Context) error {
 			if (d.folder(b.ProjectID) == "" && !d.view(b.ProjectID).Folder()) || d.problem(b.ProjectID) != "" {
 				continue
 			}
-			if _, until, err := d.chooseAgent(ctx, d.view(b.ProjectID), true); err != nil || !until.IsZero() {
-				if !until.IsZero() {
-					d.wakeAt(until)
-				}
-				continue
-			}
 			if d.startOne(ctx, b, started, tried) {
 				progress = true
 			}
@@ -648,6 +642,9 @@ func (d *Daemon) startOne(ctx context.Context, b board.PollBoard, started map[st
 			d.log.Printf("reading held duty %s: %v", a.DutyID, err)
 			continue
 		}
+		if !d.dutyReady(ctx, b.ProjectID, duty.AgentOptions) {
+			continue
+		}
 		d.launch(ctx, b.ProjectID, a.AgentID, duty, true)
 		return true
 	}
@@ -673,6 +670,9 @@ func (d *Daemon) startOne(ctx context.Context, b board.PollBoard, started map[st
 			continue
 		}
 		tried[r.DutyID] = true
+		if !d.dutyReady(ctx, b.ProjectID, r.AgentOptions) {
+			continue
+		}
 		agent := d.freeLane(b)
 		claimed, err := d.api.Claim(ctx, b.ProjectID, r.DutyID, agent)
 		if err != nil {
@@ -734,10 +734,14 @@ func (d *Daemon) report(ctx context.Context, boardID string) {
 		}
 	}
 	problem, notice := d.problems[boardID], d.notices[boardID]
-	if strings.Contains(notice, "All configured agent options are at their usage limit") {
+	if d.me != nil {
 		for _, active := range d.polled[boardID].Active {
-			if active.Mine && d.runs[active.DutyID] == nil {
-				runs = append(runs, board.Run{DutyID: active.DutyID, State: "limited", Detail: notice})
+			if !active.Mine || d.runs[active.DutyID] != nil {
+				continue
+			}
+			v := withDutyOptions(d.views[boardID], active.AgentOptions)
+			if until := quotaWait(v.Runner.AvailableChoices(d.me.Machine.AgentOptions), d.limits, time.Now()); !until.IsZero() {
+				runs = append(runs, board.Run{DutyID: active.DutyID, State: "limited", Detail: "All configured agent options are at their usage limit; next reset " + until.Format(time.RFC3339)})
 			}
 		}
 	}

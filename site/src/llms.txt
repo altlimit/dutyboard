@@ -181,8 +181,17 @@ That restarts the running `dutyboard` on the new binary; the duties it held are 
 Run the updated `dutyboard --provision-only` too (or accept the upgrade offered by interactive
 `dutyboard`) to upgrade the function and console. The Machines page's Versions section shows
 the console, function and machine versions. Machine agent priorities and board overrides need
-2.27.0 or later; inherited machine defaults need 2.28.0 or later. Update both halves when
+2.27.0 or later; inherited machine defaults need 2.28.0 or later; duty overrides need 2.30.0. Update both halves when
 adopting new features.
+
+
+Model priorities: machines keep ordered agent/model/effort combinations; `disabled: true` keeps a
+combination saved without using it. Boards inherit enabled machine defaults unless overridden.
+Ad hoc and recurring duties can set their own ordered `agent_options` list (1–30 combinations),
+which takes precedence over the board but still requires machine availability. Null means use
+board defaults. Recurring schedules copy the selection to each new occurrence; changes affect
+future duties. Active duty edits apply at the next agent session. Duty overrides need runner
+2.30.0 or later. Configure these in Machines, the duty form, or Settings → Recurring duties.
 
 
 ## Undoing it
