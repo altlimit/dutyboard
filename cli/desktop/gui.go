@@ -110,10 +110,13 @@ func (m *Machine) OpenConsole() error {
 // Quit stops the machine and closes the app, as the tray's Quit does.
 func (m *Machine) Quit() { m.app.Quit() }
 
-func runApp(startHidden bool, consoleErr error) int {
+// runApp is the app. With quitOnly it is not: it is a message to the app already running to quit,
+// carried by the single-instance channel, and if no app is running there is nothing to tell.
+func runApp(startHidden, quitOnly bool, consoleErr error) int {
 	h := host.New(app.Version)
 	machine := &Machine{h: h}
 	setup := &Setup{h: h, machine: machine}
+	updates := &Updates{h: h}
 
 	var window *application.WebviewWindow
 	show := func() {
@@ -136,7 +139,7 @@ func runApp(startHidden bool, consoleErr error) int {
 		Name:        "DutyBoard",
 		Description: "Runs your DutyBoard's agents on this machine",
 		Icon:        appIcon,
-		Services:    []application.Service{application.NewService(machine), application.NewService(setup)},
+		Services:    []application.Service{application.NewService(machine), application.NewService(setup), application.NewService(updates)},
 		Assets:      application.AssetOptions{Handler: application.AssetFileServerFS(sub)},
 		Windows: application.WindowsOptions{
 			DisableQuitOnLastWindowClosed: true,
@@ -148,13 +151,25 @@ func runApp(startHidden bool, consoleErr error) int {
 		},
 		Mac: application.MacOptions{ApplicationShouldTerminateAfterLastWindowClosed: false},
 		SingleInstance: &application.SingleInstanceOptions{
-			UniqueID:               "com.altlimit.dutyboard.desktop." + strings.NewReplacer("\\", "_", "/", "_", ":", "_").Replace(h.Snapshot().Home),
-			OnSecondInstanceLaunch: func(application.SecondInstanceData) { show() },
+			UniqueID: "com.altlimit.dutyboard.desktop." + strings.NewReplacer("\\", "_", "/", "_", ":", "_").Replace(h.Snapshot().Home),
+			OnSecondInstanceLaunch: func(d application.SecondInstanceData) {
+				for _, arg := range d.Args {
+					if arg == "--quit" {
+						application.Get().Quit()
+						return
+					}
+				}
+				show()
+			},
 		},
 		// Quitting is stopping: sessions are given their time to finish, as with `dutyboard --stop`.
 		OnShutdown: func() { h.Pause() },
 	})
-	machine.app, setup.app = a, a
+	machine.app, setup.app, updates.app = a, a, a
+	if quitOnly {
+		// Reaching here means no other instance took the message: nothing is running.
+		return 0
+	}
 
 	h.OnChange = func(s host.Snapshot) { a.Event.Emit("machine:status", s) }
 	h.OnLog = func(line string) { a.Event.Emit("machine:log", line) }
@@ -204,6 +219,9 @@ func runApp(startHidden bool, consoleErr error) int {
 			pause.SetLabel("Resume")
 		}
 	}
+
+	updates.visible = func() bool { return window != nil && window.IsVisible() }
+	updates.start()
 
 	if consoleErr != nil {
 		h.Note("could not hide the consoles of the programs this starts: " + consoleErr.Error())

@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref } from "vue";
 import { Events } from "@wailsio/runtime";
-import { Machine, Setup } from "../bindings/github.com/altlimit/dutyboard/cli/desktop";
-import type { DeploymentStatus, Provisioned } from "../bindings/github.com/altlimit/dutyboard/cli/desktop";
+import { Machine, Setup, Updates } from "../bindings/github.com/altlimit/dutyboard/cli/desktop";
+import type { DeploymentStatus, Provisioned, UpdateStatus } from "../bindings/github.com/altlimit/dutyboard/cli/desktop";
 import { Snapshot, State } from "../bindings/github.com/altlimit/dutyboard/cli/desktop/host";
 import SetupProgress from "./SetupProgress.vue";
 
@@ -34,6 +34,28 @@ async function changeProjects() {
   const chosen = await Setup.ChooseFolder(status.value.projects);
   if (chosen && chosen !== status.value.projects) await Machine.SetProjects(chosen);
 }
+
+// The app's own updates. It finds, downloads and checks them by itself, and installs one when no
+// agent is working; this only says where that stands, and lets a person hurry it.
+const update = ref<UpdateStatus | null>(null);
+const updateText = computed(() => {
+  const u = update.value;
+  if (!u || !u.enabled) return "This build does not update itself.";
+  switch (u.state) {
+    case "checking":
+      return "Checking for updates…";
+    case "downloading":
+      return `Downloading DutyBoard ${u.version}…`;
+    case "ready":
+      return `DutyBoard ${u.version} is downloaded.`;
+    case "current":
+      return "Up to date. Updates install by themselves.";
+    case "error":
+      return u.error;
+    default:
+      return "Updates install by themselves.";
+  }
+});
 
 // Whether the app starts, in the tray, when the person signs in.
 const autostart = ref(false);
@@ -108,7 +130,9 @@ onMounted(() => {
       clearTimeout(due);
       due = setTimeout(readLog, 80);
     }),
+    Events.On("update:status", (e) => (update.value = e.data)),
   );
+  Updates.Status().then((u) => (update.value = u));
   readLog();
   checkDeployment();
   Machine.Autostart().then((on) => (autostart.value = on));
@@ -140,6 +164,18 @@ onUnmounted(() => {
     />
 
     <template v-else>
+    <section v-if="update?.state === 'ready'" id="update-ready" class="notice upgrade">
+      <div>
+        <strong>DutyBoard {{ update.version }} is ready to install.</strong>
+        <p v-if="update.waiting">
+          It installs by itself as soon as no agent is working. Installing it now restarts the app and stops the
+          sessions that are running; their duties are resumed afterwards.
+        </p>
+        <p v-else>It installs by itself in a moment, and the app restarts.</p>
+      </div>
+      <button id="update-now" class="primary" :disabled="busy" @click="act(Updates.RestartNow)">Install and restart now</button>
+    </section>
+
     <section v-if="deployment?.canUpgrade" id="upgrade" class="notice upgrade">
       <div>
         <strong>An upgrade is ready for your DutyBoard.</strong>
@@ -182,6 +218,19 @@ onUnmounted(() => {
             <span>Start when I sign in, in the system tray</span>
           </label>
           <span class="hint">It starts from where the app is now, so keep the file where it is.</span>
+        </dd>
+        <dt>Updates</dt>
+        <dd>
+          <span id="update-text" :class="{ error: update?.state === 'error' }">{{ updateText }}</span>
+          <button
+            v-if="update?.enabled && update.state !== 'ready' && update.state !== 'checking' && update.state !== 'downloading'"
+            id="check-updates"
+            class="link"
+            :disabled="busy"
+            @click="act(() => Updates.Check())"
+          >
+            Check now
+          </button>
         </dd>
       </dl>
 

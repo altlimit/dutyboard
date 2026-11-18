@@ -141,7 +141,7 @@ require (
 	github.com/godbus/dbus/v5 v5.2.2 // indirect
 	github.com/wailsapp/wails/v3 v3.1.0
 	github.com/zalando/go-keyring v0.2.6 // indirect
-	golang.org/x/sys v0.48.0 // indirect
+	golang.org/x/sys v0.48.0
 	golang.org/x/term v0.46.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )

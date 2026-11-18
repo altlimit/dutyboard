@@ -16,11 +16,15 @@ func main() {
 	// The app's own arguments, which are how "start when I sign in" launches it: --tray starts it in
 	// the tray with no window, and --home says which home, because a sign-in entry carries no
 	// environment. Anything else is a `dutyboard` command.
-	startHidden, home, mine := false, "", len(args) > 0
+	startHidden, quit, home, mine := false, false, "", len(args) > 0
 	for i := 0; i < len(args) && mine; i++ {
 		switch {
 		case args[i] == "--tray":
 			startHidden = true
+		case args[i] == "--quit":
+			// Asks the app that is running to quit, and is not one itself: how an installer gets it
+			// out of the way before replacing or removing it.
+			quit = true
 		case args[i] == "--home" && i+1 < len(args):
 			home = args[i+1]
 			i++
@@ -36,6 +40,16 @@ func main() {
 	if home != "" {
 		_ = os.Setenv("DUTYBOARD_HOME", home)
 	}
+	// Coming back from an update nobody asked for by hand: the way it was, in the tray. The variable is
+	// left set, because the process reading it first is not the app but the helper that swaps the
+	// files and then starts the app, which inherits it from there. Updates.restart sets or clears it
+	// each time, so it never outlives the restart it was meant for.
+	if os.Getenv(hiddenEnv) != "" {
+		startHidden = true
+	}
+	if quit {
+		os.Exit(runApp(true, true, nil))
+	}
 	// Before anything starts a child.
-	os.Exit(runApp(startHidden, prepareConsole(false)))
+	os.Exit(runApp(startHidden, false, prepareConsole(false)))
 }

@@ -111,3 +111,12 @@ jobs:
       # The part with no window in it runs anywhere.
       - run: go vet ./host && go test ./host
         working-directory: cli/desktop
+      # The installer's script compiles. It is only ever built for real at a release, on a Windows
+      # runner, after the files it carries are signed; this catches a script that would fail there.
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends nsis
+      - run: |
+          mkdir -p "$RUNNER_TEMP/pkg" && cp cli/desktop/dist/DutyBoard-Desktop.exe "$RUNNER_TEMP/pkg/DutyBoard.exe"
+          makensis -V2 -DUNINSTALLER_ONLY -DVERSION=0.0.0 "-DSRC=$RUNNER_TEMP/pkg" cli/desktop/build/windows/installer.nsi
+          # The uninstaller itself can only be written on Windows; a stand-in lets the rest compile.
+          cp "$RUNNER_TEMP/pkg/make-uninstaller.exe" "$RUNNER_TEMP/pkg/Uninstall.exe"
+          makensis -V2 -DVERSION=0.0.0 "-DSRC=$RUNNER_TEMP/pkg" cli/desktop/build/windows/installer.nsi

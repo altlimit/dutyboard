@@ -624,3 +624,91 @@ func TestHostedTakesDutyboardComOffTheOrigins(t *testing.T) {
 		}
 	}
 }
+
+// window is a person at a window instead of a terminal: it records what it was told and what it was
+// asked, and answers from a script — what the desktop app's first run does with a real one.
+type window struct {
+	lines    []string
+	asked    []string
+	choices  [][]string
+	choose   int    // which option to pick
+	name     string // what to type when asked for a name
+	defaults []string
+}
+
+func (w *window) Event(kind, text string) { w.lines = append(w.lines, kind+": "+text) }
+func (w *window) Ask(q, def string) (string, error) {
+	w.asked, w.defaults = append(w.asked, q), append(w.defaults, def)
+	return w.name, nil
+}
+func (w *window) Secret(q string) (string, error) { w.asked = append(w.asked, q); return "", nil }
+func (w *window) Confirm(q string, def bool) (bool, error) {
+	w.asked = append(w.asked, q)
+	return def, nil
+}
+func (w *window) Choose(q string, options []string, def int) (int, error) {
+	w.asked, w.choices = append(w.asked, q), append(w.choices, options)
+	return w.choose, nil
+}
+
+func existingDeployment(f *fakeHosted) {
+	for service, name := range map[string]string{
+		"functions": "board-prod", "datastore": "custom-ds", "auth": "custom-auth", "channel": "custom-live",
+		"blob": "custom-files", "search": "custom-search", "static": "board-prod",
+	} {
+		f.add(service, name)
+	}
+	f.functions["board-prod"] = map[string]string{
+		"datastore:custom-ds": "full", "auth:custom-auth": "write", "channel:custom-live": "write",
+		"blob:custom-files": "full", "search:custom-search": "full",
+	}
+}
+
+func TestHostedFromAWindowUpgradesTheDeploymentThePersonPicks(t *testing.T) {
+	f := newFake(t, "9.9.9")
+	existingDeployment(f)
+	w := &window{choose: 0}
+
+	res, err := Run(context.Background(), Options{Client: hosted(f.srv.URL), Assets: testAssets(t, "9.9.9"), UI: ui.NewRemote(w)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(w.choices) != 1 || len(w.choices[0]) != 2 || !strings.Contains(w.choices[0][0], "board-prod") || w.choices[0][1] != "Provision a new DutyBoard" {
+		t.Fatalf("the window should be asked which of the deployment and a new one: %q", w.choices)
+	}
+	if res.Created || res.Names.Functions != "board-prod" || res.Names.Datastore != "custom-ds" {
+		t.Fatalf("the deployment picked was not the one upgraded: %+v", res)
+	}
+	if _, ok := f.inv.Find("functions", "dutyboard"); ok {
+		t.Error("a second deployment was made beside the one picked")
+	}
+	steps := 0
+	for _, l := range w.lines {
+		if strings.HasPrefix(l, "step: ") {
+			steps++
+		}
+	}
+	if steps == 0 || len(w.lines) < 5 {
+		t.Errorf("the window was told too little to show progress: %q", w.lines)
+	}
+}
+
+func TestHostedFromAWindowMakesANewDeploymentUnderTheNameTyped(t *testing.T) {
+	f := newFake(t, "9.9.9")
+	existingDeployment(f)
+	w := &window{choose: 1, name: "mine"}
+
+	res, err := Run(context.Background(), Options{Client: hosted(f.srv.URL), Assets: testAssets(t, "9.9.9"), UI: ui.NewRemote(w)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(w.asked) < 2 || w.asked[1] != "Name for the new deployment's instances" || w.defaults[0] != "dutyboard" {
+		t.Fatalf("after choosing a new one the window should be asked its name, offered a free one: asked %q, offered %q", w.asked, w.defaults)
+	}
+	if !res.Created || res.Names != NamesFor("mine") {
+		t.Fatalf("expected a new deployment named mine, got %+v", res)
+	}
+	if _, ok := f.inv.Find("datastore", "mine"); !ok {
+		t.Error("the new deployment's datastore was not created")
+	}
+}

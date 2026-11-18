@@ -246,6 +246,17 @@ func (h *Host) TakeOver() error {
 	return nil
 }
 
+// Busy is how many agent sessions are running now; none when the machine is not working at all.
+func (h *Host) Busy() int {
+	h.mu.Lock()
+	d := h.d
+	h.mu.Unlock()
+	if d == nil {
+		return 0
+	}
+	return d.Busy()
+}
+
 // Note puts a line of the app's own in the machine's log, with what the daemon writes there.
 func (h *Host) Note(line string) {
 	_, _ = h.writer().Write([]byte(time.Now().Format("2006/01/02 15:04:05") + " " + line + "\n"))

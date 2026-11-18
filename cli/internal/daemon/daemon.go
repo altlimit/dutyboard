@@ -277,6 +277,14 @@ func (d *Daemon) wake() {
 	}
 }
 
+// Busy is how many sessions are in flight. An app that hosts the daemon asks before doing something
+// that would interrupt them, such as restarting itself into an update.
+func (d *Daemon) Busy() int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return len(d.runs)
+}
+
 // Reload is called by another `dutyboard` invocation that has just linked a folder.
 // Stop shuts the daemon down, as asked by `dutyboard --stop` or a restart.
 func (d *Daemon) Stop() {

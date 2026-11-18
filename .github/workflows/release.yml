@@ -64,11 +64,15 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  # DutyBoard for the desktop: one signed DutyBoard-Desktop.exe on the same release.
+  # DutyBoard for the desktop, on the same release, as two files:
   #
-  # Its name carries no operating system and no architecture ON PURPOSE. alt picks an asset by
+  #   DutyBoard-Setup.exe     what a person downloads: the installer
+  #   DutyBoard-Desktop.exe   the app itself, which is what an installed app downloads to update,
+  #                           and what anyone who wants no installer can run as it is
+  #
+  # Neither name carries an operating system or an architecture ON PURPOSE. alt picks an asset by
   # scoring names for both, and drops any that match neither — so `alt install altlimit/dutyboard`
-  # on Windows keeps choosing the CLI's zip and never this.
+  # on Windows keeps choosing the CLI's zip and never these.
   desktop:
     runs-on: ubuntu-latest
     steps:
@@ -94,9 +98,10 @@ jobs:
           if-no-files-found: error
 
   # Signed with Azure Trusted Signing, and published only if signed: an unsigned download is stopped
-  # by SmartScreen, which is the one thing the people this app is for cannot get past. Until the
-  # settings below exist, this job says so and the release simply has no desktop app on it. It runs
-  # after `release` and apart from it, so nothing here can fail or undo the CLI's release.
+  # by SmartScreen, which is the one thing the people this app is for cannot get past — and an
+  # installed app refuses an update that its own publisher did not sign. Until the settings below
+  # exist, this job says so and the release simply has no desktop app on it. It runs after `release`
+  # and apart from it, so nothing here can fail or undo the CLI's release.
   #
   #   AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_CLIENT_SECRET, AZURE_SIGNING_ENDPOINT,
   #   AZURE_SIGNING_ACCOUNT, AZURE_CERTIFICATE_PROFILE
@@ -105,6 +110,9 @@ jobs:
   # Each is read from EITHER tab of Settings → Secrets and variables → Actions. `vars.X` cannot see
   # a value stored as a secret — it reads as empty, with no warning — so a name looked up on one
   # tab only turns "I added it" into a job that quietly skips. Only the client secret is sensitive.
+  #
+  # The order is the installer's (cli/desktop/build/windows/installer.nsi): the app and its
+  # uninstaller are signed first, because the installer carries them, and then the installer is.
   desktop-sign:
     needs: [release, desktop]
     runs-on: windows-2022
@@ -115,7 +123,9 @@ jobs:
       AZURE_SIGNING_ACCOUNT: ${{ vars.AZURE_SIGNING_ACCOUNT || secrets.AZURE_SIGNING_ACCOUNT }}
       AZURE_CERTIFICATE_PROFILE: ${{ vars.AZURE_CERTIFICATE_PROFILE || secrets.AZURE_CERTIFICATE_PROFILE }}
       AZURE_SIGNING_SUBJECT: ${{ vars.AZURE_SIGNING_SUBJECT || secrets.AZURE_SIGNING_SUBJECT }}
+      MAKENSIS: C:\Program Files (x86)\NSIS\makensis.exe
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           name: desktop-unsigned
@@ -129,9 +139,23 @@ jobs:
           $missing = @('AZURE_TENANT_ID','AZURE_CLIENT_ID','AZURE_CLIENT_SECRET','AZURE_SIGNING_ENDPOINT','AZURE_SIGNING_ACCOUNT','AZURE_CERTIFICATE_PROFILE') | Where-Object { -not [Environment]::GetEnvironmentVariable($_) }
           "enabled=$((-not $missing).ToString().ToLower())" >> $env:GITHUB_OUTPUT
           if ($missing) {
-            "::warning::DutyBoard-Desktop.exe was built and NOT published: Azure Trusted Signing is not configured (missing: $($missing -join ', '))."
+            "::warning::The desktop app was built and NOT published: Azure Trusted Signing is not configured (missing: $($missing -join ', '))."
             "The desktop app was not published: signing is not configured (missing: $($missing -join ', '))." >> $env:GITHUB_STEP_SUMMARY
           }
+
+      - name: The app as it is installed, and its uninstaller
+        if: steps.signing.outputs.enabled == 'true'
+        shell: pwsh
+        run: |
+          if (-not (Test-Path $env:MAKENSIS)) { throw "NSIS is not on this runner at $env:MAKENSIS" }
+          New-Item -ItemType Directory -Force pkg | Out-Null
+          Copy-Item desktop/DutyBoard-Desktop.exe pkg/DutyBoard.exe
+          $version = $env:GITHUB_REF_NAME.TrimStart('v')
+          & $env:MAKENSIS /V2 /DUNINSTALLER_ONLY "/DVERSION=$version" "/DSRC=$PWD\pkg" cli/desktop/build/windows/installer.nsi
+          if ($LASTEXITCODE -ne 0) { throw 'the uninstaller did not compile' }
+          # NSIS writes an uninstaller only by running an installer: this one does nothing else.
+          $made = Start-Process pkg/make-uninstaller.exe -ArgumentList '/S' -Wait -PassThru
+          if ($made.ExitCode -ne 0 -or -not (Test-Path pkg/Uninstall.exe)) { throw 'the uninstaller was not written' }
       - uses: Azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2
         if: steps.signing.outputs.enabled == 'true'
         with:
@@ -148,26 +172,62 @@ jobs:
           endpoint: ${{ vars.AZURE_SIGNING_ENDPOINT || secrets.AZURE_SIGNING_ENDPOINT }}
           signing-account-name: ${{ vars.AZURE_SIGNING_ACCOUNT || secrets.AZURE_SIGNING_ACCOUNT }}
           certificate-profile-name: ${{ vars.AZURE_CERTIFICATE_PROFILE || secrets.AZURE_CERTIFICATE_PROFILE }}
-          files: ${{ github.workspace }}\desktop\DutyBoard-Desktop.exe
-      - name: The signature is valid, and ours
+          files: |
+            ${{ github.workspace }}\pkg\DutyBoard.exe
+            ${{ github.workspace }}\pkg\Uninstall.exe
+
+      - name: The installer, from the two signed files
         if: steps.signing.outputs.enabled == 'true'
         shell: pwsh
         run: |
-          $signature = Get-AuthenticodeSignature desktop/DutyBoard-Desktop.exe
-          $subject = $signature.SignerCertificate.Subject
-          if ($signature.Status -ne 'Valid') { throw "DutyBoard-Desktop.exe: signature is $($signature.Status)" }
-          if ($env:AZURE_SIGNING_SUBJECT -and $subject -ne $env:AZURE_SIGNING_SUBJECT) {
-            throw "DutyBoard-Desktop.exe: signed by '$subject', expected '$env:AZURE_SIGNING_SUBJECT'"
+          $version = $env:GITHUB_REF_NAME.TrimStart('v')
+          & $env:MAKENSIS /V2 "/DVERSION=$version" "/DSRC=$PWD\pkg" cli/desktop/build/windows/installer.nsi
+          if ($LASTEXITCODE -ne 0 -or -not (Test-Path pkg/DutyBoard-Setup.exe)) { throw 'the installer did not compile' }
+      - uses: Azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2
+        if: steps.signing.outputs.enabled == 'true'
+        with:
+          azure-tenant-id: ${{ vars.AZURE_TENANT_ID || secrets.AZURE_TENANT_ID }}
+          azure-client-id: ${{ vars.AZURE_CLIENT_ID || secrets.AZURE_CLIENT_ID }}
+          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          exclude-environment-credential: false
+          exclude-workload-identity-credential: true
+          exclude-managed-identity-credential: true
+          exclude-azure-cli-credential: true
+          exclude-azure-powershell-credential: true
+          exclude-azure-developer-cli-credential: true
+          exclude-interactive-browser-credential: true
+          endpoint: ${{ vars.AZURE_SIGNING_ENDPOINT || secrets.AZURE_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.AZURE_SIGNING_ACCOUNT || secrets.AZURE_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.AZURE_CERTIFICATE_PROFILE || secrets.AZURE_CERTIFICATE_PROFILE }}
+          files: ${{ github.workspace }}\pkg\DutyBoard-Setup.exe
+
+      - name: Every signature is valid, and ours
+        if: steps.signing.outputs.enabled == 'true'
+        shell: pwsh
+        run: |
+          $subjects = @()
+          foreach ($name in 'DutyBoard.exe', 'Uninstall.exe', 'DutyBoard-Setup.exe') {
+            $signature = Get-AuthenticodeSignature "pkg/$name"
+            $subject = $signature.SignerCertificate.Subject
+            if ($signature.Status -ne 'Valid') { throw "${name}: signature is $($signature.Status)" }
+            if ($env:AZURE_SIGNING_SUBJECT -and $subject -ne $env:AZURE_SIGNING_SUBJECT) {
+              throw "${name}: signed by '$subject', expected '$env:AZURE_SIGNING_SUBJECT'"
+            }
+            $subjects += $subject
           }
-          "Signed by: $subject" >> $env:GITHUB_STEP_SUMMARY
+          # An installed app takes an update only from whoever signed it, so one publisher throughout.
+          if (@($subjects | Select-Object -Unique).Count -ne 1) { throw "the files are not all signed by one publisher: $($subjects -join ' | ')" }
+          "Signed by: $($subjects[0])" >> $env:GITHUB_STEP_SUMMARY
       - name: Publish
         if: steps.signing.outputs.enabled == 'true'
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # sha256sum's format, of the file as signed. alt never selects a .sha256.
-          $hash = (Get-FileHash desktop/DutyBoard-Desktop.exe -Algorithm SHA256).Hash.ToLower()
-          [IO.File]::WriteAllText("$PWD/desktop/DutyBoard-Desktop.exe.sha256", "$hash  DutyBoard-Desktop.exe`n")
-          gh release upload $env:GITHUB_REF_NAME desktop/DutyBoard-Desktop.exe desktop/DutyBoard-Desktop.exe.sha256 --repo $env:GITHUB_REPOSITORY --clobber
+          # The app under the name an installed copy looks for when it updates, with its checksum in
+          # sha256sum's format — of the file as signed. alt never selects a .sha256.
+          Copy-Item pkg/DutyBoard.exe pkg/DutyBoard-Desktop.exe
+          $hash = (Get-FileHash pkg/DutyBoard-Desktop.exe -Algorithm SHA256).Hash.ToLower()
+          [IO.File]::WriteAllText("$PWD/pkg/DutyBoard-Desktop.exe.sha256", "$hash  DutyBoard-Desktop.exe`n")
+          gh release upload $env:GITHUB_REF_NAME pkg/DutyBoard-Setup.exe pkg/DutyBoard-Desktop.exe pkg/DutyBoard-Desktop.exe.sha256 --repo $env:GITHUB_REPOSITORY --clobber
           if ($LASTEXITCODE -ne 0) { throw 'upload failed' }
