@@ -434,5 +434,33 @@
       ],
       "for": "delete board source links"
     }
+  ],
+  "finishes": [
+    {
+      "fields": [
+        "owner_uid",
+        "hour"
+      ],
+      "for": "console: the boards page's finished-per-day — a fortnight of hours across every board you own, summed per hour"
+    },
+    {
+      "fields": [
+        "project_id",
+        "hour"
+      ],
+      "for": "member: the same, for the boards shared with you"
+    },
+    {
+      "fields": [
+        "finished_at"
+      ],
+      "for": "the tick: forgetting finishes older than the page shows"
+    },
+    {
+      "fields": [
+        "project_id"
+      ],
+      "for": "the function: deleting a board's finishes with it"
+    }
   ]
 }

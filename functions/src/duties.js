@@ -577,6 +577,9 @@ export async function claimDuty(ctx, body) {
     // The claim hands over every note on the duty so far; finishing it is refused while there are
     // newer ones the session has not been shown (see unreadNotes).
     notes_seen_at: now,
+    // When this claim started, kept apart from `updated_at`, which every checkpoint moves: "running
+    // for 40m" on the boards page has to mean since the agent took it, not since it last spoke.
+    claimed_at: now,
     updated_at: now,
   };
   try {
@@ -1250,7 +1253,7 @@ export async function cancelDuty(ctx, body) {
   const reason = str(body.reason, "reason", { max: 1000, fallback: "" });
   const said = reason ? `: ${reason}` : ".";
   if (caller.kind === "human") {
-    return finishDuty(ctx, { duty_id: duty.key, reason: `Cancelled by ${caller.name}${said}` }, "failed", { duty });
+    return finishDuty(ctx, { duty_id: duty.key, reason: `Cancelled by ${caller.name}${said}` }, "failed", { duty, cancelled: true });
   }
   if (!caller.tokenKey || duty.filed_by_token !== caller.tokenKey) {
     throw forbidden(`duty '${duty.key}' was not filed by this token — only what it filed can it cancel`);
@@ -1258,10 +1261,10 @@ export async function cancelDuty(ctx, body) {
   if (duty.status === "active") {
     throw conflict(`duty '${duty.key}' is being worked on — cancel it from the board, where whoever holds it can be stopped`, { status: duty.status });
   }
-  return finishDuty(ctx, { duty_id: duty.key, reason: `Cancelled by ${caller.tokenName || "the token that filed it"}${said}` }, "failed", { duty });
+  return finishDuty(ctx, { duty_id: duty.key, reason: `Cancelled by ${caller.tokenName || "the token that filed it"}${said}` }, "failed", { duty, cancelled: true });
 }
 
-async function finishDuty(ctx, body, terminal, { duty: held } = {}) {
+async function finishDuty(ctx, body, terminal, { duty: held, cancelled = false } = {}) {
   const duty = held || (await loadDuty(ctx, body.duty_id));
   const project = await projectOfDuty(ctx.caller, duty, ctx.store);
   const agentId = agentIdFrom(ctx, body, { required: false });
@@ -1289,6 +1292,7 @@ async function finishDuty(ctx, body, terminal, { duty: held } = {}) {
       lane: null,
       affinity: null,
       expires_at: expiresAt(duty, terminal, now),
+      finished_at: now,
       updated_at: now,
     }),
     putOp("threads", threadId(), {
@@ -1302,6 +1306,9 @@ async function finishDuty(ctx, body, terminal, { duty: held } = {}) {
       created_at: now,
     }),
   ];
+  // Work that ended, counted for the boards page. A cancellation is somebody changing their mind
+  // and a rejected suggestion was never work, so neither is counted as work that failed.
+  if (!cancelled && !duty.approval_required) ops.push(finishOp(project, duty, terminal, now));
 
   const holder = agentId || duty.assigned_agent_id;
   let freed = null;
@@ -1493,6 +1500,7 @@ export async function reopenDuty(ctx, body) {
       reopen_note: note,
       reopened_from: terminal,
       reopened_at: now,
+      finished_at: null,
       // Not a cap, a signal. Nothing refuses the fourth reopen — a person doing this is
       // paying attention by definition — but a duty that keeps coming back is worth being
       // able to see is coming back, on the duty and in the thread.
@@ -1593,6 +1601,7 @@ export async function updateDuty(ctx, body) {
       next.lane = null;
     }
     if (next.status === "done" || next.status === "failed") next.affinity = null;
+    if (next.status !== duty.status) next.finished_at = next.status === "done" || next.status === "failed" ? now : null;
   }
   if (body.expire_after_days != null) next.expire_after_days = expireDays(body.expire_after_days);
   // The clock starts when it is done, and stops when it no longer is; a new setting on a duty that is
@@ -1602,6 +1611,9 @@ export async function updateDuty(ctx, body) {
   }
 
   const ops = [putOp("duties", duty.key, next)];
+  // Marked done by hand is still work done. Moved to failed by hand is a person calling it off,
+  // which is what a cancellation is, and is not counted.
+  if (next.status === "done" && duty.status !== "done") ops.push(finishOp(project, duty, "done", now));
   // Moving a duty off `active` by hand has to free whichever agent was holding it, or
   // that agent can never claim anything again.
   if (duty.assigned_agent_id && next.status !== "active") {
@@ -1712,6 +1724,55 @@ export async function sweepExpiredDuties(ctx, now = Date.now(), limit = EXPIRE_P
     }
   }
   return removed;
+}
+
+// --- finishes ---------------------------------------------------------------
+//
+// One small row per duty that ended, for the boards page's "finished per day". Counting the duty
+// rows themselves cannot answer that: a board that removes done duties a day after they finish
+// would only ever show today, and a deleted duty would take its history with it. These outlive
+// both, for FINISHES_KEPT_MS.
+//
+// `hour` is the hour since the epoch the duty finished in. It is what the console groups on: a
+// fortnight is 336 of them, inside one aggregate's 500 groups, and the browser folds hours into
+// days in its own timezone — which the function does not know and a stored date would get wrong.
+
+const HOUR_MS = 60 * 60 * 1000;
+export const FINISHES_KEPT_MS = 90 * DAY_MS;
+const FINISHES_SWEPT_PER_TICK = 100;
+
+/**
+ * The row that counts one finish. Keyed by the duty and how many times it has been reopened, so a
+ * duty sent back and finished again counts each time it was finished, and a retried finish of the
+ * same one writes the same row rather than a second.
+ */
+export function finishOp(project, duty, terminal, now) {
+  return putOp("finishes", `${duty.key}-${duty.reopen_count || 0}`, {
+    project_id: project.key,
+    owner_uid: project.owner_uid,
+    duty_id: duty.key,
+    kind: duty.kind || null,
+    agent_id: duty.assigned_agent_id || null,
+    // Numbers rather than a status, so one aggregate sums both per hour instead of grouping by
+    // status, which would double the groups and pass the 500 an aggregate returns.
+    done: terminal === "done" ? 1 : 0,
+    failed: terminal === "failed" ? 1 : 0,
+    hour: Math.floor(now / HOUR_MS),
+    claimed_at: duty.claimed_at || null,
+    finished_at: now,
+  });
+}
+
+/** Forget finishes older than the boards page ever shows. Answers how many went. */
+export async function sweepOldFinishes(ctx, now = Date.now(), limit = FINISHES_SWEPT_PER_TICK) {
+  const { rows } = await ctx.store.query("finishes", {
+    where: [{ field: "finished_at", op: "<", value: now - FINISHES_KEPT_MS }],
+    keys_only: true,
+    limit,
+  });
+  if (!rows.length) return 0;
+  await ctx.store.delete("finishes", rows.map((r) => r.key));
+  return rows.length;
 }
 
 // --- helpers --------------------------------------------------------------

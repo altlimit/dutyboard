@@ -372,6 +372,50 @@ export async function listSchedules(ctx, body) {
   return { project_id: project.key, schedules: views, limit: MAX_SCHEDULES };
 }
 
+/** How many of the soonest runs `/projects/upcoming` lists; each board's own next is answered whole. */
+const UPCOMING_SHOWN = 12;
+/** Boards per schedules query: each has at most MAX_SCHEDULES, and a query returns at most 500. */
+const BOARDS_PER_SCHEDULES_QUERY = Math.floor(500 / MAX_SCHEDULES);
+
+/**
+ * The next runs of every enabled schedule on these boards, for the boards page: the soonest
+ * UPCOMING_SHOWN of them, and the next one per board. The caller has already checked the boards.
+ */
+export async function upcomingSchedules(ctx, projectKeys, now = Date.now()) {
+  const pages = await Promise.all(
+    Array.from({ length: Math.ceil(projectKeys.length / BOARDS_PER_SCHEDULES_QUERY) }, (_, i) =>
+      projectKeys.slice(i * BOARDS_PER_SCHEDULES_QUERY, (i + 1) * BOARDS_PER_SCHEDULES_QUERY),
+    ).map((part) =>
+      ctx.store.query("schedules", {
+        where: [{ field: "project_id", op: "in", value: part }],
+        limit: part.length * MAX_SCHEDULES,
+      }),
+    ),
+  );
+  const runs = pages
+    .flatMap((p) => p.rows)
+    .filter((r) => r.enabled && r.next_due_at)
+    .map((r) => {
+      const v = scheduleView(r, now);
+      return {
+        schedule_id: v.schedule_id,
+        project_id: v.project_id,
+        title: v.title,
+        priority: v.priority,
+        cron: v.cron,
+        tz: v.tz,
+        // A schedule with a check may find nothing to do and file nothing; worth saying beside it.
+        checked: !!v.check,
+        next_due_at: v.next_due_at,
+        last_fired_at: v.last_fired_at,
+      };
+    })
+    .sort((a, b) => a.next_due_at - b.next_due_at);
+  const next = {};
+  for (const r of runs) next[r.project_id] ||= { at: r.next_due_at, title: r.title, schedule_id: r.schedule_id };
+  return { schedules: runs.slice(0, UPCOMING_SHOWN), total: runs.length, next };
+}
+
 /**
  * `POST /schedules/history` — the duties one schedule has filed, newest first.
  *

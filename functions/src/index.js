@@ -26,7 +26,7 @@ import { identify } from "./identity.js";
 import { makePublisher, liveToken } from "./live.js";
 import { noteTokenUse, createToken, listTokens, revokeToken, updateToken } from "./tokens.js";
 import { setWebhook, testWebhook, withWebhooks } from "./webhooks.js";
-import { openBoard, createProject, listProjects, listRunners, renameProject, deleteProject } from "./projects.js";
+import { openBoard, createProject, listProjects, listRunners, listUpcoming, renameProject, deleteProject } from "./projects.js";
 import { attachToDuty, listAttachments, deleteAttachment } from "./attachments.js";
 import {
   listDuties, listNotes, moveNote, createNote, processNote, clearNoteSuggestions, suggestDuty,
@@ -42,6 +42,7 @@ import {
   updateDuty,
   deleteDuty,
   sweepExpiredDuties,
+  sweepOldFinishes,
   listThread,
   getDuty,
   listChanges,
@@ -161,6 +162,7 @@ const ROUTES = {
   "/projects/create": createProject,
   "/projects/list": listProjects,
   "/projects/runners": listRunners,
+  "/projects/upcoming": listUpcoming,
   "/projects/rename": renameProject,
   "/projects/delete": deleteProject,
   "/projects/profile": updateProfile,
@@ -329,6 +331,8 @@ export default {
           return 0;
         });
         if (expired) console.log(`duties: removed ${expired} expired`);
+        // The boards page counts a fortnight of finishes; these are the ones past what it keeps.
+        await sweepOldFinishes(ctx, at).catch((err) => console.log("forgetting old finishes:", err && err.message));
         return json({ ok: true, ...ran, expired, at });
       } catch (err) {
         console.log("scheduled run:", err && err.message);

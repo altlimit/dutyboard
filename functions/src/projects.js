@@ -14,6 +14,7 @@ import { searchConfigured, unindexDuties } from "./searching.js";
 import { sharedBoards, sweepMembers, syncAccess } from "./members.js";
 import { isFolderBoard, mergeProfile, mergeRunner } from "./profile.js";
 import { rulesDuty, runnersOf, runnersOfBoards, sweepBoardMachines } from "./machines.js";
+import { upcomingSchedules } from "./schedules.js";
 
 const SWEEP_PAGE = 200;
 
@@ -124,12 +125,33 @@ const MAX_RUNNER_BOARDS = 150;
  * costs one refresh's worth of them.
  */
 export async function listRunners(ctx, body) {
+  const projects = await boardsAsked(ctx, body);
+  const runners = await runnersOfBoards(ctx, projects);
+  return { runners: Object.fromEntries(runners) };
+}
+
+/**
+ * `POST /projects/upcoming` — `{ project_ids }`. What the boards' schedules will file next, across
+ * all of them: the soonest runs, and each board's next one.
+ *
+ * A board's schedules were only to be found in its settings, one board at a time, and "what is
+ * about to happen" is a question about every board at once. The browser cannot read schedules
+ * itself (they are not in the row rules), so this answers it, with the same all-or-nothing check
+ * as `/projects/runners`.
+ */
+export async function listUpcoming(ctx, body) {
+  const projects = await boardsAsked(ctx, body);
+  return upcomingSchedules(ctx, projects.map((p) => p.key));
+}
+
+/** The boards a `{ project_ids }` request names, each one the caller owns or is on — or a refusal. */
+async function boardsAsked(ctx, body) {
   const caller = requireHuman(ctx.caller);
   if (!Array.isArray(body.project_ids)) throw badRequest("'project_ids' must be a list");
   const ids = [...new Set(body.project_ids.map(String))];
   if (ids.length > MAX_RUNNER_BOARDS) throw badRequest(`at most ${MAX_RUNNER_BOARDS} boards at once`);
   const found = ids.length ? await ctx.store.getMany("projects", ids) : new Map();
-  const projects = await Promise.all(
+  return Promise.all(
     ids.map(async (id) => {
       const p = found.get(id);
       if (!p) throw notFound(`project '${id}' not found`);
@@ -137,8 +159,6 @@ export async function listRunners(ctx, body) {
       return p;
     }),
   );
-  const runners = await runnersOfBoards(ctx, projects);
-  return { runners: Object.fromEntries(runners) };
 }
 
 /**
@@ -241,6 +261,7 @@ export async function deleteProject(ctx, body) {
     // Each holding the secret its token's deliveries were signed with.
     webhooks: await sweep(ctx, "webhooks", project.key),
     schedules: await sweep(ctx, "schedules", project.key),
+    finishes: await sweep(ctx, "finishes", project.key),
     // And everyone who was on it, with the board taken back out of their claims.
     members: await sweepMembers(ctx, project.key),
     // And every machine working it, each told so its daemon stops.

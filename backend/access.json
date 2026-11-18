@@ -114,6 +114,26 @@
               ]
             ]
           }
+        },
+        "finishes": {
+          "read": {
+            "any": [
+              [
+                {
+                  "field": "owner_uid",
+                  "op": "=",
+                  "value": "$auth.uid"
+                }
+              ],
+              [
+                {
+                  "field": "project_id",
+                  "op": "in",
+                  "value": "$auth.claims.boards"
+                }
+              ]
+            ]
+          }
         }
       }
     }

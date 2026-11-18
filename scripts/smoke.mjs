@@ -1962,6 +1962,7 @@ async function main() {
     "/board/profile": () => ({ project_id: projectId }),
     "/board/runners": () => ({ project_id: projectId }),
     "/projects/runners": () => ({ project_ids: [projectId] }),
+    "/projects/upcoming": () => ({ project_ids: [projectId] }),
     "/board/profile/propose": (d) => ({ duty_id: d, test_command: "no" }),
     "/board/rules": () => ({ project_id: projectId }),
     "/board/rules/set": () => ({ project_id: projectId, body: "no" }),

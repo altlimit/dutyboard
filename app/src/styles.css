@@ -297,22 +297,129 @@ input[aria-invalid="true"], textarea[aria-invalid="true"] { border-color: var(--
   color: var(--text-dim);
 }
 
-/* --- board cards --------------------------------------------------------- */
-/* The boards page: one card per board, the whole card a link. It fills the width it is
-   given rather than sitting in a column of full-width rows, which on a wide window is a
-   list of six-word sentences stretched across 1200px. */
-.cards {
+/* --- the dashboard -------------------------------------------------------- */
+/* Four tiles across the top: a number each, what it counts above it, what it means below. Two
+   across on a phone. Lists here zero only their sides and bottom: `margin: 0` has the same
+   specificity as `.stack > * + *` and comes later, so it would win and glue the list to whatever
+   is above it. The top belongs to the stack. */
+.tiles {
   list-style: none;
-  /* NOT `margin: 0`. That has the same specificity as `.stack > * + *` and comes later in
-     this file, so it wins — and the list ends up flush against whatever is above it. Only
-     the sides and the bottom are zeroed; the top belongs to the stack. */
   margin-inline: 0;
   margin-bottom: 0;
   padding: 0;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 0.75rem;
 }
+.tile {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 0.85rem 1rem;
+}
+/* Something is waiting on you: the tile says so in its words, and in a rule down its edge. */
+.tile--attention { border-left: 3px solid var(--warn); }
+.tile__label { font-size: 0.85rem; color: var(--text-dim); font-weight: 560; }
+.tile__value { font-size: 2rem; font-weight: 650; line-height: 1.15; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.tile__foot { font-size: 0.8rem; color: var(--text-dim); min-height: 1.2em; }
+.tile--trend { position: relative; }
+.trend { margin-top: 0.4rem; }
+.trend__svg { display: block; width: 100%; height: 2rem; overflow: visible; }
+.trend__hit { fill: transparent; }
+.trend__bar { fill: var(--border-strong); }
+.trend__bar--today { fill: var(--accent); }
+.trend__day:hover .trend__bar { fill: var(--text-dim); }
+.trend__day:hover .trend__bar--today { fill: var(--accent); }
+
+/* Needs you, wide, beside a narrower column of what is running and what comes next. One column
+   below 900px, questions first. */
+.overview {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  gap: 0.75rem;
+  align-items: start;
+}
+.overview__side { display: grid; gap: 0.75rem; min-width: 0; }
+.overview .panel { min-width: 0; }
+.feed__count { font-size: 0.85rem; }
+/* Rows inside a panel rather than a card each: the panel is the card. */
+.feed { list-style: none; margin: 0; padding: 0; }
+.feed > li + li { border-top: 1px solid var(--border); }
+.feed__item {
+  display: block;
+  padding: 0.6rem 0.5rem;
+  margin-inline: -0.5rem;
+  border-radius: 8px;
+  text-decoration: none;
+  color: inherit;
+}
+.feed__item:hover { background: var(--surface-2); }
+.feed__item .duty__title { margin-bottom: 0.2rem; }
+.feed__note { margin-top: 0.3rem; }
+/* A scheduled run leads with when, in a column of its own, so the times line up down the list. */
+.feed__item--row { display: flex; gap: 0.75rem; align-items: baseline; }
+.feed__when { flex: 0 0 5.5rem; display: flex; flex-direction: column; font-variant-numeric: tabular-nums; }
+.feed__in { font-weight: 600; font-size: 0.9rem; }
+.feed__at { font-size: 0.8rem; color: var(--text-dim); }
+.feed__what { min-width: 0; }
+.feed__empty { color: var(--text-dim); font-size: 0.9rem; margin: 0.25rem 0 0; }
+.feed__more { color: var(--text-dim); font-size: 0.85rem; margin: 0.5rem 0 0; }
+
+/* The boards, as a table: the same columns for every board, numbers right-aligned to compare. */
+.btable-wrap {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+.btable th, .btable td { padding: 0.6rem 0.75rem; vertical-align: middle; }
+.btable thead th { background: var(--surface-2); font-size: 0.8rem; white-space: nowrap; }
+.btable tbody tr:last-child > * { border-bottom: 0; }
+.btable__row { cursor: pointer; }
+.btable__row:hover { background: var(--surface-2); }
+.btable__board { font-weight: 400; min-width: 0; }
+.btable__name { display: block; font-weight: 600; color: var(--text); text-decoration: none; overflow-wrap: anywhere; }
+.btable__name:hover { text-decoration: underline; }
+.btable__sub { display: block; font-size: 0.8rem; color: var(--text-dim); font-weight: 400; }
+.btable__n { text-align: right; width: 6.5rem; font-variant-numeric: tabular-nums; }
+.btable__dash { color: var(--text-dim); }
+.btable__machine { white-space: nowrap; }
+@media (min-width: 701px) { .btable td.btable__machine { padding-left: 1.5rem; } }
+.btable__next, .btable__when { white-space: nowrap; font-size: 0.9rem; }
+.btable__when { color: var(--text-dim); }
+/* A board with nothing open steps back, so the rows with work in them are what the eye lands on. */
+.btable__row--idle .btable__name { color: var(--text-dim); }
+.quiet .btable-wrap { box-shadow: none; }
+
+@media (max-width: 1079px) {
+  .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 899px) {
+  .overview { grid-template-columns: minmax(0, 1fr); }
+}
+/* A phone: each board a short block — its name, then only the numbers it has, each with its label. */
+@media (max-width: 700px) {
+  .tile__value { font-size: 1.6rem; }
+  .btable thead { display: none; }
+  .btable, .btable tbody { display: block; }
+  .btable__row { display: flex; flex-wrap: wrap; gap: 0.3rem 0.9rem; padding: 0.7rem 0.85rem; border-bottom: 1px solid var(--border); }
+  .btable tbody tr:last-child { border-bottom: 0; }
+  .btable .btable__row > * { display: block; padding: 0; border: 0; width: auto; text-align: left; font-size: 0.85rem; }
+  .btable__row > .btable__board { flex: 1 1 100%; font-size: 1rem; }
+  .btable__row > td[data-label]::before { content: attr(data-label) " "; color: var(--text-dim); }
+  .btable__row > .btable__machine::before, .btable__row > .btable__when::before { content: none; }
+  .btable__row > .btable__n--none { display: none; }
+  .btable__next .btable__sub { display: inline; }
+}
+
+/* --- board cards --------------------------------------------------------- */
+/* Search results on a board are drawn as these: the whole card a link. */
 .boardcard {
   display: flex;
   flex-direction: column;
@@ -334,18 +441,6 @@ input[aria-invalid="true"], textarea[aria-invalid="true"] { border-color: var(--
 /* A board with nothing open steps back, so the ones with work in them are what the eye lands on. */
 .boardcard--idle { box-shadow: none; background: transparent; }
 .boardcard--idle .boardcard__name { color: var(--text-dim); }
-/* The page's "Needs you" list: questions from every board, one per row, in the same card the
-   board's own column uses. Two across on a wide window, one on a phone. */
-.asks {
-  list-style: none;
-  margin-inline: 0;
-  margin-bottom: 0;
-  padding: 0;
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 380px), 1fr));
-  gap: 0.6rem;
-}
-.asks > li { min-width: 0; }
 .quiet > summary { margin-bottom: 0.75rem; }
 .quiet > summary .muted { font-weight: 400; }
 

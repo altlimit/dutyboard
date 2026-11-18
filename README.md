@@ -999,6 +999,7 @@ only when you first try it hosted.
 | `/board/reindex` | human | Index work finished before search was turned on. Resumable. |
 | `/board/runners` | both | The machines working the board. A token sees each one's `agent_prefix`, name and whether it is online — what it needs for `reserved_for`. |
 | `/projects/runners` | human | `/board/runners` for many boards at once, keyed by board — what the boards page uses to say which have a machine on them. |
+| `/projects/upcoming` | human | The next runs of every enabled schedule across many boards — the soonest twelve, the total, and each board's next — for the boards page's "Up next". |
 | `/board/members/list` | human | The owner and everyone else on a board. |
 | `/board/members/add` · `/board/members/remove` | owner | Share a board by email, or stop sharing it. |
 | `/board/members/agents` | owner | Let a member link their own machines to the board, or stop them. |

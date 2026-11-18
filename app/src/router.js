@@ -2,7 +2,7 @@ import { createRouter, createWebHashHistory } from "vue-router";
 import { ensureAccess, isSignedIn, onSessionChange } from "./lib/altengine.js";
 
 const routes = [
-  { path: "/", name: "boards", component: () => import("./views/Boards.vue"), meta: { title: "Your boards" } },
+  { path: "/", name: "boards", component: () => import("./views/Boards.vue"), meta: { title: "Dashboard" } },
   { path: "/signin", name: "signin", component: () => import("./views/SignIn.vue"), meta: { title: "Sign in", public: true } },
   // Public, and it has to be: it configures the auth instance that signing in would use.
   { path: "/connect", name: "connect", component: () => import("./views/Connect.vue"), meta: { title: "Connect your altengine", public: true } },

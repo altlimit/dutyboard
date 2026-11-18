@@ -143,4 +143,23 @@ export function ago(ms) {
   return new Date(ms).toLocaleDateString();
 }
 
+/** `ago`'s other half, for what has not happened yet: "in 40m", "in 3h", "in 2d". */
+export function until(ms, now = Date.now()) {
+  if (!ms) return "";
+  const secs = Math.round((ms - now) / 1000);
+  // Due, or a minute late: a tick that has not run yet is still "now" to the person reading.
+  if (secs < 60) return "due now";
+  const mins = Math.round(secs / 60);
+  if (mins < 60) return `in ${mins}m`;
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return `in ${hours}h`;
+  return `in ${Math.round(hours / 24)}d`;
+}
+
+/** A time this week as the reader's own clock shows it: "Tue 09:00". */
+export function localWhen(ms) {
+  if (!ms) return "";
+  return new Intl.DateTimeFormat(undefined, { weekday: "short", hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(ms));
+}
+
 export const exactTime = (ms) => (ms ? new Date(ms).toLocaleString() : "");
