@@ -154,8 +154,9 @@ A → B only. Discover grants with `board_links`; call `board_call` with the tar
 transitively, change the runner's workspace, or authorize human-only approvals and settings.
 Submit-only integration tokens cannot use board links.
 
-**People stay in control.** The boards overview gathers Needs you items across owned and shared
-boards and shows work counts and machine readiness. Board members can cancel an unfinished duty
+**People stay in control.** The dashboard gathers Needs you items across owned and shared
+boards, shows what is running and which scheduled runs come next, counts finished work per day,
+and lists every board's work counts, machine readiness and next run. Board members can cancel an unfinished duty
 with a reason; the machine stops its session and removes its workspace. A finished duty can be
 sent back with a note explaining what still needs doing.
 
