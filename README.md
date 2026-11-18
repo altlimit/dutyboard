@@ -116,9 +116,11 @@ Run it again whenever you like — after `alt update altlimit/dutyboard`, say: w
 
 ### On Windows, from a window
 
-[DutyBoard-Desktop.exe](https://github.com/altlimit/dutyboard/releases/latest/download/DutyBoard-Desktop.exe)
-is the same program with a window where the terminal was. Download it and open it — there is no
-installer, and nothing to install first.
+[DutyBoard-Setup.exe](https://github.com/altlimit/dutyboard/releases/latest/download/DutyBoard-Setup.exe)
+installs DutyBoard for the desktop: the same program, with a window where the terminal was. It
+installs for you alone, with no administrator, and is in the Start menu and in Windows' list of
+installed apps, which is where it is removed from. Removing it leaves what it kept — its home,
+`%LOCALAPPDATA%\DutyBoard` — alone.
 
 - **Set up my own DutyBoard** asks for the altengine key, shows provisioning as it happens, and sends
   you to your console to sign up.
@@ -137,10 +139,15 @@ installer, and nothing to install first.
 - When the app carries a later version than your DutyBoard, and this machine holds an altengine key,
   it offers to upgrade it.
 
-It is one signed file, and it is `dutyboard` too: given any argument — `--stop`, `--version` — it is
-the command line. There is no installer and no updater yet: it starts from wherever the file is, so
-keep it somewhere it can stay, and download the new one to update. macOS and Linux use the command
-above.
+**It keeps itself up to date.** A few times a day it looks for a newer release, downloads it, and
+checks it twice: its SHA-256 against the release's, and its signature against its own — an update is
+installed only if it is signed by whoever signed the app that is running. It installs it when no
+agent is working, since installing restarts the app, or at once when you say so.
+
+The app is `dutyboard` too: given any argument — `--stop`, `--version` — it is the command line.
+[DutyBoard-Desktop.exe](https://github.com/altlimit/dutyboard/releases/latest/download/DutyBoard-Desktop.exe)
+is the app by itself, for running without installing; it updates itself the same way, in place.
+macOS and Linux use the command above.
 
 A home other than the default (`$DUTYBOARD_HOME`) keeps its secrets under a name of its own in the
 keyring, so two homes on one account do not share a machine key.
@@ -307,7 +314,7 @@ provisioning, the console and the marketing site.
 | `npm run deploy:site` | Uploads `site/public` to the static instance behind www.dutyboard.com and makes it live. |
 | `npm run demo` | Fills a board with a plausible afternoon's work, and prints the sign-in. |
 | `npm run smoke` | The whole state machine end to end, plus a cross-tenant matrix over every endpoint. |
-| `node cli/desktop/build.mjs` | The desktop app, `cli/desktop/dist/DutyBoard-Desktop.exe`: cross-compiled for Windows from any machine. Needs Go 1.26. |
+| `node cli/desktop/build.mjs` | The desktop app, `cli/desktop/dist/DutyBoard-Desktop.exe`: cross-compiled for Windows from any machine. Needs Go 1.26. Its installer is built at a release, from [`installer.nsi`](cli/desktop/build/windows/installer.nsi). |
 | `npm run smoke:runner` | A real `dutyboard` daemon working a board on the emulator, with a stand-in agent (as Claude Code, Codex and Cursor). |
 | `node scripts/webpush-check.mjs` | Web Push encryption and signing, checked against an independent receiver. Runs in CI. |
 
