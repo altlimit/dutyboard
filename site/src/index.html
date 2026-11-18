@@ -127,6 +127,15 @@ dutyboard</code></pre>
       asks about what is not done.
     </p>
 
+    <p id="desktop">
+      <strong>On Windows, there is an app instead.</strong>
+      <a href="{{$site.repoUrl}}/releases/latest/download/DutyBoard-Desktop.exe">Download DutyBoard for the desktop</a>
+      and open it: no terminal and nothing to install first. It sets up your own DutyBoard or joins one
+      you were invited to, shows you the code to approve, and then runs your agents from the system
+      tray. Closing its window leaves them working, and it can start by itself when you sign in. It is
+      the same program as the command above, with a window where the terminal was.
+    </p>
+
     <p>
       Then pick which boards it works: it keeps its own clone of each board's repository, so your
       checkout is never touched. Its
@@ -457,6 +466,12 @@ dutyboard</code></pre>
       Run it again after <code>alt update altlimit/dutyboard</code> and it offers to upgrade your DutyBoard.
       To set up or upgrade without putting this machine to work, run <code>dutyboard --provision-only</code>
       instead — and connect any agent over MCP.
+    </p>
+
+    <p>
+      On Windows, <a href="#desktop">the desktop app</a> does all three steps in a window: paste the key,
+      watch your DutyBoard being made, and sign up. When a later version of the app is able to upgrade
+      your DutyBoard, it says so and does it at a click.
     </p>
 
     <div class="cards">

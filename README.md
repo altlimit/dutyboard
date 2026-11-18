@@ -39,6 +39,7 @@ site/        the marketing site at www.dutyboard.com     (sitegen)
 functions/   the state machine, one deployed module      (altengine functions)
 backend/     instance configuration the provisioner applies
 cli/         `dutyboard`: the provisioner, and the runner that works boards on a machine (Go)
+cli/desktop/ the same program as a Windows app that lives in the system tray (Wails 3, Vue 3 + TypeScript)
 scripts/     local provisioning, site deploy, the demo seeder and the end-to-end smoke tests
 ```
 
@@ -112,6 +113,37 @@ That is the whole setup, as a checklist that asks only about what is not done ye
    ([below](#getting-a-machine-ready)).
 
 Run it again whenever you like — after `alt update altlimit/dutyboard`, say: what is done is a ✓.
+
+### On Windows, from a window
+
+[DutyBoard-Desktop.exe](https://github.com/altlimit/dutyboard/releases/latest/download/DutyBoard-Desktop.exe)
+is the same program with a window where the terminal was. Download it and open it — there is no
+installer, and nothing to install first.
+
+- **Set up my own DutyBoard** asks for the altengine key, shows provisioning as it happens, and sends
+  you to your console to sign up.
+- **Join a DutyBoard** asks for its address: the console's, the one you open in your browser, or the
+  API address from the console's Machines page.
+- Either way it asks which folder this machine keeps its projects in — each board's repository is
+  cloned there — then shows the code to approve in the console. Once you have, this machine starts
+  working. The app stays in the system tray; closing its window does not stop it, and Quit does.
+- The projects folder can be changed afterwards, from the app. Nothing is moved: boards are cloned
+  again in the new folder as they are next worked.
+- **Start when I sign in** starts it in the tray by itself. It is offered when you connect, and can be
+  turned on or off from the app. Turning it on retires what a command-line install had set to start
+  `dutyboard`, so the machine is started by one of them, not both.
+- On a machine that already runs `dutyboard` from a command-line install, the app says so and offers
+  to run it instead.
+- When the app carries a later version than your DutyBoard, and this machine holds an altengine key,
+  it offers to upgrade it.
+
+It is one signed file, and it is `dutyboard` too: given any argument — `--stop`, `--version` — it is
+the command line. There is no installer and no updater yet: it starts from wherever the file is, so
+keep it somewhere it can stay, and download the new one to update. macOS and Linux use the command
+above.
+
+A home other than the default (`$DUTYBOARD_HOME`) keeps its secrets under a name of its own in the
+keyring, so two homes on one account do not share a machine key.
 
 To set up or upgrade DutyBoard without putting the machine you run it on to work — from CI, or for an
 agent following [llms.txt](https://www.dutyboard.com/llms.txt) — provision only:
@@ -275,6 +307,7 @@ provisioning, the console and the marketing site.
 | `npm run deploy:site` | Uploads `site/public` to the static instance behind www.dutyboard.com and makes it live. |
 | `npm run demo` | Fills a board with a plausible afternoon's work, and prints the sign-in. |
 | `npm run smoke` | The whole state machine end to end, plus a cross-tenant matrix over every endpoint. |
+| `node cli/desktop/build.mjs` | The desktop app, `cli/desktop/dist/DutyBoard-Desktop.exe`: cross-compiled for Windows from any machine. Needs Go 1.26. |
 | `npm run smoke:runner` | A real `dutyboard` daemon working a board on the emulator, with a stand-in agent (as Claude Code, Codex and Cursor). |
 | `node scripts/webpush-check.mjs` | Web Push encryption and signing, checked against an independent receiver. Runs in CI. |
 
