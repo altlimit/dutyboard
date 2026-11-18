@@ -53,6 +53,9 @@ type SetupDefaults struct {
 	Server      string `json:"server"`   // a DutyBoard already set up here and not yet paired with
 	Console     string `json:"console"`  // and its console
 	Projects    string `json:"projects"` // the folder this machine would keep its boards' repositories in
+	// Autostart is whether starting at sign-in is offered ticked. It is for an ordinary install; a home
+	// somewhere else is somebody trying something, and should not be left starting by itself.
+	Autostart bool `json:"autostart"`
 }
 
 // Provisioned is a DutyBoard that now exists.
@@ -65,8 +68,9 @@ type Provisioned struct {
 // Setup is the first run: making a DutyBoard, and connecting this machine to one. It is the terminal
 // checklist's own steps (cli/internal/app), with a window where the terminal was.
 type Setup struct {
-	h   *host.Host
-	app *application.App
+	h       *host.Host
+	app     *application.App
+	machine *Machine
 
 	mu      sync.Mutex
 	seq     int
@@ -75,7 +79,7 @@ type Setup struct {
 
 // Defaults is what the first screens start from.
 func (s *Setup) Defaults() SetupDefaults {
-	d := SetupDefaults{MachineName: app.DefaultMachineName(), Hosted: altengine.DefaultURL}
+	d := SetupDefaults{MachineName: app.DefaultMachineName(), Hosted: altengine.DefaultURL, Autostart: state.IsDefaultHome()}
 	if cfg, err := state.LoadConfig(); err == nil {
 		d.Server, d.Console, d.Projects = cfg.Server, cfg.Console, daemon.ProjectsRoot(cfg)
 	}
@@ -168,11 +172,12 @@ func (s *Setup) Upgrade(ctx context.Context) (*Provisioned, error) {
 	return &Provisioned{Server: res.APIURL, Console: res.ConsoleURL, Version: res.Version}, nil
 }
 
-// Join connects this machine to the DutyBoard at server, and starts it working. The code to approve
-// arrives as a setup:pairing event, and the call returns — with the name of whoever approved it —
-// once someone has. Cancelling the call gives up waiting. projects is the folder its boards'
-// repositories will be kept in; empty leaves it as it is.
-func (s *Setup) Join(ctx context.Context, server, name, projects string) (string, error) {
+// Join connects this machine to a DutyBoard, and starts it working. address is the DutyBoard's API
+// address or its console's. The code to approve arrives as a setup:pairing event, and the call
+// returns — with the name of whoever approved it — once someone has. Cancelling the call gives up
+// waiting. projects is the folder its boards' repositories will be kept in, empty to leave it as it
+// is; autostart is whether the app should then start by itself at sign-in.
+func (s *Setup) Join(ctx context.Context, address, name, projects string, autostart bool) (string, error) {
 	cfg, err := state.LoadConfig()
 	if err != nil {
 		return "", err
@@ -185,19 +190,28 @@ func (s *Setup) Join(ctx context.Context, server, name, projects string) (string
 		}
 		cfg.ProjectsRoot = folder // saved by Pair, with the rest of what pairing learns
 	}
+	server, err := app.ResolveBoard(ctx, address)
+	if errors.Is(err, app.ErrNotBoard) {
+		// The terminal's wording ends in what the HTTP client made of the answer, which helps someone
+		// reading a log and nobody reading a form.
+		return "", errors.New("That address did not answer as a DutyBoard. Use your console's address, or the API address on its Machines page, and check that this machine can reach it.")
+	}
+	if err != nil {
+		return "", err
+	}
 	paired, err := app.Pair(ctx, cfg, server, name, func(code, link string, minutes int) {
 		s.app.Event.Emit("setup:pairing", SetupPairing{Code: code, Link: link, Minutes: minutes})
 		if link != "" {
 			_ = s.app.Browser.OpenURL(link)
 		}
 	})
-	if errors.Is(err, app.ErrNotBoard) {
-		// The terminal's wording ends in what the HTTP client made of the answer, which helps someone
-		// reading a log and nobody reading a form.
-		return "", errors.New("That address did not answer as a DutyBoard. Check it against the API address on the console's Machines page, and that this machine can reach it.")
-	}
 	if err != nil {
 		return "", err
+	}
+	if autostart {
+		if err := s.machine.SetAutostart(true); err != nil {
+			s.h.Note("could not set DutyBoard to start when you sign in: " + err.Error())
+		}
 	}
 	go s.h.Start()
 	return paired.OwnerName, nil

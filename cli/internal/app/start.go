@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 
+	"encoding/json"
 	"github.com/altlimit/dutyboard/cli/internal/board"
 	"github.com/altlimit/dutyboard/cli/internal/daemon"
 	"github.com/altlimit/dutyboard/cli/internal/localmcp"
@@ -20,6 +21,10 @@ import (
 	"github.com/altlimit/dutyboard/cli/internal/state"
 	"github.com/altlimit/dutyboard/cli/internal/ui"
 	"github.com/altlimit/dutyboard/cli/internal/worktree"
+	"io"
+	"net/http"
+	"net/url"
+	"time"
 )
 
 // Start is `dutyboard` with no job flag. Run by a person, it is the checklist (setup.go): the
@@ -274,6 +279,67 @@ func boardAt(ctx context.Context, server string) (*provision.HealthInfo, error) 
 		return nil, fmt.Errorf("the DutyBoard at %s (v%s) is too old to pair machines — upgrade it with `dutyboard --provision-only`", server, health.Version)
 	}
 	return health, nil
+}
+
+// ResolveBoard turns the address a person was given into a DutyBoard API address. That is the API
+// address itself, or the console's — the one people actually have, since it is what they open — whose
+// config.js names the API it was deployed next to. A console served by a dev server names none, and
+// then there is nothing to find.
+func ResolveBoard(ctx context.Context, address string) (string, error) {
+	address = strings.TrimSpace(address)
+	if _, err := boardAt(ctx, address); err == nil {
+		return strings.TrimRight(address, "/"), nil
+	} else if api, ok := consoleAPI(ctx, address); ok {
+		if _, err := boardAt(ctx, api); err != nil {
+			return "", err
+		}
+		return api, nil
+	} else {
+		return "", err
+	}
+}
+
+var consoleConfig = regexp.MustCompile(`(?s)window\.DUTYBOARD_CONFIG\s*=\s*(\{.*\})\s*;`)
+
+// consoleAPI reads the API address out of the config.js next to the console at address.
+func consoleAPI(ctx context.Context, address string) (string, bool) {
+	u, err := url.Parse(address)
+	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
+		return "", false
+	}
+	// Whatever page of the console was copied — its routes are after the # — config.js is beside index.html.
+	u.Fragment, u.RawQuery = "", ""
+	u.Path = strings.TrimSuffix(u.Path, "index.html")
+	if !strings.HasSuffix(u.Path, "/") {
+		u.Path += "/"
+	}
+	u.Path += "config.js"
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	if err != nil {
+		return "", false
+	}
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", false
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		return "", false
+	}
+	body, _ := io.ReadAll(io.LimitReader(res.Body, 1<<16))
+	m := consoleConfig.FindSubmatch(body)
+	if m == nil {
+		return "", false
+	}
+	var cfg struct {
+		API string `json:"api"`
+	}
+	if json.Unmarshal(m[1], &cfg) != nil || cfg.API == "" {
+		return "", false
+	}
+	return strings.TrimRight(cfg.API, "/"), true
 }
 
 // DefaultMachineName is what this machine is called when nobody names it: its hostname.

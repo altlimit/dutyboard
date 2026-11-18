@@ -3,6 +3,7 @@ package state
 import (
 	"errors"
 	"os"
+	"path/filepath"
 	"sync"
 
 	"github.com/zalando/go-keyring"
@@ -17,7 +18,34 @@ const (
 	DeployKey = "altengine-deploy-key"
 )
 
-const keyringService = "dutyboard"
+// legacyKeyring is the keyring service every home's secrets were once kept under, and the default
+// home's still are.
+const legacyKeyring = "dutyboard"
+
+// keyringService is the name this home's secrets are kept under in the OS keyring.
+//
+// A keyring belongs to the person, not to a folder, so one name for every home made two homes on one
+// account share a machine key: a second home, pointed at another DutyBoard, read the first one's key,
+// was refused with it, and — being told it was revoked — deleted it. The default home keeps the plain
+// name, so nothing changes for an ordinary install; any other home gets a name of its own.
+func keyringService() string {
+	if IsDefaultHome() {
+		return legacyKeyring
+	}
+	return legacyKeyring + "@" + canonical(Home())
+}
+
+// inheritsLegacy reports whether a secret kept under the plain name can only be this home's: this
+// is not the default home, and nothing has ever been set up in the default one. That is a home that
+// was already somewhere else before homes had keyring names of their own, and it must go on finding
+// its secrets after the upgrade that gave them one.
+func inheritsLegacy() bool {
+	if IsDefaultHome() {
+		return false
+	}
+	_, err := os.Stat(filepath.Join(defaultHome(), "config.json"))
+	return errors.Is(err, os.ErrNotExist)
+}
 
 var fileMu sync.Mutex
 
@@ -29,7 +57,7 @@ var ErrNoCredential = errors.New("not stored")
 // machines this runs on.
 func SetCredential(name, value string) error {
 	if os.Getenv("DUTYBOARD_NO_KEYRING") == "" {
-		if err := keyring.Set(keyringService, name, value); err == nil {
+		if err := keyring.Set(keyringService(), name, value); err == nil {
 			// A stale copy in the file would outlive a rotation in the keyring.
 			_ = deleteFileCredential(name)
 			return nil
@@ -41,8 +69,15 @@ func SetCredential(name, value string) error {
 // Credential reads a stored secret.
 func Credential(name string) (string, error) {
 	if os.Getenv("DUTYBOARD_NO_KEYRING") == "" {
-		if v, err := keyring.Get(keyringService, name); err == nil {
+		svc := keyringService()
+		if v, err := keyring.Get(svc, name); err == nil {
 			return v, nil
+		}
+		if inheritsLegacy() {
+			if v, err := keyring.Get(legacyKeyring, name); err == nil {
+				_ = keyring.Set(svc, name, v) // under its own name from now on
+				return v, nil
+			}
 		}
 	}
 	creds, err := fileCredentials()
@@ -57,7 +92,11 @@ func Credential(name string) (string, error) {
 
 // DeleteCredential removes a secret from wherever it is.
 func DeleteCredential(name string) error {
-	_ = keyring.Delete(keyringService, name)
+	_ = keyring.Delete(keyringService(), name)
+	if inheritsLegacy() {
+		// Or the next read would find it under the old name and bring it back.
+		_ = keyring.Delete(legacyKeyring, name)
+	}
 	return deleteFileCredential(name)
 }
 

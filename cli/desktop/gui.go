@@ -1,10 +1,13 @@
 package main
 
 import (
+	"crypto/sha256"
 	"embed"
+	"encoding/hex"
 	"errors"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
@@ -12,6 +15,7 @@ import (
 
 	"github.com/altlimit/dutyboard/cli/desktop/host"
 	"github.com/altlimit/dutyboard/cli/internal/app"
+	"github.com/altlimit/dutyboard/cli/internal/service"
 	"github.com/altlimit/dutyboard/cli/internal/state"
 )
 
@@ -55,6 +59,42 @@ func (m *Machine) Resume() { m.h.Start() }
 // SetProjects changes the folder this machine keeps its boards' repositories in.
 func (m *Machine) SetProjects(path string) error { return m.h.SetProjects(path) }
 
+// autostartID names this home's sign-in entry. The default home's is the app's own name; any other
+// home gets one of its own, so that two homes do not take turns overwriting one entry.
+func autostartID() string {
+	if state.IsDefaultHome() {
+		return "DutyBoard"
+	}
+	sum := sha256.Sum256([]byte(strings.ToLower(filepath.Clean(state.Home()))))
+	return "DutyBoard-" + hex.EncodeToString(sum[:4])
+}
+
+// Autostart reports whether the app starts, in the tray, when the person signs in.
+func (m *Machine) Autostart() bool {
+	on, err := m.app.Autostart.IsEnabled()
+	return err == nil && on
+}
+
+// SetAutostart turns starting at sign-in on or off. On, it also retires what a command-line install
+// left to start `dutyboard` at sign-in: two things starting the same machine would only have the
+// second find the first already there.
+func (m *Machine) SetAutostart(on bool) error {
+	if !on {
+		return m.app.Autostart.Disable()
+	}
+	args := []string{"--tray"}
+	if !state.IsDefaultHome() {
+		args = append(args, "--home", state.Home())
+	}
+	if err := m.app.Autostart.EnableWithOptions(application.AutostartOptions{Identifier: autostartID(), Arguments: args}); err != nil {
+		return err
+	}
+	if state.IsDefaultHome() && service.Installed() {
+		_ = service.Uninstall()
+	}
+	return nil
+}
+
 // TakeOver stops the dutyboard a CLI install left running, and runs it here instead.
 func (m *Machine) TakeOver() error { return m.h.TakeOver() }
 
@@ -73,7 +113,7 @@ func (m *Machine) Quit() { m.app.Quit() }
 func runApp(startHidden bool, consoleErr error) int {
 	h := host.New(app.Version)
 	machine := &Machine{h: h}
-	setup := &Setup{h: h}
+	setup := &Setup{h: h, machine: machine}
 
 	var window *application.WebviewWindow
 	show := func() {
@@ -122,8 +162,8 @@ func runApp(startHidden bool, consoleErr error) int {
 	window = a.Window.NewWithOptions(application.WebviewWindowOptions{
 		Title:            "DutyBoard",
 		Name:             "main",
-		Width:            900,
-		Height:           620,
+		Width:            920,
+		Height:           760,
 		Hidden:           startHidden,
 		BackgroundColour: application.NewRGB(15, 17, 21),
 		URL:              "/",
@@ -166,7 +206,7 @@ func runApp(startHidden bool, consoleErr error) int {
 	}
 
 	if consoleErr != nil {
-		h.OnLog("could not hide the consoles of the programs this starts: " + consoleErr.Error())
+		h.Note("could not hide the consoles of the programs this starts: " + consoleErr.Error())
 	}
 	go h.Start()
 

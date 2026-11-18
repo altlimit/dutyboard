@@ -35,6 +35,13 @@ async function changeProjects() {
   if (chosen && chosen !== status.value.projects) await Machine.SetProjects(chosen);
 }
 
+// Whether the app starts, in the tray, when the person signs in.
+const autostart = ref(false);
+async function setAutostart(on: boolean) {
+  await Machine.SetAutostart(on);
+  autostart.value = await Machine.Autostart();
+}
+
 function upgradeDone(result: unknown) {
   upgraded.value = (result as Provisioned).version;
   upgrading.value = false;
@@ -104,6 +111,7 @@ onMounted(() => {
   );
   readLog();
   checkDeployment();
+  Machine.Autostart().then((on) => (autostart.value = on));
 });
 onUnmounted(() => {
   off.forEach((f) => f());
@@ -167,6 +175,14 @@ onUnmounted(() => {
           <button id="change-projects" class="link" :disabled="busy" @click="act(changeProjects)">Change…</button>
           <span class="hint">Each board's repository is cloned here. Changing it restarts this machine; what is in the old folder stays there.</span>
         </dd>
+        <dt>Starting</dt>
+        <dd>
+          <label class="check" for="autostart">
+            <input id="autostart" type="checkbox" :checked="autostart" :disabled="busy" @change="act(() => setAutostart(($event.target as HTMLInputElement).checked))" />
+            <span>Start when I sign in, in the system tray</span>
+          </label>
+          <span class="hint">It starts from where the app is now, so keep the file where it is.</span>
+        </dd>
       </dl>
 
       <div class="actions">
@@ -204,7 +220,9 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: 1rem;
-  height: 100vh;
+  /* At least the window, and more when there is more to say: the log keeps a readable height and the
+     page scrolls, rather than the log being squeezed to a line. */
+  min-height: 100vh;
   padding: 1.25rem;
   box-sizing: border-box;
 }
@@ -232,6 +250,20 @@ onUnmounted(() => {
 .facts dt {
   font-weight: 550;
   font-size: 0.9rem;
+}
+.facts dd + dt {
+  margin-top: 0.6rem;
+}
+.check {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  font-weight: 400;
+  margin: 0;
+}
+.check input {
+  width: auto;
+  flex: none;
 }
 .facts dd {
   margin: 0.15rem 0 0;
@@ -267,7 +299,7 @@ onUnmounted(() => {
 }
 .log {
   flex: 1;
-  min-height: 0;
+  min-height: 13rem;
   display: flex;
   flex-direction: column;
 }
@@ -275,8 +307,9 @@ onUnmounted(() => {
   font-size: 1rem;
 }
 pre {
-  flex: 1;
-  min-height: 0;
+  flex: 1 1 8rem;
+  min-height: 8rem;
+  max-height: 60vh;
   overflow: auto;
   margin: 0;
   padding: 0.75rem;

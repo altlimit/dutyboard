@@ -45,6 +45,9 @@ type Snapshot struct {
 	Since    int64  `json:"since"` // when it entered this state, unix seconds
 }
 
+// Revoked is what a machine is told when its DutyBoard no longer knows it.
+const Revoked = "This machine was removed from its DutyBoard in the console. Connect it again to carry on."
+
 const keepLines = 500
 
 // Host owns one daemon at a time.
@@ -198,9 +201,12 @@ func (h *Host) Start() {
 		paused := h.paused
 		h.mu.Unlock()
 		close(done)
+		// Revoked is said two ways. A poll that is refused returns ErrRevoked; told over the live
+		// channel, the daemon forgets its key and stops, and returns nothing. Either way the key is gone.
+		key, _ := state.Credential(state.MachineKey)
 		switch {
-		case errors.Is(err, daemon.ErrRevoked):
-			h.set(Unpaired, err.Error())
+		case errors.Is(err, daemon.ErrRevoked), key == "":
+			h.set(Unpaired, Revoked)
 		case err != nil:
 			h.set(Failed, err.Error())
 		case paused:
@@ -238,6 +244,11 @@ func (h *Host) TakeOver() error {
 	}
 	h.Start()
 	return nil
+}
+
+// Note puts a line of the app's own in the machine's log, with what the daemon writes there.
+func (h *Host) Note(line string) {
+	_, _ = h.writer().Write([]byte(time.Now().Format("2006/01/02 15:04:05") + " " + line + "\n"))
 }
 
 func (h *Host) writer() io.Writer {

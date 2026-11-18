@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 )
 
 // Home is the program's own folder.
@@ -21,6 +22,30 @@ func Home() string {
 	if h := os.Getenv("DUTYBOARD_HOME"); h != "" {
 		return h
 	}
+	return defaultHome()
+}
+
+// IsDefaultHome reports whether Home is where the program keeps its things when nobody says
+// otherwise — true too when $DUTYBOARD_HOME is set and names that same folder, as a service's is.
+func IsDefaultHome() bool { return samePath(Home(), defaultHome()) }
+
+// samePath compares two folders as the filesystem would: cleaned, absolute, and without regard to
+// case on Windows.
+func samePath(a, b string) bool { return canonical(a) == canonical(b) }
+
+func canonical(p string) string {
+	if abs, err := filepath.Abs(p); err == nil {
+		p = abs
+	}
+	p = filepath.Clean(p)
+	if runtime.GOOS == "windows" {
+		p = strings.ToLower(p)
+	}
+	return p
+}
+
+// defaultHome is Home with nothing in the environment naming one.
+func defaultHome() string {
 	if runtime.GOOS == "windows" {
 		if d := os.Getenv("LOCALAPPDATA"); d != "" {
 			return filepath.Join(d, "DutyBoard")

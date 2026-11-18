@@ -31,6 +31,7 @@ const made = ref<Provisioned | null>(null);
 const server = ref("");
 const machineName = ref("");
 const projects = ref("");
+const autostart = ref(false);
 const pairing = ref<SetupPairing | null>(null);
 const cameFrom = ref<Step>("join");
 
@@ -72,7 +73,7 @@ async function connect(from: Step) {
   go("pairing");
   pairing.value = null;
   cancelled = false;
-  const call = Setup.Join(server.value, machineName.value, projects.value);
+  const call = Setup.Join(server.value, machineName.value, projects.value, autostart.value);
   running = call;
   try {
     await call;
@@ -92,6 +93,7 @@ onMounted(async () => {
   defaults.value = d;
   machineName.value = d.machineName;
   projects.value = d.projects;
+  autostart.value = d.autostart;
   server.value = d.server;
 });
 onUnmounted(() => {
@@ -112,6 +114,7 @@ onUnmounted(() => {
 
     <!-- Where to start -->
     <section v-if="step === 'welcome'" class="stack">
+      <p v-if="status.error" id="why" class="notice notice--warn">{{ status.error }}</p>
       <div v-if="defaults?.server" class="notice">
         <p>
           A DutyBoard is already set up at <code>{{ defaults.server }}</code
@@ -203,6 +206,12 @@ onUnmounted(() => {
           </div>
           <p class="hint">Each board's repository is cloned here, and agents work in it. You can change it later.</p>
           </div>
+          <div class="how__act">
+          <label class="check" for="autostart-own">
+            <input id="autostart-own" v-model="autostart" type="checkbox" />
+            <span>Start DutyBoard when I sign in, so this machine is working without my opening it</span>
+          </label>
+          </div>
         </li>
       </ol>
       <p v-if="problem" class="notice notice--error">{{ problem }}</p>
@@ -215,9 +224,9 @@ onUnmounted(() => {
     <section v-else-if="step === 'join'" class="panel stack">
       <h2>Join a DutyBoard</h2>
       <div class="field">
-        <label for="server">DutyBoard API address</label>
-        <input id="server" v-model="server" type="url" spellcheck="false" placeholder="https://abc123-fn.altengine.app/board" />
-        <p class="hint">It is on the console's Machines page. Whoever set the DutyBoard up can send it to you.</p>
+        <label for="server">DutyBoard address</label>
+        <input id="server" v-model="server" type="url" spellcheck="false" placeholder="https://your-console.altengine.app" />
+        <p class="hint">The address of its console, the one you open in your browser. Its API address, from the console's Machines page, works too.</p>
       </div>
       <div class="field">
         <label for="name-join">Name for this machine</label>
@@ -232,6 +241,10 @@ onUnmounted(() => {
         </div>
         <p class="hint">Each board's repository is cloned here, and agents work in it. You can change it later.</p>
       </div>
+      <label class="check" for="autostart-join">
+        <input id="autostart-join" v-model="autostart" type="checkbox" />
+        <span>Start DutyBoard when I sign in, so this machine is working without my opening it</span>
+      </label>
       <p v-if="problem" class="notice notice--error">{{ problem }}</p>
       <div class="row">
         <button id="connect-join" class="primary" :disabled="!server.trim()" @click="connect('join')">Connect this machine</button>
@@ -323,6 +336,18 @@ onUnmounted(() => {
 }
 .how__act {
   margin-top: 0.5rem;
+}
+.check {
+  display: flex;
+  gap: 0.5rem;
+  align-items: flex-start;
+  font-weight: 400;
+  margin: 0;
+}
+.check input {
+  width: auto;
+  flex: none;
+  margin-top: 0.2rem;
 }
 .folder input {
   flex: 1;
