@@ -63,3 +63,111 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # DutyBoard for the desktop: one signed DutyBoard-Desktop.exe on the same release.
+  #
+  # Its name carries no operating system and no architecture ON PURPOSE. alt picks an asset by
+  # scoring names for both, and drops any that match neither — so `alt install altlimit/dutyboard`
+  # on Windows keeps choosing the CLI's zip and never this.
+  desktop:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: cli/desktop/go.mod
+          cache-dependency-path: cli/desktop/go.sum
+      - run: npm ci
+      # What the app provisions is embedded in it, exactly as in the CLI.
+      - run: npm run build:fn && npm run build:app
+      - run: node scripts/stage-cli-assets.mjs
+      - run: node cli/desktop/build.mjs --version "${GITHUB_REF_NAME#v}" --out release/DutyBoard-Desktop.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-unsigned
+          path: release/DutyBoard-Desktop.exe
+          retention-days: 1
+          if-no-files-found: error
+
+  # Signed with Azure Trusted Signing, and published only if signed: an unsigned download is stopped
+  # by SmartScreen, which is the one thing the people this app is for cannot get past. Until the
+  # settings below exist, this job says so and the release simply has no desktop app on it. It runs
+  # after `release` and apart from it, so nothing here can fail or undo the CLI's release.
+  #
+  #   AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_CLIENT_SECRET, AZURE_SIGNING_ENDPOINT,
+  #   AZURE_SIGNING_ACCOUNT, AZURE_CERTIFICATE_PROFILE
+  #   AZURE_SIGNING_SUBJECT — optional: the certificate's full subject, checked when it is set
+  #
+  # Each is read from EITHER tab of Settings → Secrets and variables → Actions. `vars.X` cannot see
+  # a value stored as a secret — it reads as empty, with no warning — so a name looked up on one
+  # tab only turns "I added it" into a job that quietly skips. Only the client secret is sensitive.
+  desktop-sign:
+    needs: [release, desktop]
+    runs-on: windows-2022
+    env:
+      AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID || secrets.AZURE_TENANT_ID }}
+      AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID || secrets.AZURE_CLIENT_ID }}
+      AZURE_SIGNING_ENDPOINT: ${{ vars.AZURE_SIGNING_ENDPOINT || secrets.AZURE_SIGNING_ENDPOINT }}
+      AZURE_SIGNING_ACCOUNT: ${{ vars.AZURE_SIGNING_ACCOUNT || secrets.AZURE_SIGNING_ACCOUNT }}
+      AZURE_CERTIFICATE_PROFILE: ${{ vars.AZURE_CERTIFICATE_PROFILE || secrets.AZURE_CERTIFICATE_PROFILE }}
+      AZURE_SIGNING_SUBJECT: ${{ vars.AZURE_SIGNING_SUBJECT || secrets.AZURE_SIGNING_SUBJECT }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: desktop-unsigned
+          path: desktop
+      - name: Signing configuration
+        id: signing
+        shell: pwsh
+        env:
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+        run: |
+          $missing = @('AZURE_TENANT_ID','AZURE_CLIENT_ID','AZURE_CLIENT_SECRET','AZURE_SIGNING_ENDPOINT','AZURE_SIGNING_ACCOUNT','AZURE_CERTIFICATE_PROFILE') | Where-Object { -not [Environment]::GetEnvironmentVariable($_) }
+          "enabled=$((-not $missing).ToString().ToLower())" >> $env:GITHUB_OUTPUT
+          if ($missing) {
+            "::warning::DutyBoard-Desktop.exe was built and NOT published: Azure Trusted Signing is not configured (missing: $($missing -join ', '))."
+            "The desktop app was not published: signing is not configured (missing: $($missing -join ', '))." >> $env:GITHUB_STEP_SUMMARY
+          }
+      - uses: Azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2
+        if: steps.signing.outputs.enabled == 'true'
+        with:
+          azure-tenant-id: ${{ vars.AZURE_TENANT_ID || secrets.AZURE_TENANT_ID }}
+          azure-client-id: ${{ vars.AZURE_CLIENT_ID || secrets.AZURE_CLIENT_ID }}
+          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          exclude-environment-credential: false
+          exclude-workload-identity-credential: true
+          exclude-managed-identity-credential: true
+          exclude-azure-cli-credential: true
+          exclude-azure-powershell-credential: true
+          exclude-azure-developer-cli-credential: true
+          exclude-interactive-browser-credential: true
+          endpoint: ${{ vars.AZURE_SIGNING_ENDPOINT || secrets.AZURE_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.AZURE_SIGNING_ACCOUNT || secrets.AZURE_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.AZURE_CERTIFICATE_PROFILE || secrets.AZURE_CERTIFICATE_PROFILE }}
+          files: ${{ github.workspace }}\desktop\DutyBoard-Desktop.exe
+      - name: The signature is valid, and ours
+        if: steps.signing.outputs.enabled == 'true'
+        shell: pwsh
+        run: |
+          $signature = Get-AuthenticodeSignature desktop/DutyBoard-Desktop.exe
+          $subject = $signature.SignerCertificate.Subject
+          if ($signature.Status -ne 'Valid') { throw "DutyBoard-Desktop.exe: signature is $($signature.Status)" }
+          if ($env:AZURE_SIGNING_SUBJECT -and $subject -ne $env:AZURE_SIGNING_SUBJECT) {
+            throw "DutyBoard-Desktop.exe: signed by '$subject', expected '$env:AZURE_SIGNING_SUBJECT'"
+          }
+          "Signed by: $subject" >> $env:GITHUB_STEP_SUMMARY
+      - name: Publish
+        if: steps.signing.outputs.enabled == 'true'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # sha256sum's format, of the file as signed. alt never selects a .sha256.
+          $hash = (Get-FileHash desktop/DutyBoard-Desktop.exe -Algorithm SHA256).Hash.ToLower()
+          [IO.File]::WriteAllText("$PWD/desktop/DutyBoard-Desktop.exe.sha256", "$hash  DutyBoard-Desktop.exe`n")
+          gh release upload $env:GITHUB_REF_NAME desktop/DutyBoard-Desktop.exe desktop/DutyBoard-Desktop.exe.sha256 --repo $env:GITHUB_REPOSITORY --clobber
+          if ($LASTEXITCODE -ne 0) { throw 'upload failed' }

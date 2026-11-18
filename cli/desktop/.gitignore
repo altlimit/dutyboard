@@ -1,0 +1,4 @@
+# Made by build.mjs.
+*.syso
+dist/
+frontend/bindings/

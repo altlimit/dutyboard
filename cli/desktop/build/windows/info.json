@@ -1,0 +1,17 @@
+{
+	"fixed": {
+		"file_version": "{{VERSION}}",
+		"product_version": "{{VERSION}}"
+	},
+	"info": {
+		"0409": {
+			"FileVersion": "{{VERSION}}",
+			"ProductVersion": "{{VERSION}}",
+			"CompanyName": "altlimit",
+			"FileDescription": "DutyBoard",
+			"LegalCopyright": "Copyright (c) 2026 altlimit",
+			"ProductName": "DutyBoard",
+			"Comments": "Runs your DutyBoard's agents on this machine"
+		}
+	}
+}

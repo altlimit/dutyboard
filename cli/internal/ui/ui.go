@@ -26,6 +26,33 @@ type UI struct {
 	Interactive bool
 	in          *bufio.Reader
 	color       bool
+	remote      Remote
+}
+
+// Remote is who a UI talks to when it is not a terminal: a window. Progress arrives as events, by
+// the name of the method that made them ("step", "say", "note", "ok", "warn"), and each question
+// blocks until the person answers it there, or returns an error if they will not.
+type Remote interface {
+	Event(kind, text string)
+	Ask(question, def string) (string, error)
+	Secret(question string) (string, error)
+	Confirm(question string, def bool) (bool, error)
+	Choose(question string, options []string, def int) (int, error)
+}
+
+// NewRemote is a UI on r instead of on a terminal. There is a person at the other end, so it is
+// interactive: questions are asked, not defaulted.
+func NewRemote(r Remote) *UI {
+	return &UI{Out: io.Discard, Interactive: true, remote: r}
+}
+
+// say sends a line to the window when there is one, and says whether it did.
+func (u *UI) say(kind, format string, a ...any) bool {
+	if u.remote == nil {
+		return false
+	}
+	u.remote.Event(kind, fmt.Sprintf(format, a...))
+	return true
 }
 
 // New is a UI on the process's own stdin and stdout.
@@ -54,22 +81,41 @@ func (u *UI) dim(s string) string {
 
 // Step starts a stage of work.
 func (u *UI) Step(format string, a ...any) {
+	if u.say("step", format, a...) {
+		return
+	}
 	fmt.Fprintf(u.Out, "\n%s %s\n", u.bold("==>"), u.bold(fmt.Sprintf(format, a...)))
 }
 
 // Say is one line of progress.
-func (u *UI) Say(format string, a ...any) { fmt.Fprintf(u.Out, "    %s\n", fmt.Sprintf(format, a...)) }
+func (u *UI) Say(format string, a ...any) {
+	if u.say("say", format, a...) {
+		return
+	}
+	fmt.Fprintf(u.Out, "    %s\n", fmt.Sprintf(format, a...))
+}
 
 // Note is a line worth having and not worth reading first.
 func (u *UI) Note(format string, a ...any) {
+	if u.say("note", format, a...) {
+		return
+	}
 	fmt.Fprintf(u.Out, "    %s\n", u.dim(fmt.Sprintf(format, a...)))
 }
 
 // OK marks something done.
-func (u *UI) OK(format string, a ...any) { fmt.Fprintf(u.Out, "  ✓ %s\n", fmt.Sprintf(format, a...)) }
+func (u *UI) OK(format string, a ...any) {
+	if u.say("ok", format, a...) {
+		return
+	}
+	fmt.Fprintf(u.Out, "  ✓ %s\n", fmt.Sprintf(format, a...))
+}
 
 // Warn is something wrong that did not stop the work.
 func (u *UI) Warn(format string, a ...any) {
+	if u.say("warn", format, a...) {
+		return
+	}
 	fmt.Fprintf(u.Out, "  ! %s\n", fmt.Sprintf(format, a...))
 }
 
@@ -83,6 +129,9 @@ func (u *UI) readLine() (string, error) {
 
 // Ask asks for a line of text; empty takes def.
 func (u *UI) Ask(question, def string) (string, error) {
+	if u.remote != nil {
+		return u.remote.Ask(question, def)
+	}
 	if !u.Interactive {
 		if def == "" {
 			return "", fmt.Errorf("%w: %s", ErrNoAnswer, question)
@@ -106,6 +155,9 @@ func (u *UI) Ask(question, def string) (string, error) {
 
 // Secret asks for a value without echoing it.
 func (u *UI) Secret(question string) (string, error) {
+	if u.remote != nil {
+		return u.remote.Secret(question)
+	}
 	if !u.Interactive {
 		return "", fmt.Errorf("%w: %s", ErrNoAnswer, question)
 	}
@@ -117,6 +169,9 @@ func (u *UI) Secret(question string) (string, error) {
 
 // Confirm asks yes or no.
 func (u *UI) Confirm(question string, def bool) (bool, error) {
+	if u.remote != nil {
+		return u.remote.Confirm(question, def)
+	}
 	if !u.Interactive {
 		return def, nil
 	}
@@ -141,6 +196,9 @@ func (u *UI) Confirm(question string, def bool) (bool, error) {
 
 // Choose asks for one of options by number; empty takes def (0-based).
 func (u *UI) Choose(question string, options []string, def int) (int, error) {
+	if u.remote != nil {
+		return u.remote.Choose(question, options, def)
+	}
 	if !u.Interactive {
 		if def < 0 {
 			return 0, fmt.Errorf("%w: %s", ErrNoAnswer, question)

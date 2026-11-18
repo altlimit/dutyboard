@@ -17,6 +17,7 @@ import (
 	"github.com/altlimit/dutyboard/cli/internal/board"
 	"github.com/altlimit/dutyboard/cli/internal/localmcp"
 	"github.com/altlimit/dutyboard/cli/internal/provision"
+	"github.com/altlimit/dutyboard/cli/internal/service"
 	"github.com/altlimit/dutyboard/cli/internal/state"
 	"github.com/altlimit/dutyboard/cli/internal/ui"
 )
@@ -41,6 +42,9 @@ type Flags struct {
 	DeployKey     bool
 	MCPSecrets    bool
 	Stop          bool
+	// Key is an altengine key a person gave in a window. There is no flag for it: on a command line
+	// it would be in the shell's history and the process list.
+	Key string
 }
 
 // Main runs the program and returns its exit code.
@@ -133,9 +137,11 @@ func Provision(ctx context.Context, u *ui.UI, f Flags) (*provision.Result, error
 	}
 	u.Say("DutyBoard v%s  (%s)", bundle.Version, bundle.Source)
 
-	key, typed, err := altengineKey(u, client)
-	if err != nil {
-		return nil, err
+	key, typed := f.Key, f.Key != ""
+	if key == "" {
+		if key, typed, err = altengineKey(u, client); err != nil {
+			return nil, err
+		}
 	}
 	client.Key = key
 
@@ -467,7 +473,15 @@ func stopRunning(u *ui.UI, say bool) error {
 	}
 	if say {
 		u.OK("stopped — the duties it held are resumed when it starts again")
-		u.Say("Started by itself from your crontab, it is back within 5 minutes; `dutyboard --service` starts it now.")
+		// What brings it back depends on what starts it, and only a crontab does so unasked.
+		switch {
+		case service.ByCron():
+			u.Say("Started by itself from your crontab, it is back within 5 minutes; `dutyboard --service` starts it now.")
+		case service.Installed():
+			u.Say("It starts by itself again the next time you sign in; `dutyboard --service` starts it now.")
+		default:
+			u.Say("Nothing here starts it by itself; `dutyboard` starts it again.")
+		}
 	}
 	return nil
 }

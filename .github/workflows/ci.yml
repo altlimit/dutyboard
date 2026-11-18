@@ -84,3 +84,30 @@ jobs:
       # Nothing is staged, so this is the build `go install` produces: it must compile with an
       # empty embed directory.
       - run: go build -o "$RUNNER_TEMP/dutyboard" ./cmd/dutyboard
+
+  desktop:
+    # DutyBoard for the desktop (cli/desktop): the tray app that runs the daemon itself. Its own Go
+    # module, because Wails asks for a newer Go and newer dependencies than the CLI should be made
+    # to take. Built the way the release builds it — for Windows, from Linux, without cgo — so a
+    # service the window's TypeScript no longer matches, or a resource that no longer links, fails here.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: cli/desktop/frontend/package-lock.json
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: cli/desktop/go.mod
+          cache-dependency-path: cli/desktop/go.sum
+      - run: node cli/desktop/build.mjs
+      - run: go vet . ./host
+        working-directory: cli/desktop
+        env:
+          GOOS: windows
+          CGO_ENABLED: "0"
+      # The part with no window in it runs anywhere.
+      - run: go vet ./host && go test ./host
+        working-directory: cli/desktop

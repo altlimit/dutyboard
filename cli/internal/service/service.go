@@ -65,6 +65,10 @@ func Installed() bool {
 	return false
 }
 
+// ByCron reports whether it is the user's crontab that starts the daemon. That is the one way of
+// starting it that also brings it back by itself, within minutes, after it has been stopped.
+func ByCron() bool { return runtime.GOOS == "linux" && cronInstalled() }
+
 // Installation says how the daemon was set to start, and anything a person still has to do.
 type Installation struct {
 	Logs  string   // how to follow its log

@@ -183,60 +183,101 @@ func pairMachine(ctx context.Context, u *ui.UI, cfg *state.Config, f Flags) (str
 			}
 		}
 	}
-	server = strings.TrimRight(strings.TrimSpace(server), "/")
-	health, err := provision.Health(ctx, server)
-	if err != nil || health.Service != "dutyboard" {
-		return "", fmt.Errorf("%s is not a DutyBoard API (%v)", server, err)
+	// Before the next question, not after it: an address that is not a DutyBoard is said so at once.
+	if _, err := boardAt(ctx, server); err != nil {
+		return "", err
 	}
-	if !health.Machines {
-		return "", fmt.Errorf("the DutyBoard at %s (v%s) is too old to pair machines — upgrade it with `dutyboard --provision-only`", server, health.Version)
-	}
-
 	name := f.Name
 	if name == "" && !u.Interactive {
 		name = defaultMachineName()
 	}
 	if name == "" {
+		var err error
 		if name, err = u.Ask("Name for this machine", defaultMachineName()); err != nil {
 			return "", err
 		}
 	}
+	paired, err := Pair(ctx, cfg, server, name, func(code, link string, minutes int) {
+		u.Step("Approve this machine")
+		if link != "" {
+			u.Say("Open %s", link)
+			openBrowser(link)
+		} else {
+			u.Say("Open your DutyBoard console — its site is on your static instance in the altengine console — go to Pair a machine, and enter the code.")
+		}
+		u.Say("Code: %s   (expires in %d minutes)", code, minutes)
+	})
+	if err != nil {
+		return "", err
+	}
+	u.OK("paired as %q, for %s", paired.Name, paired.OwnerName)
+	return paired.MachineKey, nil
+}
+
+// Pair connects this machine to the DutyBoard at server, under name, and keeps what that gives it:
+// the machine key, and in cfg where the board and its console are. It asks nothing, so a terminal
+// and a window can both use it. announce is told the code a person has to approve and the console
+// link that approves it — empty when the board does not say where its console is — and Pair then
+// waits until someone does, the code expires, or ctx ends.
+func Pair(ctx context.Context, cfg *state.Config, server, name string, announce func(code, link string, minutes int)) (*board.Paired, error) {
+	server = strings.TrimRight(strings.TrimSpace(server), "/")
+	health, err := boardAt(ctx, server)
+	if err != nil {
+		return nil, err
+	}
+	if name = strings.TrimSpace(name); name == "" {
+		name = defaultMachineName()
+	}
 	api := board.New(server, "")
 	p, err := api.StartPairing(ctx, name, runtime.GOOS, runtime.GOARCH, Version)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	console := health.ConsoleURL
 	if console == "" {
 		console = cfg.Console
 	}
-	u.Step("Approve this machine")
+	link := ""
 	if console != "" {
 		// The console's routes are after the #, wherever the console itself is served.
-		link := strings.TrimRight(console, "/") + "/#/pair?code=" + p.UserCode
-		u.Say("Open %s", link)
-		openBrowser(link)
-	} else {
-		u.Say("Open your DutyBoard console — its site is on your static instance in the altengine console — go to Pair a machine, and enter the code.")
+		link = strings.TrimRight(console, "/") + "/#/pair?code=" + p.UserCode
 	}
-	u.Say("Code: %s   (expires in %d minutes)", p.UserCode, p.ExpiresIn/60)
+	announce(p.UserCode, link, p.ExpiresIn/60)
 	paired, err := api.WaitForApproval(ctx, p)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	if err := state.SetCredential(state.MachineKey, paired.MachineKey); err != nil {
-		return "", fmt.Errorf("storing the machine key: %w", err)
+		return nil, fmt.Errorf("storing the machine key: %w", err)
 	}
 	cfg.Server, cfg.MachineID, cfg.MachineName, cfg.AgentPrefix = server, paired.MachineID, paired.Name, paired.AgentPrefix
 	if console != "" {
 		cfg.Console = console
 	}
 	if err := cfg.Save(); err != nil {
-		return "", err
+		return nil, err
 	}
-	u.OK("paired as %q, for %s", paired.Name, paired.OwnerName)
-	return paired.MachineKey, nil
+	return paired, nil
 }
+
+// ErrNotBoard is an address that did not answer as a DutyBoard API.
+var ErrNotBoard = errors.New("not a DutyBoard API")
+
+// boardAt checks that server is a DutyBoard API that machines can be paired with.
+func boardAt(ctx context.Context, server string) (*provision.HealthInfo, error) {
+	server = strings.TrimRight(strings.TrimSpace(server), "/")
+	health, err := provision.Health(ctx, server)
+	if err != nil || health.Service != "dutyboard" {
+		return nil, fmt.Errorf("%s is %w (%v)", server, ErrNotBoard, err)
+	}
+	if !health.Machines {
+		return nil, fmt.Errorf("the DutyBoard at %s (v%s) is too old to pair machines — upgrade it with `dutyboard --provision-only`", server, health.Version)
+	}
+	return health, nil
+}
+
+// DefaultMachineName is what this machine is called when nobody names it: its hostname.
+func DefaultMachineName() string { return defaultMachineName() }
 
 func defaultMachineName() string {
 	host, err := os.Hostname()
