@@ -14,6 +14,10 @@
 ;
 ;   -DVERSION=2.32.0   required
 ;   -DSRC=dir          where DutyBoard.exe and Uninstall.exe are, and where the outputs go
+;
+; Paths here are joined with a backslash, always. On Windows NSIS finds a file by splitting its path
+; at the last backslash and looking in that folder, so "dir/DutyBoard.exe" is not found there; on
+; Linux it turns backslashes into slashes itself. A forward slash compiles on Linux and only there.
 ;   -DPRODUCT=name     defaults to DutyBoard; a test passes another so it cannot touch a real install
 ;   -DRUN_NAME=name    the sign-in entry it looks after; a test passes another for the same reason
 
@@ -49,11 +53,11 @@ InstallDir "$LOCALAPPDATA\Programs\${PRODUCT}"
 SetCompressor /SOLID lzma
 
 !ifdef UNINSTALLER_ONLY
-  OutFile "${SRC}/make-uninstaller.exe"
+  OutFile "${SRC}\make-uninstaller.exe"
   !insertmacro MUI_UNPAGE_CONFIRM
   !insertmacro MUI_UNPAGE_INSTFILES
 !else
-  OutFile "${SRC}/DutyBoard-Setup.exe"
+  OutFile "${SRC}\DutyBoard-Setup.exe"
   !insertmacro MUI_PAGE_INSTFILES
   !define MUI_FINISHPAGE_RUN
   !define MUI_FINISHPAGE_RUN_TEXT "Open DutyBoard"
@@ -96,8 +100,8 @@ Section "Install"
   !insertmacro CloseRunningApp
   SetOutPath "$INSTDIR"
   ClearErrors
-  File "/oname=${EXE}" "${SRC}/${EXE}"
-  File "${SRC}/Uninstall.exe"
+  File "/oname=${EXE}" "${SRC}\${EXE}"
+  File "${SRC}\Uninstall.exe"
   ${If} ${Errors}
     MessageBox MB_OK|MB_ICONSTOP "DutyBoard could not be installed: its files could not be written. If DutyBoard is running, quit it from its tray icon and run this again." /SD IDOK
     SetErrorLevel 1

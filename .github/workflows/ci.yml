@@ -120,3 +120,48 @@ jobs:
           # The uninstaller itself can only be written on Windows; a stand-in lets the rest compile.
           cp "$RUNNER_TEMP/pkg/make-uninstaller.exe" "$RUNNER_TEMP/pkg/Uninstall.exe"
           makensis -V2 -DVERSION=0.0.0 "-DSRC=$RUNNER_TEMP/pkg" cli/desktop/build/windows/installer.nsi
+
+  installer:
+    # The desktop installer, on Windows, where it is built for a release and where it runs: it is
+    # compiled by the same script the release uses, then installed, installed again over itself, and
+    # uninstalled, checking each time what it left on the machine. The Linux check above only shows the
+    # script compiles there, and NSIS reads paths differently on the two — which is how a release once
+    # lost its installer. The app inside is a stand-in: the installer never looks into it.
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build it the way a release does
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force pkg | Out-Null
+          Copy-Item "$env:WINDIR\System32\whoami.exe" pkg/DutyBoard.exe
+          cli/desktop/build/windows/installer.ps1 -Stage uninstaller -Version 0.0.0 -Dir pkg -Product DutyBoard-ci -RunName DutyBoard-ci
+          cli/desktop/build/windows/installer.ps1 -Stage installer -Version 0.0.0 -Dir pkg -Product DutyBoard-ci -RunName DutyBoard-ci
+      - name: Install, install over it, uninstall
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $where = Join-Path $env:RUNNER_TEMP 'DutyBoard-ci'
+          $shortcut = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\DutyBoard-ci.lnk'
+          $entry = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\DutyBoard-ci'
+          $run = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+          function Check($what, $ok) { if ($ok) { "  ok: $what" } else { "::error::$what"; throw $what } }
+
+          # Someone who ran the app from elsewhere and had it start at sign-in: the entry must follow it.
+          Set-ItemProperty $run -Name 'DutyBoard-ci' -Value 'C:\Elsewhere\DutyBoard-Desktop.exe --tray'
+          foreach ($time in 'first', 'second') {
+            $p = Start-Process pkg/DutyBoard-Setup.exe -ArgumentList '/S', "/D=$where" -Wait -PassThru
+            Check "the $time install exits 0" ($p.ExitCode -eq 0)
+          }
+          Check 'the app is installed' (Test-Path "$where\DutyBoard.exe")
+          Check 'with its uninstaller' (Test-Path "$where\Uninstall.exe")
+          Check 'a Start menu shortcut' (Test-Path $shortcut)
+          Check 'an installed-apps entry, with the version' ((Get-ItemProperty $entry).DisplayVersion -eq '0.0.0')
+          Check 'the sign-in entry now starts the installed copy' ((Get-ItemProperty $run).'DutyBoard-ci' -eq "`"$where\DutyBoard.exe`" --tray")
+
+          $p = Start-Process "$where\Uninstall.exe" -ArgumentList '/S', "_?=$where" -Wait -PassThru
+          Check 'the uninstall exits 0' ($p.ExitCode -eq 0)
+          Check 'the app is gone' (-not (Test-Path "$where\DutyBoard.exe"))
+          Check 'the shortcut is gone' (-not (Test-Path $shortcut))
+          Check 'the installed-apps entry is gone' (-not (Test-Path $entry))
+          Check 'its sign-in entry is gone' (-not (Get-ItemProperty $run).'DutyBoard-ci')

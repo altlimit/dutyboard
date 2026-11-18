@@ -123,7 +123,6 @@ jobs:
       AZURE_SIGNING_ACCOUNT: ${{ vars.AZURE_SIGNING_ACCOUNT || secrets.AZURE_SIGNING_ACCOUNT }}
       AZURE_CERTIFICATE_PROFILE: ${{ vars.AZURE_CERTIFICATE_PROFILE || secrets.AZURE_CERTIFICATE_PROFILE }}
       AZURE_SIGNING_SUBJECT: ${{ vars.AZURE_SIGNING_SUBJECT || secrets.AZURE_SIGNING_SUBJECT }}
-      MAKENSIS: C:\Program Files (x86)\NSIS\makensis.exe
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -147,15 +146,9 @@ jobs:
         if: steps.signing.outputs.enabled == 'true'
         shell: pwsh
         run: |
-          if (-not (Test-Path $env:MAKENSIS)) { throw "NSIS is not on this runner at $env:MAKENSIS" }
           New-Item -ItemType Directory -Force pkg | Out-Null
           Copy-Item desktop/DutyBoard-Desktop.exe pkg/DutyBoard.exe
-          $version = $env:GITHUB_REF_NAME.TrimStart('v')
-          & $env:MAKENSIS /V2 /DUNINSTALLER_ONLY "/DVERSION=$version" "/DSRC=$PWD\pkg" cli/desktop/build/windows/installer.nsi
-          if ($LASTEXITCODE -ne 0) { throw 'the uninstaller did not compile' }
-          # NSIS writes an uninstaller only by running an installer: this one does nothing else.
-          $made = Start-Process pkg/make-uninstaller.exe -ArgumentList '/S' -Wait -PassThru
-          if ($made.ExitCode -ne 0 -or -not (Test-Path pkg/Uninstall.exe)) { throw 'the uninstaller was not written' }
+          cli/desktop/build/windows/installer.ps1 -Stage uninstaller -Version $env:GITHUB_REF_NAME.TrimStart('v') -Dir pkg
       - uses: Azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2
         if: steps.signing.outputs.enabled == 'true'
         with:
@@ -179,10 +172,7 @@ jobs:
       - name: The installer, from the two signed files
         if: steps.signing.outputs.enabled == 'true'
         shell: pwsh
-        run: |
-          $version = $env:GITHUB_REF_NAME.TrimStart('v')
-          & $env:MAKENSIS /V2 "/DVERSION=$version" "/DSRC=$PWD\pkg" cli/desktop/build/windows/installer.nsi
-          if ($LASTEXITCODE -ne 0 -or -not (Test-Path pkg/DutyBoard-Setup.exe)) { throw 'the installer did not compile' }
+        run: cli/desktop/build/windows/installer.ps1 -Stage installer -Version $env:GITHUB_REF_NAME.TrimStart('v') -Dir pkg
       - uses: Azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2
         if: steps.signing.outputs.enabled == 'true'
         with:
