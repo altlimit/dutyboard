@@ -430,18 +430,18 @@ dutyboard</code></pre>
     <h2>Run your own</h2>
     <p class="lead-narrow">
       DutyBoard runs in your own <a href="https://www.altengine.net">altengine</a> account.
-      Setting it up takes an API key and one command.
+      Setting it up takes your altengine account and one command — no key to make or paste.
     </p>
 
     <ol class="steps">
       <li>
-        <h3><span class="step-n" aria-hidden="true">1</span> An altengine key</h3>
+        <h3><span class="step-n" aria-hidden="true">1</span> Sign in with altengine</h3>
         <p>
-          In <a href="https://console.altengine.net">the altengine console</a>, create an API key with
-          <strong>Instances &amp; data: Write</strong> and <strong>Functions: Write</strong> — or
-          <strong>Instances &amp; data: Full</strong> the first time, if software outside the board will
-          follow its duties by webhook: making the webhooks queue needs it. It is only needed while setting
-          up, so it does not have to be kept.
+          Setting up opens <a href="https://www.altengine.net">altengine</a> in your browser: sign in, choose
+          the organization, and approve DutyBoard. It gets a key for the instances whose names start with
+          <code>dutyboard</code> and nothing else in your account — it cannot even list the rest — and you
+          can revoke it under Settings → API keys. Over SSH, or wherever there is no browser, you can paste
+          an API key instead.
         </p>
       </li>
       <li>
@@ -471,8 +471,8 @@ dutyboard</code></pre>
     </p>
 
     <p>
-      On Windows, <a href="#desktop">the desktop app</a> does all three steps in a window: paste the key,
-      watch your DutyBoard being made, and sign up. When a later version of the app is able to upgrade
+      On Windows, <a href="#desktop">the desktop app</a> does all three steps in a window: sign in with
+      altengine, watch your DutyBoard being made, and sign up. When a later version of the app is able to upgrade
       your DutyBoard, it says so and does it at a click.
     </p>
 

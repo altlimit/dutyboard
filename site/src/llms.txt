@@ -18,8 +18,15 @@ API at www.dutyboard.com; setup gives your user their own addresses for both.
    a built web app the program publishes, and there is no by-hand route that ends with a
    working console.
 
-2. **An altengine API key.** Your user creates it at https://console.altengine.net. On the key
-   form's **MCP / AI agent access** block — off by default:
+2. **Your user's altengine account.** Run in a terminal, `dutyboard --provision-only` offers
+   **Sign in with altengine**: it opens altengine in the browser, your user picks the organization
+   and approves, and DutyBoard receives a key for the instances named `dutyboard…` and nothing
+   else. That needs your user at the keyboard, so give them the command to run (below) rather
+   than running it yourself. It keeps that key for later upgrades; `dutyboard --sign-out` revokes it.
+
+   If you run it yourself — no terminal — it does not offer to sign in and reads `ALTENGINE_KEY`
+   instead. Your user creates that key at https://console.altengine.net. On the key form's
+   **MCP / AI agent access** block — off by default:
 
    | Toggle                  | Set to    | Why                                                   |
    |-------------------------|-----------|-------------------------------------------------------|
@@ -36,7 +43,7 @@ API at www.dutyboard.com; setup gives your user their own addresses for both.
    later upgrades work with Write and keep the queue. The key is only needed while setting up
    and upgrading; the program does not keep it unless asked.
 
-Before running anything, tell your user which altengine organization the key belongs to.
+Before running anything, tell your user which altengine organization it will be set up in.
 Instances count against a quota and a bill.
 
 
@@ -44,7 +51,8 @@ Instances count against a quota and a bill.
 
 ```
 alt install altlimit/dutyboard            # https://github.com/altlimit/alt — no sudo
-ALTENGINE_KEY=ak_… dutyboard --provision-only
+dutyboard --provision-only                # your user, in a terminal: signs in with altengine
+ALTENGINE_KEY=ae_… dutyboard --provision-only   # or you, with a key your user made
 ```
 
 (`alt run altlimit/dutyboard --provision-only` does the same without installing.)
