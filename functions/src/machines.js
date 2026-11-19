@@ -1061,8 +1061,10 @@ export async function requestSetup(ctx, body) {
   return { ok: true, request: requestView({ ...row, key: id }) };
 }
 
-// The tools a machine can install or sign in to when its owner asks from the console.
-const TOOLS = ["claude-code", "codex", "cursor", "gh"];
+// The tools a machine can install or sign in to when its owner asks from the console. `deploy_key` is
+// signing in with altengine for the instances the machine's boards deploy to: the machine keeps the
+// key it ends in, and the key never comes through here.
+const TOOLS = ["claude-code", "codex", "cursor", "gh", "deploy_key"];
 
 /**
  * `install_tool` and `sign_in` requests: `{ machine_id, kind, tool }`. The machine's owner's alone —

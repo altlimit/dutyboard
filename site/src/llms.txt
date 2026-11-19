@@ -123,8 +123,10 @@ yourself. It prints a code they approve in their console, sets itself to start b
 the console on that machine, which lists what duties still need from it: an allowed agent signed in,
 the GitHub CLI when needed, a commit author for repository work. From there the console can
 have the machine install an agent or the GitHub CLI and sign in to it — the person signs in on the
-tool's own site, and no credential passes through DutyBoard. A deploy key and MCP server secrets are
-set on the machine itself (`dutyboard --deploy-key`, `dutyboard --mcp-secrets`). See the README's
+tool's own site, and no credential passes through DutyBoard. A deploy key comes from **Connect** in the
+board's settings (the machine signs in with altengine for its boards' deploy targets and keeps the
+key) or `dutyboard --deploy-key`; MCP server secrets are set on the machine itself
+(`dutyboard --mcp-secrets`). See the README's
 "Running agents on your machine": https://github.com/altlimit/dutyboard
 
 Under **Machines → Available agents and models**, enable agent/model/effort combinations and

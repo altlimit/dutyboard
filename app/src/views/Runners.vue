@@ -59,7 +59,7 @@ const pasted = ref({}); // request_id → value
 const openSetups = (m) => (m.requests || []).filter((r) => r.kind === "setup" || r.kind === "create_repo");
 
 async function toolWork(m, it, kind) {
-  const verb = kind === "install_tool" ? "Install" : "Sign in to";
+  const verb = kind === "install_tool" ? "Install" : it.key === "deploy_key" ? "Connect altengine for" : "Sign in to";
   if (kind === "install_tool" && !confirm(`Install ${it.label} on ${m.name}? It runs ${it.label}'s own installer there, as you.`)) return;
   busy.value = true;
   error.value = "";
@@ -354,15 +354,15 @@ onUnmounted(() => {
                     <template v-if="r.prompt && r.prompt.url">
                       <p class="small" style="margin: 0">{{ r.prompt.message }}</p>
                       <p style="margin: 0">
-                        <a :href="r.prompt.url" target="_blank" rel="noopener noreferrer" class="btn">Open the sign-in page</a>
+                        <a :href="r.prompt.url" target="_blank" rel="noopener noreferrer" class="btn">{{ r.tool === "deploy_key" ? "Open altengine" : "Open the sign-in page" }}</a>
                       </p>
                       <p v-if="r.prompt.code" style="margin: 0">
                         Code: <code class="mono ready__code">{{ r.prompt.code }}</code>
                         <button type="button" class="link small" @click="copy(r.prompt.code)">Copy</button>
                       </p>
                       <form v-if="r.prompt.needs_input" class="row" @submit.prevent="sendInput(r)">
-                        <label class="sr-only" :for="`paste-${r.request_id}`">Code from the sign-in page</label>
-                        <input :id="`paste-${r.request_id}`" v-model="pasted[r.request_id]" class="mono" autocomplete="off" placeholder="Paste the code the page shows" />
+                        <label class="sr-only" :for="`paste-${r.request_id}`">{{ r.tool === "deploy_key" ? "Address the page ended on" : "Code from the sign-in page" }}</label>
+                        <input :id="`paste-${r.request_id}`" v-model="pasted[r.request_id]" class="mono" autocomplete="off" :placeholder="r.tool === 'deploy_key' ? 'Only if it would not load: paste its address' : 'Paste the code the page shows'" />
                         <button type="submit" :disabled="busy || !(pasted[r.request_id] || '').trim()">Send</button>
                       </form>
                     </template>
@@ -385,7 +385,8 @@ onUnmounted(() => {
                     :title="m.online ? '' : `${m.name} is offline`"
                     @click="toolWork(m, it, 'sign_in')"
                   >
-                    Sign in<span class="sr-only"> to {{ it.label }}</span>
+                    <template v-if="it.key === 'deploy_key'">Connect altengine</template>
+                    <template v-else>Sign in<span class="sr-only"> to {{ it.label }}</span></template>
                   </button>
                   <span v-if="m.remote_setup === 'ask'" class="small muted">someone at {{ m.name }} accepts it by running <code class="mono">dutyboard</code> there</span>
                 </div>

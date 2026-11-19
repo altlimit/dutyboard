@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/altlimit/dutyboard/cli/internal/altengine"
 	"github.com/altlimit/dutyboard/cli/internal/board"
 	"github.com/altlimit/dutyboard/cli/internal/runner"
 	"github.com/altlimit/dutyboard/cli/internal/state"
@@ -249,16 +250,28 @@ func deployKeyItem(linked []board.BoardView) (Item, bool) {
 		return it, false
 	}
 	it.Needed = true
+	cfg, _ := state.LoadConfig()
+	base, signedIn := "", false
+	if cfg != nil {
+		base, signedIn = cfg.Altengine, cfg.AltengineSignedIn
+	}
+	// Connecting from the console signs in with altengine for exactly these boards' targets — offered
+	// whatever the state, because a target added since the key was made needs connecting again.
+	if altengine.CanSignIn(base) {
+		it.Actions = []string{ActionSignIn}
+	}
 	if k, _ := state.Credential(state.DeployKey); k != "" {
 		it.State, it.Detail = OK, "set on this machine"
 		return it, true
 	}
-	if k, _ := state.Credential(state.AltengineKey); k != "" {
+	// A provisioning key from signing in reaches only the `dutyboard…` instances, so it is no
+	// stand-in for a deploy key.
+	if k, _ := state.Credential(state.AltengineKey); k != "" && !signedIn {
 		it.State, it.Detail = OK, "using the key DutyBoard was provisioned with — a narrower deploy key is safer"
 		it.Fix = "dutyboard --deploy-key"
 		return it, true
 	}
-	// A secret: typed on the machine, never sent through the board.
+	// A secret: made on the machine, never sent through the board.
 	it.State, it.Detail, it.Fix = Todo, "not set — boards that deploy to altengine cannot", "dutyboard --deploy-key"
 	return it, true
 }

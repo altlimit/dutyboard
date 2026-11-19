@@ -335,3 +335,46 @@ func TestMissingReadsTheGrantForWhatItMeans(t *testing.T) {
 		}
 	}
 }
+
+// The consent page opened on another computer: its redirect to 127.0.0.1 goes nowhere, and the
+// person pastes the address it ended on instead.
+func TestSignInWithAPastedAddress(t *testing.T) {
+	f := newConsole(t)
+	pasted := make(chan string, 1)
+	tok, err := f.oauth().SignInWith(context.Background(), "HAKAN-PC", f.browser(t, func(u *url.URL, redirect, state string) {
+		f.mu.Lock()
+		f.challenges["code-p"] = u.Query().Get("code_challenge")
+		f.redirects["code-p"] = redirect
+		f.mu.Unlock()
+		pasted <- "  " + redirect + "?" + url.Values{"code": {"code-p"}, "state": {state}}.Encode() + "\n"
+	}), func(ctx context.Context) (string, error) {
+		select {
+		case v := <-pasted:
+			return v, nil
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tok.Key != "ae_signed_in" {
+		t.Errorf("token = %+v", tok)
+	}
+}
+
+func TestSignInWithAPastedAddressFromAnotherSignIn(t *testing.T) {
+	f := newConsole(t)
+	_, err := f.oauth().SignInWith(context.Background(), "HAKAN-PC", func(string) error { return nil }, func(context.Context) (string, error) {
+		return "http://127.0.0.1:1/callback?code=x&state=stale", nil
+	})
+	if err == nil || !strings.Contains(err.Error(), "different sign-in") {
+		t.Fatalf("err = %v", err)
+	}
+	if _, err := PastedCallback("hello"); err == nil {
+		t.Error("text that is no address was taken as one")
+	}
+	if q, err := PastedCallback("code=c&state=s"); err != nil || q.Get("code") != "c" {
+		t.Errorf("a bare query was not read: %v %v", q, err)
+	}
+}

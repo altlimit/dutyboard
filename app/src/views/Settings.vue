@@ -10,6 +10,7 @@ import { ago, expiryChoices, statusLabel } from "../lib/duties.js";
 import { newRepoDraft, noRepo, profileDraft, profilePayload, requestNewRepo, runnerLimited, runStateLabel } from "../lib/runners.js";
 import BoardAccess from "../components/BoardAccess.vue";
 import ProfileForm from "../components/ProfileForm.vue";
+import DeployConnect from "../components/DeployConnect.vue";
 import NewRepoFields from "../components/NewRepoFields.vue";
 import { DAYS, REPEATS, allZones, browserZone, knownZone, repeatText, runText, scheduleDraft, schedulePayload, zoneOffsets } from "../lib/schedules.js";
 
@@ -730,6 +731,7 @@ function tabKey(event) {
         <ProfileForm v-model="profile" :machines="runners" id-prefix="set" :disabled="!isOwner || busy" />
         <div v-if="isOwner"><button class="primary" type="submit" :disabled="busy">Save</button></div>
       </form>
+      <DeployConnect v-if="role && profile.deploy_method === 'altengine'" :project-id="projectId" />
     </div>
     <div
       v-show="tab === 'machines'"

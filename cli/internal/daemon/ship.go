@@ -142,10 +142,14 @@ var altengineTools = []map[string]any{
 }
 
 // deployKey is the key projects are deployed with: the deploy key, else — on a machine set up before
-// there was one — the provisioning key, if it was kept.
+// there was one — the provisioning key, if it was kept. Not one from "Sign in with altengine": that
+// reaches only the `dutyboard…` instances, never a project's own.
 func deployKey() string {
 	if k, err := state.Credential(state.DeployKey); err == nil && k != "" {
 		return k
+	}
+	if cfg, err := state.LoadConfig(); err == nil && cfg.AltengineSignedIn {
+		return ""
 	}
 	k, _ := state.Credential(state.AltengineKey)
 	return k
@@ -173,7 +177,7 @@ func (d *Daemon) deployNotice(ctx context.Context, v board.BoardView) string {
 		for i, t := range targets {
 			names[i] = t.Describe()
 		}
-		return fmt.Sprintf("this board deploys to altengine (%s), and this machine has no deploy key — run `dutyboard --deploy-key` here", strings.Join(names, ", "))
+		return fmt.Sprintf("this board deploys to altengine (%s), and this machine has no deploy key — connect altengine from its line on the Machines page, or run `dutyboard --deploy-key` here", strings.Join(names, ", "))
 	}
 	client := altengine.New(d.opt.Config.Altengine, key)
 	if client.Local() {

@@ -542,9 +542,15 @@ failing deploy becomes an immediate duty to fix it, with the failing log in its 
 deploys to altengine lists what it may deploy to, each as a **static site** or a **functions** instance,
 and gives sessions `altengine_deploy_static` and `altengine_deploy_function` — only the ones those
 kinds need — which deploy only to those targets, as that kind, with the machine's **deploy key**.
-(Plain instance names from boards saved before targets had a kind still allow either.) Set it with
-`dutyboard --deploy-key`, and give that key write on each site and full on each functions instance
-your boards deploy to — nothing more, since agents run as you and could read it. The key
+(Plain instance names from boards saved before targets had a kind still allow either.) The easiest way
+to give a machine that key is **Connect**, under the board's settings or on the machine's line on the
+Machines page: the machine signs in with altengine for exactly the targets its boards deploy to —
+write on each site, full on each functions instance — and keeps the key itself. The consent link
+shows in the console; opened on another computer than the machine, you paste back the address the
+page ended on, which is useless without what the machine kept. Connect again after adding a target.
+Or set it by hand with `dutyboard --deploy-key`, giving that key the same access and nothing more,
+since agents run as you and could read it. A function deployed with grants on other instances needs a
+key that holds those too, which Connect does not ask for: set that key by hand. The key
 `--provision-only` uses manages your whole DutyBoard: a pasted one is not kept unless you say so, and
 one from signing in is kept, reaching only the `dutyboard…` instances. The runner
 checks the deploy key against every board's instances as it starts, and says on the Machines page

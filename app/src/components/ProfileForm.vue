@@ -201,8 +201,9 @@ const removeServer = (i) => {
       <legend class="label">What it may deploy to</legend>
       <p class="hint" style="margin: 0">
         Each altengine instance a session may deploy to, and as what: a <strong>static site</strong> (a built folder) or
-        a <strong>functions</strong> instance (a bundled function). Nothing else can be deployed to, and the machine's
-        deploy key needs write on each site and full on each functions instance.
+        a <strong>functions</strong> instance (a bundled function). Nothing else can be deployed to. Once saved, connect
+        each machine to altengine below: it signs in for exactly these, with write on each site and full on each
+        functions instance.
       </p>
       <div v-for="(t, i) in draft.deploy_targets" :key="i" class="row">
         <label class="sr-only" :for="`${idPrefix}-target-${i}-kind`">Kind of target {{ i + 1 }}</label>

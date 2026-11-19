@@ -145,6 +145,9 @@ func (d *Daemon) setUp(ctx context.Context, req board.Request) (string, error) {
 // checks the machine again so its checklist says how it went.
 func (d *Daemon) workTool(ctx context.Context, req board.Request) {
 	label := setup.Label(req.Tool)
+	if req.Tool == DeployKeyTool {
+		label = "altengine"
+	}
 	_ = d.api.ReportRequest(ctx, req.RequestID, "running", "")
 	var err error
 	done := ""
@@ -166,7 +169,9 @@ func (d *Daemon) workTool(ctx context.Context, req board.Request) {
 				d.log.Printf("telling the console how to sign in to %s: %v", label, err)
 			}
 		}
-		if err = setup.SignIn(ctx, req.Tool, show, func(ctx context.Context) (string, error) { return d.awaitInput(ctx, req.RequestID) }); err == nil {
+		if req.Tool == DeployKeyTool {
+			done, err = d.connectAltengine(ctx, req, show)
+		} else if err = setup.SignIn(ctx, req.Tool, show, func(ctx context.Context) (string, error) { return d.awaitInput(ctx, req.RequestID) }); err == nil {
 			done = "signed in to " + label
 		}
 	}

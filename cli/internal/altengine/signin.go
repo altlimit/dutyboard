@@ -278,6 +278,14 @@ func DeviceName() string {
 // `open`, and the code it sends back exchanged for a key. It returns when the person approves or
 // cancels, ctx is cancelled, or SignInTimeout passes.
 func (o *OAuth) SignIn(ctx context.Context, deviceName string, open func(string) error) (*Token, error) {
+	return o.SignInWith(ctx, deviceName, open, nil)
+}
+
+// SignInWith is SignIn that also takes the address the browser ended on, pasted by the person, when
+// the browser cannot reach this machine's loopback — the consent page opened on another computer,
+// where 127.0.0.1 is that computer. `paste` blocks until something is pasted, and is not called again
+// after it returns. The code in that address is useless without the verifier, which never leaves here.
+func (o *OAuth) SignInWith(ctx context.Context, deviceName string, open func(string) error, paste func(context.Context) (string, error)) (*Token, error) {
 	p, err := newPKCE()
 	if err != nil {
 		return nil, err
@@ -302,6 +310,30 @@ func (o *OAuth) SignIn(ctx context.Context, deviceName string, open func(string)
 		default:
 		}
 	}
+	// complete is what one answer from altengine comes to — through the browser or pasted.
+	complete := func(cctx context.Context, q url.Values) (*Token, error) {
+		if e := q.Get("error"); e != "" {
+			if e == "access_denied" {
+				return nil, ErrSignInCancelled
+			}
+			desc := q.Get("error_description")
+			if desc == "" {
+				desc = e
+			}
+			return nil, fmt.Errorf("altengine could not sign you in: %s", desc)
+		}
+		code := q.Get("code")
+		if code == "" {
+			return nil, errors.New("altengine sent no code back")
+		}
+		return o.token(cctx, url.Values{
+			"grant_type":    {"authorization_code"},
+			"code":          {code},
+			"client_id":     {o.clientID()},
+			"redirect_uri":  {redirect},
+			"code_verifier": {p.verifier},
+		})
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/callback", func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
@@ -311,40 +343,16 @@ func (o *OAuth) SignIn(ctx context.Context, deviceName string, open func(string)
 			page(w, http.StatusBadRequest, "This sign-in link is not the one DutyBoard is waiting for.")
 			return
 		}
-		if e := q.Get("error"); e != "" {
-			if e == "access_denied" {
-				page(w, http.StatusOK, "Sign-in cancelled. You can close this tab.")
-				finish(result{err: ErrSignInCancelled})
-				return
-			}
-			desc := q.Get("error_description")
-			if desc == "" {
-				desc = e
-			}
-			page(w, http.StatusBadRequest, "altengine could not sign you in: "+desc)
-			finish(result{err: fmt.Errorf("altengine: %s", desc)})
-			return
-		}
-		code := q.Get("code")
-		if code == "" {
-			page(w, http.StatusBadRequest, "altengine sent no code back.")
-			finish(result{err: errors.New("altengine sent no code back")})
-			return
-		}
-		t, err := o.token(r.Context(), url.Values{
-			"grant_type":    {"authorization_code"},
-			"code":          {code},
-			"client_id":     {o.clientID()},
-			"redirect_uri":  {redirect},
-			"code_verifier": {p.verifier},
-		})
-		if err != nil {
+		t, err := complete(r.Context(), q)
+		switch {
+		case errors.Is(err, ErrSignInCancelled):
+			page(w, http.StatusOK, "Sign-in cancelled. You can close this tab.")
+		case err != nil:
 			page(w, http.StatusBadGateway, "DutyBoard could not finish signing in: "+err.Error())
-			finish(result{err: err})
-			return
+		default:
+			page(w, http.StatusOK, "Connected to "+t.OrgName+". You can close this tab and go back to DutyBoard.")
 		}
-		page(w, http.StatusOK, "Connected to "+t.OrgName+". You can close this tab and go back to DutyBoard.")
-		finish(result{t: t})
+		finish(result{t: t, err: err})
 	})
 	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 	go func() { _ = srv.Serve(ln) }()
@@ -368,6 +376,24 @@ func (o *OAuth) SignIn(ctx context.Context, deviceName string, open func(string)
 	if err := open(o.console() + "/api/oauth/authorize?" + q.Encode()); err != nil {
 		return nil, fmt.Errorf("opening the browser: %w", err)
 	}
+	if paste != nil {
+		go func() {
+			raw, err := paste(ctx)
+			if err != nil {
+				return // ctx ended: the select below reports why
+			}
+			q, err := PastedCallback(raw)
+			if err == nil && q.Get("state") != p.state {
+				err = errors.New("that address is from a different sign-in — start again, and paste the address this one ends on")
+			}
+			if err != nil {
+				finish(result{err: err})
+				return
+			}
+			t, err := complete(ctx, q)
+			finish(result{t: t, err: err})
+		}()
+	}
 
 	select {
 	case r := <-done:
@@ -378,6 +404,20 @@ func (o *OAuth) SignIn(ctx context.Context, deviceName string, open func(string)
 		}
 		return nil, ctx.Err()
 	}
+}
+
+// PastedCallback reads the address a browser ended on after approving — the whole URL, or just what
+// follows its `?` — into the answer it carries.
+func PastedCallback(raw string) (url.Values, error) {
+	raw = strings.TrimSpace(raw)
+	if i := strings.Index(raw, "?"); i >= 0 {
+		raw = raw[i+1:]
+	}
+	q, err := url.ParseQuery(raw)
+	if err != nil || q.Get("state") == "" || (q.Get("code") == "" && q.Get("error") == "") {
+		return nil, errors.New("that is not the address the browser ended on — paste the whole of it, starting http://127.0.0.1")
+	}
+	return q, nil
 }
 
 // DeviceCode is what a person needs to approve a device sign-in somewhere else.
