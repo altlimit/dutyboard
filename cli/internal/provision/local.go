@@ -105,11 +105,6 @@ func runLocal(ctx context.Context, o Options) (*Result, error) {
 		queue = webhookQueue(ctx, c, u, n, i.ID)
 	}
 	recordWebhooks(ctx, c, u, n, queue)
-	if secrets := n.secrets(); len(secrets) > 0 {
-		if err := c.SetFunctionSecrets(ctx, n.Functions, secrets); err != nil {
-			return nil, fmt.Errorf("function secrets: %w", err)
-		}
-	}
 	u.OK("CORS: %v", origins)
 	res.ConsoleURL = origins[0] + "/"
 	if err := c.PutDocument(ctx, n.Datastore, "settings", "deployment", map[string]any{"console_url": res.ConsoleURL}); err != nil {

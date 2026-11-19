@@ -33,14 +33,13 @@ type fakeHosted struct {
 	indexes     int
 	functions   map[string]map[string]string // instance → grants of its board function
 	deployed    map[string]int
-	secrets     map[string]map[string]any // instance → name → {value?, egress}
+	code        map[string]string // instance → the code its board function was deployed with
 	uploads     map[string][]byte
 	manifest    map[string]string // path → hash
 	version     string
 	liveLabels  map[string]string         // static instance → the message of its live deployment
 	staticSites map[string]int            // static instance → deployments made to it
 	documents   map[string]map[string]any // "datastore/collection/key" → data
-	noSecrets   bool                      // secrets are console-only, as on hosted altengine
 	queues      map[string]map[string]any // "tasks instance/queue" → settings
 	queueDenied bool                      // the key lacks Full on instances, which queues need
 }
@@ -52,7 +51,7 @@ func newFake(t *testing.T, version string) *fakeHosted {
 		configs:     map[string]map[string]any{},
 		functions:   map[string]map[string]string{},
 		deployed:    map[string]int{},
-		secrets:     map[string]map[string]any{},
+		code:        map[string]string{},
 		uploads:     map[string][]byte{},
 		liveLabels:  map[string]string{},
 		staticSites: map[string]int{},
@@ -188,9 +187,6 @@ func (f *fakeHosted) serve(w http.ResponseWriter, r *http.Request) {
 			f.documents[parts[3]+"/"+parts[7]+"/"+d.Key] = d.Data
 		}
 		writeJSON(w, map[string]any{"keys": []string{}})
-	case f.noSecrets && strings.HasPrefix(p, "/v1/functions/") && strings.HasSuffix(p, "/secrets"):
-		w.WriteHeader(http.StatusNotFound)
-		fmt.Fprint(w, `{"error":{"code":"NOT_FOUND","message":"no such data-plane endpoint"}}`)
 	case strings.HasPrefix(p, "/v1/datastore/") && strings.HasSuffix(p, "/indexes"):
 		f.indexes++
 		writeJSON(w, map[string]any{"ok": true})
@@ -198,32 +194,17 @@ func (f *fakeHosted) serve(w http.ResponseWriter, r *http.Request) {
 		inst := strings.Split(p, "/")[3]
 		var req struct {
 			Grants map[string]string `json:"grants"`
+			Code   string            `json:"code"`
 		}
 		_ = json.Unmarshal(body, &req)
 		f.functions[inst] = req.Grants
+		f.code[inst] = req.Code
 		f.deployed[inst]++
 		writeJSON(w, map[string]any{"version": f.deployed[inst], "size_bytes": 1234})
 	case strings.HasPrefix(p, "/v1/functions/") && strings.HasSuffix(p, "/secrets"):
-		inst := strings.Split(p, "/")[3]
-		if r.Method == http.MethodGet {
-			list := []any{}
-			for name, s := range f.secrets[inst] {
-				list = append(list, map[string]any{"name": name, "egress": s.(map[string]any)["egress"]})
-			}
-			writeJSON(w, map[string]any{"secrets": list})
-			return
-		}
-		next := map[string]any{}
-		_ = json.Unmarshal(body, &next)
-		for name, raw := range next {
-			entry := raw.(map[string]any)
-			if _, has := entry["value"]; !has {
-				// No value means keep the stored one — the contract SetFunctionSecrets relies on.
-				entry["value"] = f.secrets[inst][name].(map[string]any)["value"]
-			}
-		}
-		f.secrets[inst] = next
-		writeJSON(w, map[string]any{"ok": true})
+		// Hosted takes secrets only from a signed-in console. The provisioner must not need them.
+		w.WriteHeader(http.StatusNotFound)
+		fmt.Fprint(w, `{"error":{"code":"NOT_FOUND","message":"no such data-plane endpoint"}}`)
 	case strings.HasPrefix(p, "/v1/functions/"):
 		inst := strings.Split(p, "/")[3]
 		fns := []any{}
@@ -312,7 +293,6 @@ func quietUI() *ui.UI { return &ui.UI{Out: &bytes.Buffer{}} }
 func TestHostedFromNothing(t *testing.T) {
 	f := newFake(t, "9.9.9")
 	f.add("functions", "unrelated")
-	f.secrets["dutyboard"] = map[string]any{"OTHER": map[string]any{"value": "keep me", "egress": true}}
 
 	res, err := Run(context.Background(), Options{
 		Client: hosted(f.srv.URL),
@@ -369,15 +349,11 @@ func TestHostedFromNothing(t *testing.T) {
 		t.Errorf("a fresh deployment should open sign-up and set the sign-up form: %v", auth)
 	}
 
-	secrets := f.secrets["dutyboard"]
-	if secrets["OTHER"].(map[string]any)["value"] != "keep me" {
-		t.Errorf("an existing secret was lost: %v", secrets)
-	}
 	if got := f.documents["dutyboard/settings/deployment"]["console_url"]; got != res.ConsoleURL {
 		t.Errorf("the console's address was not recorded with the deployment: %v", f.documents)
 	}
-	if _, ok := secrets["DUTYBOARD_DATASTORE"]; ok {
-		t.Error("default instance names should not need override secrets")
+	if got := deployedInstances(t, f.code["dutyboard"]); got["auth"] != "dutyboard-auth" || got["datastore"] != "dutyboard" {
+		t.Errorf("the function was not told its own instances: %v", got)
 	}
 
 	if f.functions["dutyboard"]["tasks:dutyboard-tasks"] != "write" {
@@ -501,24 +477,52 @@ func TestHostedUpgradesWhatIsThere(t *testing.T) {
 	if b, _ := json.Marshal(f.configs["functions/board-prod"]["corsOrigins"]); !strings.Contains(string(b), "https://old.example") {
 		t.Errorf("CORS lost an existing origin: %s", b)
 	}
-	if f.secrets["board-prod"]["DUTYBOARD_DATASTORE"].(map[string]any)["value"] != "custom-ds" {
-		t.Errorf("the function needs to be told its non-default datastore: %v", f.secrets["board-prod"])
+	if got := deployedInstances(t, f.code["board-prod"]); got["datastore"] != "custom-ds" || got["auth"] != "custom-auth" {
+		t.Errorf("the function needs to be told its non-default instances: %v", got)
 	}
 }
 
-func TestHostedCarriesOnWhenSecretsAreConsoleOnly(t *testing.T) {
+// A new deployment not named `dutyboard` — the name was taken, or the person chose another — has
+// to work with nothing done by hand. Its instance names used to reach the function as secrets,
+// which hosted only takes from a signed-in console, so it answered every call "internal error".
+func TestHostedNewDeploymentUnderAnotherNameNeedsNothingByHand(t *testing.T) {
 	f := newFake(t, "9.9.9")
-	f.noSecrets = true
-	f.add("functions", "board-prod")
-	f.functions["board-prod"] = map[string]string{"datastore:custom-ds": "full", "auth:dutyboard-auth": "write"}
 	out := &bytes.Buffer{}
-	res, err := Run(context.Background(), Options{Client: hosted(f.srv.URL), Assets: testAssets(t, "9.9.9"), UI: &ui.UI{Out: out}, Instance: "board-prod"})
+	res, err := Run(context.Background(), Options{Client: hosted(f.srv.URL), Assets: testAssets(t, "9.9.9"), UI: &ui.UI{Out: out}, Instance: "hakan"})
 	if err != nil {
-		t.Fatalf("secrets the platform only takes in its console should be listed, not fail the run: %v", err)
+		t.Fatal(err)
 	}
-	if res.ConsoleURL == "" || !strings.Contains(out.String(), "DUTYBOARD_DATASTORE = custom-ds") {
-		t.Errorf("expected the console published and the secret to set by hand spelled out:\n%s", out)
+	if !res.Created || res.ConsoleURL == "" {
+		t.Errorf("expected a new deployment with its console published: %+v", res)
 	}
+	got := deployedInstances(t, f.code["hakan"])
+	want := map[string]string{"datastore": "hakan", "auth": "hakan-auth", "channel": "hakan-live", "blob": "hakan-files", "search": "hakan-search"}
+	if b1, b2 := fmt.Sprint(got), fmt.Sprint(want); b1 != b2 {
+		t.Errorf("deployed instances = %s, want %s", b1, b2)
+	}
+	for service, name := range want {
+		if f.functions["hakan"][service+":"+name] == "" {
+			t.Errorf("the function names %s %q but holds no grant on it: %v", service, name, f.functions["hakan"])
+		}
+	}
+	if strings.Contains(out.String(), "  ! ") || strings.Contains(out.String(), "DUTYBOARD_") {
+		t.Errorf("nothing should be left for a person to do:\n%s", out)
+	}
+}
+
+// deployedInstances reads back the instance names the provisioner put in front of the bundle.
+func deployedInstances(t *testing.T, code string) map[string]string {
+	t.Helper()
+	const prefix = "globalThis.__DUTYBOARD_INSTANCES__ = "
+	line, _, _ := strings.Cut(code, "\n")
+	if !strings.HasPrefix(line, prefix) {
+		t.Fatalf("the deployed code does not start with its instances: %.120q", code)
+	}
+	var got map[string]string
+	if err := json.Unmarshal([]byte(strings.TrimSuffix(strings.TrimPrefix(line, prefix), ";")), &got); err != nil {
+		t.Fatal(err)
+	}
+	return got
 }
 
 func TestHostedConsoleOnlyInstancesNeedAPerson(t *testing.T) {

@@ -261,9 +261,10 @@ provisioner writes.
 A console with no `config.js` values can be pointed at a deployment from its sign-in screen
 (**Connect your altengine**), which keeps the values in that browser.
 
-If your instances are named differently, the function needs `DUTYBOARD_DATASTORE`,
-`DUTYBOARD_AUTH`, `DUTYBOARD_CHANNEL`, `DUTYBOARD_BLOB` and `DUTYBOARD_SEARCH` as `env`-exposure
-secrets; the provisioner sets them for the names it found.
+The provisioner tells the function which instances are its own by writing their names into the
+code it deploys, so a deployment named anything other than `dutyboard` needs nothing set by hand. A
+bundle you deploy yourself reads them from `DUTYBOARD_DATASTORE`, `DUTYBOARD_AUTH`,
+`DUTYBOARD_CHANNEL`, `DUTYBOARD_BLOB` and `DUTYBOARD_SEARCH` (`env`-exposure secrets) instead.
 
 ## Working on DutyBoard
 

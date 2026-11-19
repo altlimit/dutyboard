@@ -99,22 +99,16 @@ func (n Names) grants() map[string]string {
 	return g
 }
 
-// secrets are the env overrides the deployed function needs to find instances that are not named
-// the way its defaults assume.
-func (n Names) secrets() map[string]string {
-	d := NamesFor("dutyboard")
-	out := map[string]string{}
-	add := func(key, have, want string) {
-		if have != want {
-			out[key] = have
-		}
-	}
-	add("DUTYBOARD_DATASTORE", n.Datastore, d.Datastore)
-	add("DUTYBOARD_AUTH", n.Auth, d.Auth)
-	add("DUTYBOARD_CHANNEL", n.Channel, d.Channel)
-	add("DUTYBOARD_BLOB", n.Blob, d.Blob)
-	add("DUTYBOARD_SEARCH", n.Search, d.Search)
-	return out
+// preamble is the line deployed in front of the bundle that tells the function which instances are
+// its own: the ones grants() names. It used to be env secrets, set only when the names were not the
+// defaults — and hosted, secrets cannot be written with an API key, so every deployment not named
+// `dutyboard` came up looking for `dutyboard-auth` and failed every signed-in call. Written into the
+// code it travels with the grants, in the same request, and needs nothing from a person.
+func (n Names) preamble() string {
+	b, _ := json.Marshal(map[string]string{
+		"datastore": n.Datastore, "auth": n.Auth, "channel": n.Channel, "blob": n.Blob, "search": n.Search,
+	})
+	return "globalThis.__DUTYBOARD_INSTANCES__ = " + string(b) + ";\n"
 }
 
 // Options configure one run.
@@ -214,7 +208,6 @@ func runHosted(ctx context.Context, o Options) (*Result, error) {
 	recordWebhooks(ctx, c, u, names, webhookQueue(ctx, c, u, names, names.Tasks))
 
 	u.Step("Console")
-	manual := false
 	authID := ""
 	if i, ok := inv.Find("auth", names.Auth); ok {
 		authID = i.ID
@@ -269,24 +262,8 @@ func runHosted(ctx context.Context, o Options) (*Result, error) {
 			u.OK("console address recorded with the deployment")
 		}
 	}
-	if secrets := names.secrets(); len(secrets) > 0 {
-		if err := c.SetFunctionSecrets(ctx, names.Functions, secrets); err != nil {
-			u.Warn("could not set the function's secrets (%v) — this altengine only takes them in its console", err)
-			u.Say("  In the altengine console, on functions instance %q → Secrets, add these with exposure env:", names.Functions)
-			for _, k := range sortedKeys(secrets) {
-				u.Say("    %s = %s", k, secrets[k])
-			}
-			manual = true
-		} else {
-			u.OK("function secrets: %s", strings.Join(sortedKeys(secrets), ", "))
-		}
-	}
-
 	if err := verify(ctx, u, res); err != nil {
 		return res, err
-	}
-	if manual {
-		u.Warn("the function cannot find its instances until those secrets are set")
 	}
 	return res, nil
 }
@@ -594,7 +571,7 @@ func deployFunction(ctx context.Context, c *altengine.Client, u *ui.UI, a *asset
 	if err != nil {
 		return "", err
 	}
-	d, err := c.DeployFunction(ctx, n.Functions, FunctionName, string(code), n.grants(), schedules(), subRequests)
+	d, err := c.DeployFunction(ctx, n.Functions, FunctionName, n.preamble()+string(code), n.grants(), schedules(), subRequests)
 	if err != nil {
 		return "", fmt.Errorf("deploying the function: %w", err)
 	}

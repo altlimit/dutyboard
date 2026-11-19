@@ -85,16 +85,24 @@ import { VERSION } from "./version.js";
 
 
 /** Instance names are configuration, not constants: the same bundle serves a hosted
- *  deployment and a local emulator whose instances are named differently. Set them as
- *  `env`-exposure secrets on the functions instance to override. */
+ *  deployment and a local emulator whose instances are named differently.
+ *
+ *  The provisioner writes them into the code it deploys (`__DUTYBOARD_INSTANCES__`, a line in
+ *  front of the bundle), because they are the names it granted this function and nothing else
+ *  can work. Not as secrets: hosted, secrets are only written from a signed-in altengine
+ *  console, never with an API key, so a deployment not named `dutyboard` came up unable to find
+ *  its own auth instance and answered every signed-in call with "internal error". `env`
+ *  secrets still apply to a bundle deployed by hand, which carries no such line. */
+const DEPLOYED = globalThis.__DUTYBOARD_INSTANCES__ || {};
+
 function configure(env) {
   return {
-    datastoreInstance: env.DUTYBOARD_DATASTORE || "dutyboard",
+    datastoreInstance: DEPLOYED.datastore || env.DUTYBOARD_DATASTORE || "dutyboard",
     datastoreNamespace: env.DUTYBOARD_NAMESPACE || "",
-    authInstance: env.DUTYBOARD_AUTH || "dutyboard-auth",
-    channelInstance: env.DUTYBOARD_CHANNEL || "dutyboard-live",
-    blobInstance: env.DUTYBOARD_BLOB || "dutyboard-files",
-    searchInstance: env.DUTYBOARD_SEARCH || "dutyboard-search",
+    authInstance: DEPLOYED.auth || env.DUTYBOARD_AUTH || "dutyboard-auth",
+    channelInstance: DEPLOYED.channel || env.DUTYBOARD_CHANNEL || "dutyboard-live",
+    blobInstance: DEPLOYED.blob || env.DUTYBOARD_BLOB || "dutyboard-files",
+    searchInstance: DEPLOYED.search || env.DUTYBOARD_SEARCH || "dutyboard-search",
     // Where the webhooks queue lives. Usually not set here: the provisioner records it with the
     // deployment (settings/webhooks), for the same reason it records the console's address.
     tasksInstance: env.DUTYBOARD_TASKS || "",

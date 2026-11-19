@@ -269,30 +269,6 @@ func (c *Client) EnsureQueue(ctx context.Context, instance, name string, setting
 	return err
 }
 
-// SetFunctionSecrets adds or replaces env-exposure secrets on a functions instance, keeping every
-// secret already there. The platform REPLACES the whole map, and values cannot be read back — an
-// entry sent without a value keeps the stored one, which is how the rest survive.
-func (c *Client) SetFunctionSecrets(ctx context.Context, instance string, values map[string]string) error {
-	var listed struct {
-		Secrets []struct {
-			Name   string `json:"name"`
-			Egress bool   `json:"egress"`
-		} `json:"secrets"`
-	}
-	p := "/v1/functions/" + Esc(instance) + "/secrets"
-	if err := c.Do(ctx, http.MethodGet, p, nil, &listed); err != nil {
-		return err
-	}
-	body := map[string]any{}
-	for _, s := range listed.Secrets {
-		body[s.Name] = map[string]any{"egress": s.Egress}
-	}
-	for k, v := range values {
-		body[k] = map[string]any{"value": v, "egress": false}
-	}
-	return c.Do(ctx, http.MethodPut, p, body, nil)
-}
-
 // StaticFile is one file of a site.
 type StaticFile struct {
 	Path string // "/app/index.html"
