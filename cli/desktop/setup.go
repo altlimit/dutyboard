@@ -58,6 +58,13 @@ type SetupDefaults struct {
 	Autostart bool `json:"autostart"`
 }
 
+// SignedIn is the altengine organization signing in reached.
+type SignedIn struct {
+	Org string `json:"org"`
+	// Replaced is this computer having signed in before: its earlier key was replaced, not added to.
+	Replaced bool `json:"replaced"`
+}
+
 // Provisioned is a DutyBoard that now exists.
 type Provisioned struct {
 	Server  string `json:"server"`
@@ -107,14 +114,31 @@ func (s *Setup) ChooseFolder(from string) (string, error) {
 	return path, err
 }
 
+// SignIn is "Sign in with altengine": the consent page opens in the browser, and the key it ends in
+// is kept for Provision and every later upgrade. It returns when the person approves or declines;
+// cancelling the call stops the wait.
+func (s *Setup) SignIn(ctx context.Context) (*SignedIn, error) {
+	u := ui.NewRemote(&window{s: s, ctx: ctx})
+	t, err := app.SignInAltengine(ctx, u, false, s.open)
+	if err != nil {
+		return nil, err
+	}
+	return &SignedIn{Org: t.OrgName, Replaced: t.Replaced}, nil
+}
+
+// open shows a page in the person's browser.
+func (s *Setup) open(url string) error { return s.app.Browser.OpenURL(url) }
+
 // Provision makes a DutyBoard on altengine, or brings one up to this version — the same run either
 // way. What it does arrives as setup:line events and what it needs to know as setup:question events,
 // answered with Answer. altengineURL is empty for altengine itself; an emulator's address is the
 // other thing it can be. Cancelling the call stops it where it is, which is safe: every step can be
 // run again.
+//
+// An empty key uses the one kept here — what SignIn keeps.
 func (s *Setup) Provision(ctx context.Context, altengineURL, key string) (*Provisioned, error) {
 	u := ui.NewRemote(&window{s: s, ctx: ctx})
-	res, err := app.Provision(ctx, u, app.Flags{Altengine: strings.TrimSpace(altengineURL), Key: strings.TrimSpace(key)})
+	res, err := app.Provision(ctx, u, app.Flags{Altengine: strings.TrimSpace(altengineURL), Key: strings.TrimSpace(key), Open: s.open})
 	if err != nil {
 		return nil, err
 	}
@@ -165,7 +189,7 @@ func (s *Setup) Upgrade(ctx context.Context) (*Provisioned, error) {
 		return nil, errors.New("this machine is not connected to a DutyBoard")
 	}
 	u := ui.NewRemote(&window{s: s, ctx: ctx})
-	res, err := app.Provision(ctx, u, app.UpgradeFlags(cfg, app.Flags{}))
+	res, err := app.Provision(ctx, u, app.UpgradeFlags(cfg, app.Flags{Open: s.open}))
 	if err != nil {
 		return nil, err
 	}

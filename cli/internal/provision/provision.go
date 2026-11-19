@@ -121,6 +121,10 @@ type Options struct {
 	// Origins are console origins to allow besides the deployed console's own — the dev server's,
 	// locally.
 	Origins []string
+	// NamePrefix is what every instance name must start with: altengine.NamePrefix when the key came
+	// from "Sign in with altengine", which reaches those instances and nothing else. Empty for a
+	// pasted key.
+	NamePrefix string
 }
 
 // Result is what a run leaves behind.
@@ -164,7 +168,7 @@ func runHosted(ctx context.Context, o Options) (*Result, error) {
 		return nil, err
 	}
 	found := Detect(ctx, c, inv)
-	names, existing, err := choose(u, inv, found, o.Instance)
+	names, existing, err := choose(u, inv, found, o.Instance, o.NamePrefix)
 	if err != nil {
 		return nil, err
 	}
@@ -339,7 +343,10 @@ func Health(ctx context.Context, apiURL string) (*HealthInfo, error) {
 	return &h, json.Unmarshal(body, &h)
 }
 
-func choose(u *ui.UI, inv altengine.Inventory, found []Deployment, instance string) (Names, *Deployment, error) {
+func choose(u *ui.UI, inv altengine.Inventory, found []Deployment, instance, prefix string) (Names, *Deployment, error) {
+	if instance != "" && !strings.HasPrefix(instance, prefix) {
+		return Names{}, nil, outsidePrefix(instance, prefix)
+	}
 	if instance != "" {
 		for i := range found {
 			if found[i].Names.Functions == instance {
@@ -364,11 +371,26 @@ func choose(u *ui.UI, inv altengine.Inventory, found []Deployment, instance stri
 			return found[pick].Names, &found[pick], nil
 		}
 	}
-	prefix, err := u.Ask("Name for the new deployment's instances", freePrefix(inv))
-	if err != nil {
-		return Names{}, nil, err
+	for {
+		name, err := u.Ask("Name for the new deployment's instances", freePrefix(inv))
+		if err != nil {
+			return Names{}, nil, err
+		}
+		if strings.HasPrefix(name, prefix) {
+			return NamesFor(name), nil, nil
+		}
+		if !u.Interactive {
+			return Names{}, nil, outsidePrefix(name, prefix)
+		}
+		u.Warn("%v", outsidePrefix(name, prefix))
 	}
-	return NamesFor(prefix), nil, nil
+}
+
+// outsidePrefix is a name a signed-in key cannot reach: altengine gave it only the instances whose
+// names start with prefix, and it cannot even see the others.
+func outsidePrefix(name, prefix string) error {
+	return fmt.Errorf("signed in with altengine, DutyBoard can only use instances whose names start with %q, and %q does not — "+
+		"choose a name like %q, or paste an altengine key to use %q", prefix, name, prefix+"-"+name, name)
 }
 
 // freePrefix is `dutyboard`, or the first `dutyboard-N` none of whose instances exist yet.
@@ -503,7 +525,7 @@ func webhookQueue(ctx context.Context, c *altengine.Client, u *ui.UI, n Names, r
 		}
 		u.Warn("tasks queue %s/%s: %v — token webhooks stay off", n.Tasks, WebhookQueue, err)
 		if strings.Contains(err.Error(), "PERMISSION_DENIED") {
-			u.Say("Making the webhooks queue needs a key with Instances & data: Full — once; later upgrades can use Write.")
+			u.Say("Making the webhooks queue needs Full on the tasks instance %s — once; later upgrades can use Write.", n.Tasks)
 		}
 		return ""
 	}

@@ -215,24 +215,19 @@ func (c *Client) SetFunctionSettings(ctx context.Context, instance string, cors,
 	return c.PatchConfig(ctx, "functions", instance, settings)
 }
 
-// EnsureQueue creates a tasks queue, or brings the one already there to these settings — only the
-// settings passed change. Locally the emulator's admin API addresses the instance by id, so the
-// caller passes the id there. A push queue's target must exist when this is called.
 // HasQueue reports whether a tasks instance has the queue name. It only reads, so a key that may not
 // change a queue can still say whether one is there.
+//
+// The queue calls go to the data plane (/v1/tasks/...), for every key and on the emulator alike: they
+// need Full on the tasks instance only. The MCP tool they used to go through needs Full on instances
+// org-wide, which a key from "Sign in with altengine" can never hold.
 func (c *Client) HasQueue(ctx context.Context, instance, name string) (bool, error) {
 	var out struct {
 		Queues []struct {
 			Name string `json:"name"`
 		} `json:"queues"`
 	}
-	var err error
-	if c.Local() {
-		err = c.Do(ctx, http.MethodGet, "/admin/tasks/"+Esc(instance)+"/queues", nil, &out)
-	} else {
-		err = c.Tool(ctx, "tasks_list_queues", map[string]any{"instance": instance}, &out)
-	}
-	if err != nil {
+	if err := c.Do(ctx, http.MethodGet, "/v1/tasks/"+Esc(instance)+"/queues", nil, &out); err != nil {
 		return false, err
 	}
 	for _, q := range out.Queues {
@@ -243,28 +238,17 @@ func (c *Client) HasQueue(ctx context.Context, instance, name string) (bool, err
 	return false, nil
 }
 
+// EnsureQueue creates a tasks queue, or brings the one already there to these settings — only the
+// settings passed change. A push queue's target must exist when this is called.
 func (c *Client) EnsureQueue(ctx context.Context, instance, name string, settings map[string]any) error {
-	if c.Local() {
-		p := "/admin/tasks/" + Esc(instance) + "/queues"
-		body := map[string]any{"name": name}
-		for k, v := range settings {
-			body[k] = v
-		}
-		err := c.Do(ctx, http.MethodPost, p, body, nil)
-		if IsStatus(err, 409) {
-			return c.Do(ctx, http.MethodPatch, p+"/"+Esc(name), settings, nil)
-		}
-		return err
-	}
-	args := map[string]any{"instance": instance, "name": name, "create": true}
+	p := "/v1/tasks/" + Esc(instance) + "/queues"
+	body := map[string]any{"name": name}
 	for k, v := range settings {
-		args[k] = v
+		body[k] = v
 	}
-	err := c.Tool(ctx, "tasks_set_queue", args, nil)
-	var te *ToolError
-	if errors.As(err, &te) && strings.Contains(strings.ToLower(te.Message), "already exists") {
-		delete(args, "create")
-		return c.Tool(ctx, "tasks_set_queue", args, nil)
+	err := c.Do(ctx, http.MethodPost, p, body, nil)
+	if IsStatus(err, http.StatusConflict) {
+		return c.Do(ctx, http.MethodPatch, p+"/"+Esc(name), settings, nil)
 	}
 	return err
 }

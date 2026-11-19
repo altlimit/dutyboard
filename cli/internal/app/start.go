@@ -13,6 +13,11 @@ import (
 	"strings"
 
 	"encoding/json"
+	"io"
+	"net/http"
+	"net/url"
+	"time"
+
 	"github.com/altlimit/dutyboard/cli/internal/board"
 	"github.com/altlimit/dutyboard/cli/internal/daemon"
 	"github.com/altlimit/dutyboard/cli/internal/localmcp"
@@ -21,10 +26,6 @@ import (
 	"github.com/altlimit/dutyboard/cli/internal/state"
 	"github.com/altlimit/dutyboard/cli/internal/ui"
 	"github.com/altlimit/dutyboard/cli/internal/worktree"
-	"io"
-	"net/http"
-	"net/url"
-	"time"
 )
 
 // Start is `dutyboard` with no job flag. Run by a person, it is the checklist (setup.go): the
@@ -354,26 +355,6 @@ func defaultMachineName() string {
 		host += "-wsl"
 	}
 	return strings.ToLower(host)
-}
-
-func openBrowser(url string) {
-	var cmd *exec.Cmd
-	switch runtime.GOOS {
-	case "darwin":
-		cmd = exec.Command("open", url)
-	case "windows":
-		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", url)
-	default:
-		for _, opener := range []string{"wslview", "xdg-open"} {
-			if _, err := exec.LookPath(opener); err == nil {
-				cmd = exec.Command(opener, url)
-				break
-			}
-		}
-	}
-	if cmd != nil {
-		_ = cmd.Start()
-	}
 }
 
 // offerLink offers to work the repository the program was run in: on a board that already names

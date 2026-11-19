@@ -1,0 +1,7 @@
+{
+  "client_id": "https://www.dutyboard.com/altengine-client.json",
+  "client_name": "DutyBoard",
+  "client_uri": "https://www.dutyboard.com",
+  "redirect_uris": ["http://127.0.0.1/callback"],
+  "token_endpoint_auth_method": "none"
+}

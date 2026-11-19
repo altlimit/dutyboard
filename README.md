@@ -156,10 +156,20 @@ To set up or upgrade DutyBoard without putting the machine you run it on to work
 agent following [llms.txt](https://www.dutyboard.com/llms.txt) — provision only:
 
 ```bash
-dutyboard --provision-only        # asks for an altengine API key, or reads $ALTENGINE_KEY
+dutyboard --provision-only        # signs in to altengine (or takes a key), or reads $ALTENGINE_KEY
 ```
 
 (`alt run altlimit/dutyboard --provision-only` does the same without installing anything.)
+
+**Sign in with altengine** is how it reaches your account: it opens altengine in your browser, you
+choose the organization and approve DutyBoard, and it receives an API key with only what it asked
+for — full control of the instances whose names start with `dutyboard`, and nothing else in the
+organization, which it cannot even list. Over SSH or on a machine with no display (or with
+`--device`) it shows a code to enter on any device instead. The key is kept on this machine for later
+upgrades, appears under Settings → API keys in the altengine console, where it can be revoked, and
+is replaced rather than added to when this machine signs in again. `dutyboard --sign-out` revokes
+it. Because of that prefix, a signed-in deployment's instances must be named `dutyboard…`; to use
+one named otherwise, or the local emulator, paste a key instead.
 
 Provisioning finds a DutyBoard already in the organization and upgrades it, or provisions a new one:
 
@@ -535,7 +545,8 @@ kinds need — which deploy only to those targets, as that kind, with the machin
 (Plain instance names from boards saved before targets had a kind still allow either.) Set it with
 `dutyboard --deploy-key`, and give that key write on each site and full on each functions instance
 your boards deploy to — nothing more, since agents run as you and could read it. The key
-`--provision-only` uses manages your whole DutyBoard and is not kept unless you say so. The runner
+`--provision-only` uses manages your whole DutyBoard: a pasted one is not kept unless you say so, and
+one from signing in is kept, reaching only the `dutyboard…` instances. The runner
 checks the deploy key against every board's instances as it starts, and says on the Machines page
 what the key is missing before any duty gets as far as deploying.
 

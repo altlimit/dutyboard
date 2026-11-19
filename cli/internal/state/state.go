@@ -72,6 +72,9 @@ type Config struct {
 	Altengine string `json:"altengine,omitempty"`
 	// Instances names the deployment's instances, by service, kept for upgrades.
 	Instances map[string]string `json:"instances,omitempty"`
+	// AltengineSignedIn says the altengine key kept on this machine came from "Sign in with
+	// altengine": it reaches only instances whose names start with `dutyboard`.
+	AltengineSignedIn bool `json:"altengine_signed_in,omitempty"`
 
 	MachineID   string `json:"machine_id,omitempty"`
 	MachineName string `json:"machine_name,omitempty"`

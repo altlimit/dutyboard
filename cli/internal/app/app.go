@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
 	"strings"
@@ -42,6 +43,13 @@ type Flags struct {
 	DeployKey     bool
 	MCPSecrets    bool
 	Stop          bool
+	// Device signs in to altengine with a code entered on another device, instead of a browser here.
+	Device bool
+	// SignOut revokes the altengine key kept here, when it came from signing in, and forgets it.
+	SignOut bool
+	// Open shows a page in the person's browser — the desktop app's own way of doing it. Nil is the
+	// system browser.
+	Open func(string) error
 	// Key is an altengine key a person gave in a window. There is no flag for it: on a command line
 	// it would be in the shell's history and the process list.
 	Key string
@@ -76,6 +84,8 @@ func Main(args []string) int {
 	fs.BoolVar(&f.Service, "service", false, "set dutyboard to start by itself (at boot on a server) without asking, start it, and exit")
 	fs.BoolVar(&f.DeployKey, "deploy-key", false, "set the altengine key this machine deploys projects with, then exit")
 	fs.BoolVar(&f.MCPSecrets, "mcp-secrets", false, "set the secrets your boards' MCP servers need on this machine, then exit")
+	fs.BoolVar(&f.Device, "device", false, "sign in to altengine with a code you enter on another device (no browser here)")
+	fs.BoolVar(&f.SignOut, "sign-out", false, "sign this machine out of altengine: revoke and forget the key kept here")
 	fs.BoolVar(&f.Stop, "stop", false, "stop the dutyboard running on this machine; the duties it holds resume when it starts again")
 	fs.Usage = func() {
 		fmt.Fprintln(fs.Output(), "dutyboard — runs your DutyBoard's work on this machine.")
@@ -105,6 +115,10 @@ func Main(args []string) int {
 		err = SetDeployKey(ctx, u, f)
 	case f.MCPSecrets:
 		err = SetMCPSecrets(ctx, u)
+	case f.SignOut:
+		if err = SignOutAltengine(ctx); err == nil {
+			u.OK("signed out of altengine — no key is kept on this machine")
+		}
 	case f.Stop:
 		err = stopRunning(u, true)
 	default:
@@ -137,9 +151,9 @@ func Provision(ctx context.Context, u *ui.UI, f Flags) (*provision.Result, error
 	}
 	u.Say("DutyBoard v%s  (%s)", bundle.Version, bundle.Source)
 
-	key, typed := f.Key, f.Key != ""
+	key, typed, signedIn, stored := f.Key, f.Key != "", false, false
 	if key == "" {
-		if key, typed, err = altengineKey(u, client); err != nil {
+		if key, typed, signedIn, stored, err = altengineKey(ctx, u, client, f); err != nil {
 			return nil, err
 		}
 	}
@@ -155,7 +169,24 @@ func Provision(ctx context.Context, u *ui.UI, f Flags) (*provision.Result, error
 			origins = append(origins, strings.TrimRight(o, "/"))
 		}
 	}
-	res, err := provision.Run(ctx, provision.Options{Client: client, Assets: bundle, UI: u, Instance: f.Instance, Origins: origins})
+	opts := provision.Options{Client: client, Assets: bundle, UI: u, Instance: f.Instance, Origins: origins}
+	if signedIn {
+		opts.NamePrefix = altengine.NamePrefix
+	}
+	res, err := provision.Run(ctx, opts)
+	if err != nil && stored && altengine.IsStatus(err, http.StatusUnauthorized) {
+		// The key kept here was revoked: the person who signed in left the organization or reset their
+		// password, or someone removed it in the altengine console. Keeping it would fail every upgrade
+		// the same way, so it goes, and a person is asked again.
+		if ferr := ForgetAltengineKey(); ferr != nil {
+			u.Warn("could not remove the key kept on this machine: %v", ferr)
+		}
+		u.Warn("altengine no longer accepts the key kept on this machine — it was revoked")
+		if !u.Interactive {
+			return nil, errors.New("altengine revoked the key kept on this machine — sign in again")
+		}
+		return Provision(ctx, u, f)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -180,7 +211,7 @@ func Provision(ctx context.Context, u *ui.UI, f Flags) (*provision.Result, error
 			return nil, err
 		}
 		if keep {
-			if err := state.SetCredential(state.AltengineKey, key); err != nil {
+			if err := rememberAltengineKey(key, false); err != nil {
 				u.Warn("could not store the key: %v", err)
 			}
 		}
@@ -194,28 +225,56 @@ func Provision(ctx context.Context, u *ui.UI, f Flags) (*provision.Result, error
 	return res, nil
 }
 
-// altengineKey finds the key: $ALTENGINE_KEY, then the stored one, then a person. The emulator
-// takes anything, and `dev` is what it is usually given. `typed` says a person entered it.
-func altengineKey(u *ui.UI, c *altengine.Client) (key string, typed bool, err error) {
+// altengineKey finds the key: $ALTENGINE_KEY, then the stored one, then a person — who, on hosted
+// altengine, can sign in instead of making and pasting a key. The emulator takes anything, and `dev`
+// is what it is usually given. `typed` says a person pasted it; `signedIn` that it came from "Sign in
+// with altengine", so it reaches only instances named `dutyboard…`; `stored` that it was kept here.
+func altengineKey(ctx context.Context, u *ui.UI, c *altengine.Client, f Flags) (key string, typed, signedIn, stored bool, err error) {
 	if k := os.Getenv("ALTENGINE_KEY"); k != "" {
-		return k, false, nil
+		return k, false, false, false, nil
 	}
 	if c.Local() {
-		return "dev", false, nil
+		return "dev", false, false, false, nil
 	}
 	if k, err := state.Credential(state.AltengineKey); err == nil && k != "" {
-		return k, false, nil
+		cfg, _ := state.LoadConfig()
+		return k, false, cfg != nil && cfg.AltengineSignedIn, true, nil
+	}
+	// Only with someone there to approve it: run from CI with no key, a sign-in would wait ten minutes
+	// for nobody, where asking for the key fails at once and says what is missing.
+	if altengine.CanSignIn(c.BaseURL) && u.Interactive {
+		device := f.Device || browserless()
+		label := "Sign in with altengine — opens your browser"
+		if device {
+			label = "Sign in with altengine — with a code you enter on any device"
+		}
+		pick, err := u.Choose("How should DutyBoard reach your altengine?", []string{label, "Paste an altengine API key"}, 0)
+		if err != nil {
+			return "", false, false, false, err
+		}
+		if pick == 0 {
+			t, err := SignInAltengine(ctx, u, device, f.Open)
+			switch {
+			case err == nil:
+				return t.Key, false, true, false, nil
+			case errors.Is(err, altengine.ErrDeviceFlowUnavailable):
+				u.Warn("%v", err)
+				u.Say("Run this on a machine with a browser to sign in, or paste a key.")
+			default:
+				return "", false, false, false, err
+			}
+		}
 	}
 	u.Say("An altengine API key with control access to instances and functions")
 	u.Say("(altengine console → Settings → API keys).")
 	k, err := u.Secret("altengine API key")
 	if err != nil {
-		return "", false, err
+		return "", false, false, false, err
 	}
 	if k == "" {
-		return "", false, errors.New("no key given")
+		return "", false, false, false, errors.New("no key given")
 	}
-	return k, true, nil
+	return k, true, false, false, nil
 }
 
 // loadAssets picks where the function and console come from: a checkout named on the command line,

@@ -102,7 +102,7 @@ func runLocal(ctx context.Context, o Options) (*Result, error) {
 	}
 	queue := ""
 	if i, ok := inv.Find("tasks", n.Tasks); ok {
-		queue = webhookQueue(ctx, c, u, n, i.ID)
+		queue = webhookQueue(ctx, c, u, n, i.Name)
 	}
 	recordWebhooks(ctx, c, u, n, queue)
 	u.OK("CORS: %v", origins)

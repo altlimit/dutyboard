@@ -41,7 +41,7 @@ type fakeHosted struct {
 	staticSites map[string]int            // static instance → deployments made to it
 	documents   map[string]map[string]any // "datastore/collection/key" → data
 	queues      map[string]map[string]any // "tasks instance/queue" → settings
-	queueDenied bool                      // the key lacks Full on instances, which queues need
+	queueDenied bool                      // the key lacks Full on the tasks instance, which changing a queue needs
 }
 
 func newFake(t *testing.T, version string) *fakeHosted {
@@ -139,40 +139,53 @@ func (f *fakeHosted) serve(w http.ResponseWriter, r *http.Request) {
 		case "auth_set_rules":
 			f.rules = a["access"].(map[string]any)
 			toolOK(w, msg.ID, map[string]any{"ok": true})
-		case "tasks_list_queues":
+		default:
+			toolErr(w, msg.ID, "unknown tool "+msg.Params.Name)
+		}
+	case strings.HasPrefix(p, "/v1/tasks/") && strings.Contains(p, "/queues"):
+		// /v1/tasks/{instance}/queues[/{queue}] — the data-plane routes, which need Full on the tasks
+		// instance only. The MCP tool needed Full on instances org-wide, which a signed-in key never has.
+		parts := strings.Split(strings.TrimPrefix(p, "/v1/tasks/"), "/")
+		inst := parts[0]
+		switch {
+		case r.Method == http.MethodGet && len(parts) == 2:
 			list := []any{}
 			for key := range f.queues {
-				if inst, name, _ := strings.Cut(key, "/"); inst == str("instance") {
+				if i, name, _ := strings.Cut(key, "/"); i == inst {
 					list = append(list, map[string]any{"name": name})
 				}
 			}
-			toolOK(w, msg.ID, map[string]any{"instance": str("instance"), "queues": list})
-		case "tasks_set_queue":
-			if f.queueDenied {
-				toolErr(w, msg.ID, "PERMISSION_DENIED: this credential lacks 'full' access to instances")
+			writeJSON(w, map[string]any{"queues": list})
+		case f.queueDenied:
+			w.WriteHeader(http.StatusForbidden)
+			fmt.Fprint(w, `{"error":{"code":"PERMISSION_DENIED","message":"insufficient grant for tasks"}}`)
+		case r.Method == http.MethodPost && len(parts) == 2:
+			var req map[string]any
+			_ = json.Unmarshal(body, &req)
+			key := inst + "/" + fmt.Sprint(req["name"])
+			if _, exists := f.queues[key]; exists {
+				w.WriteHeader(http.StatusConflict)
+				fmt.Fprint(w, `{"error":{"code":"ALREADY_EXISTS","message":"queue already exists"}}`)
 				return
 			}
-			key := str("instance") + "/" + str("name")
-			_, exists := f.queues[key]
-			if a["create"] == true && exists {
-				toolErr(w, msg.ID, "CONFLICT: queue '"+str("name")+"' already exists")
+			delete(req, "name")
+			f.queues[key] = req
+			w.WriteHeader(http.StatusCreated)
+			writeJSON(w, map[string]any{"queue": req})
+		case r.Method == http.MethodPatch && len(parts) == 3:
+			key := inst + "/" + parts[2]
+			if _, exists := f.queues[key]; !exists {
+				http.NotFound(w, r)
 				return
 			}
-			if a["create"] != true && !exists {
-				toolErr(w, msg.ID, "NOT_FOUND: no queue '"+str("name")+"'")
-				return
+			var req map[string]any
+			_ = json.Unmarshal(body, &req)
+			for k, v := range req {
+				f.queues[key][k] = v
 			}
-			if !exists {
-				f.queues[key] = map[string]any{}
-			}
-			for k, v := range a {
-				if k != "instance" && k != "name" && k != "create" {
-					f.queues[key][k] = v
-				}
-			}
-			toolOK(w, msg.ID, map[string]any{"ok": true})
+			writeJSON(w, map[string]any{"queue": f.queues[key]})
 		default:
-			toolErr(w, msg.ID, "unknown tool "+msg.Params.Name)
+			http.NotFound(w, r)
 		}
 	case strings.HasPrefix(p, "/v1/datastore/") && strings.HasSuffix(p, "/documents"):
 		parts := strings.Split(p, "/") // "" v1 datastore <ds> ns _default col <col> documents
@@ -384,7 +397,7 @@ func TestHostedUpdatesTheWebhooksQueueItMadeBefore(t *testing.T) {
 	}
 }
 
-// A key with Write on instances cannot make or change a queue. Without a queue, webhooks are off and
+// A key with Write on the tasks instance cannot make or change a queue. Without a queue, webhooks are off and
 // the run says what key would make one; with a queue an earlier run made, they stay on.
 func TestHostedWebhooksQueueWithANarrowKey(t *testing.T) {
 	f := newFake(t, "9.9.9")
@@ -397,7 +410,7 @@ func TestHostedWebhooksQueueWithANarrowKey(t *testing.T) {
 	if f.documents["dutyboard/settings/webhooks"]["tasks_instance"] != "" {
 		t.Errorf("with no queue, webhooks should be off: %v", f.documents["dutyboard/settings/webhooks"])
 	}
-	if !strings.Contains(out.String(), "Instances & data: Full") {
+	if !strings.Contains(out.String(), "Full on the tasks instance dutyboard-tasks") {
 		t.Errorf("the run should say which key makes the queue:\n%s", out)
 	}
 
@@ -714,5 +727,39 @@ func TestHostedFromAWindowMakesANewDeploymentUnderTheNameTyped(t *testing.T) {
 	}
 	if _, ok := f.inv.Find("datastore", "mine"); !ok {
 		t.Error("the new deployment's datastore was not created")
+	}
+}
+
+// A key from "Sign in with altengine" reaches only instances named `dutyboard…`: a deployment under
+// another name is refused before anything is created, with what to do instead.
+func TestSignedInKeyKeepsToItsPrefix(t *testing.T) {
+	f := newFake(t, "9.9.9")
+	_, err := Run(context.Background(), Options{Client: hosted(f.srv.URL), Assets: testAssets(t, "9.9.9"), UI: quietUI(), Instance: "hakan", NamePrefix: "dutyboard"})
+	if err == nil || !strings.Contains(err.Error(), `"dutyboard-hakan"`) || !strings.Contains(err.Error(), "paste an altengine key") {
+		t.Fatalf("err = %v", err)
+	}
+	if len(f.deployed) != 0 {
+		t.Errorf("something was deployed before the name was refused: %v", f.deployed)
+	}
+
+	res, err := Run(context.Background(), Options{Client: hosted(f.srv.URL), Assets: testAssets(t, "9.9.9"), UI: quietUI(), Instance: "dutyboard-hakan", NamePrefix: "dutyboard"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Names.Auth != "dutyboard-hakan-auth" {
+		t.Errorf("names = %+v", res.Names)
+	}
+}
+
+// Asked for a name, a signed-in run offers one that fits, and takes it when nobody is there to type.
+func TestSignedInNewDeploymentDefaultFits(t *testing.T) {
+	f := newFake(t, "9.9.9")
+	f.add("datastore", "dutyboard") // the default is taken
+	res, err := Run(context.Background(), Options{Client: hosted(f.srv.URL), Assets: testAssets(t, "9.9.9"), UI: quietUI(), NamePrefix: "dutyboard"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Names.Functions != "dutyboard-2" {
+		t.Errorf("functions = %q", res.Names.Functions)
 	}
 }
