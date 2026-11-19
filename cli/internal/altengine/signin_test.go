@@ -313,3 +313,25 @@ func TestCanSignInOnlyOnHostedAltengine(t *testing.T) {
 		}
 	}
 }
+
+// altengine answers with its own spelling of what was granted: one control token per area at the
+// highest level, grants sorted. What it says must be read for what it means.
+func TestMissingReadsTheGrantForWhatItMeans(t *testing.T) {
+	o := &OAuth{}
+	for _, c := range []struct {
+		granted string
+		missing string
+	}{
+		// What altengine actually returned for the full request: org:read folded into instances:write.
+		{"instances:write auth:full:dutyboard* blob:full:dutyboard* channel:full:dutyboard* datastore:full:dutyboard* " +
+			"functions:full:dutyboard* search:full:dutyboard* static:full:dutyboard* tasks:full:dutyboard*", ""},
+		// A whole-service grant covers the prefix; a lower level does not.
+		{"instances:read datastore:full auth:full:dutyboard* blob:full:dutyboard* channel:full:dutyboard* " +
+			"functions:full:dutyboard* search:full:dutyboard* static:full:dutyboard* tasks:write:dutyboard*", "instances:write tasks:full:dutyboard*"},
+		{"", strings.Join(Scopes, " ")},
+	} {
+		if got := strings.Join(o.Missing(&Token{Scope: c.granted}), " "); got != c.missing {
+			t.Errorf("granted %q: missing %q, want %q", c.granted, got, c.missing)
+		}
+	}
+}

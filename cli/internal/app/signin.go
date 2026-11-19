@@ -36,9 +36,10 @@ func signIn(ctx context.Context, u *ui.UI, device bool, o *altengine.OAuth, open
 	} else {
 		u.Say("Opening altengine in your browser: sign in, choose the organization, and approve DutyBoard.")
 		t, err = o.SignIn(ctx, name, func(link string) error {
-			if err := open(link); err != nil {
-				u.Say("Open this link to sign in: %s", link)
-			}
+			// Always shown: an opener can report success and still put no window in front of anyone
+			// (Windows' explorer.exe from WSL does), and then this link is the only way on.
+			_ = open(link)
+			u.Say("Only if no browser tab opened, open this link (one tab only): %s", link)
 			return nil
 		})
 	}

@@ -135,30 +135,90 @@ type Token struct {
 	Replaced bool // this machine's earlier key was replaced, not a new one added
 }
 
-// Missing is every scope asked for that the grant does not include.
+// Missing is every scope asked for that the grant does not cover. Compared by meaning, not by
+// spelling: altengine writes the granted scope back in its own form — one token per control area at
+// the highest level granted, so `org:read instances:write` returns as `instances:write`, and
+// `org:read` and `instances:read` are the same thing.
 func (o *OAuth) Missing(t *Token) []string {
-	have := map[string]bool{}
-	for _, s := range strings.Fields(t.Scope) {
-		have[s] = true
-	}
+	have := parseScope(t.Scope)
 	var out []string
 	for _, s := range o.scopes() {
-		if !have[s] {
+		if !have.covers(s) {
 			out = append(out, s)
 		}
 	}
 	return out
 }
 
+var levelRank = map[string]int{"read": 1, "write": 2, "full": 3}
+
+// controlTokens are altengine's control-area scopes: the area each reaches, at what level.
+var controlTokens = map[string]struct {
+	area  string
+	level int
+}{
+	"org:read":          {"instances", 1},
+	"instances:read":    {"instances", 1},
+	"instances:write":   {"instances", 2},
+	"functions:inspect": {"functions", 1},
+	"functions:deploy":  {"functions", 2},
+	"usage:read":        {"usage", 1},
+}
+
+// access is a scope string read the way altengine reads it: control areas, and grants keyed by
+// `<service>` (every instance) or `<service>:<name or prefix*>`, each at its highest level.
+type access struct{ control, grants map[string]int }
+
+func parseScope(scope string) access {
+	a := access{control: map[string]int{}, grants: map[string]int{}}
+	for _, tok := range strings.Fields(scope) {
+		if c, ok := controlTokens[tok]; ok {
+			a.control[c.area] = max(a.control[c.area], c.level)
+			continue
+		}
+		parts := strings.SplitN(tok, ":", 3)
+		if len(parts) < 2 || levelRank[parts[1]] == 0 {
+			continue
+		}
+		key := parts[0]
+		if len(parts) == 3 {
+			key += ":" + parts[2]
+		}
+		a.grants[key] = max(a.grants[key], levelRank[parts[1]])
+	}
+	return a
+}
+
+// covers is whether this access includes what one requested token asks for: the same target at
+// that level or higher, or the whole service at that level or higher.
+func (a access) covers(tok string) bool {
+	if c, ok := controlTokens[tok]; ok {
+		return a.control[c.area] >= c.level
+	}
+	parts := strings.SplitN(tok, ":", 3)
+	if len(parts) < 2 {
+		return false
+	}
+	need := levelRank[parts[1]]
+	if need == 0 {
+		return false
+	}
+	if a.grants[parts[0]] >= need {
+		return true
+	}
+	return len(parts) == 3 && a.grants[parts[0]+":"+parts[2]] >= need
+}
+
 // InsufficientError is a grant that leaves out what provisioning needs.
 type InsufficientError struct {
 	OrgName string
 	Missing []string
+	Granted string
 }
 
 func (e *InsufficientError) Error() string {
-	return fmt.Sprintf("altengine granted DutyBoard less than it needs in %s — missing %s. Your role there cannot grant it; "+
-		"an owner of that organization can sign in instead, or paste a key", e.OrgName, strings.Join(e.Missing, ", "))
+	return fmt.Sprintf("altengine granted DutyBoard less than it needs in %s — missing %s (granted: %s). Your role there cannot "+
+		"grant it; an owner of that organization can sign in instead, or paste a key", e.OrgName, strings.Join(e.Missing, ", "), e.Granted)
 }
 
 // Check refuses a token that cannot provision, and revokes it so it is not left in the
@@ -169,7 +229,7 @@ func (o *OAuth) Check(ctx context.Context, t *Token) error {
 		return nil
 	}
 	_ = o.Revoke(ctx, t.Key)
-	return &InsufficientError{OrgName: t.OrgName, Missing: missing}
+	return &InsufficientError{OrgName: t.OrgName, Missing: missing, Granted: t.Scope}
 }
 
 // pkce is one verifier and its S256 challenge, and the state that ties the callback to this run.
