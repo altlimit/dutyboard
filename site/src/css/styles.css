@@ -244,6 +244,14 @@ p > code {
 }
 
 .boardview-figure { margin: 0; }
+
+/* A screenshot of the console's Office, taken at twice its size so it stays sharp on dense screens. */
+.office-figure { margin: 0 0 2.5rem; }
+.office-figure img {
+  display: block; width: 100%; height: auto;
+  border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow);
+}
+.office-figure figcaption { margin-top: 0.9rem; color: var(--text-dim); font-size: 0.93rem; max-width: var(--measure); }
 .boardview-figure figcaption {
   margin-top: 0.9rem; color: var(--text-dim); font-size: 0.93rem; max-width: var(--measure);
 }

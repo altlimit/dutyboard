@@ -302,6 +302,12 @@ if (role) {
     slim: !instructions.includes("# Linked boards"),
     endsWithWhere: /# Where you are working\n[\s\S]*$/.test(instructions) && !/# Where you are working[\s\S]*\n# /.test(instructions),
   };
+  // Who to hand to, by what the shipped teams call their builders, reviewers and planners — so the
+  // stand-in works any of them, not only the software team.
+  const pick = (ids) => ids.find((id) => seen.canHandTo.includes(id)) || seen.canHandTo[0];
+  const builder = () => pick(["engineer", "writer", "analyst", "operator", "specialist"]);
+  const reviewer = () => pick(["qa", "editor", "reviewer", "checker"]);
+  const planner = () => pick(["architect", "strategist", "advisor"]);
   const handOn = async (to, note) => {
     const r = await tool("duty_handoff", { duty_id: dutyId, to_role: to, note });
     record({ ...seen, handedTo: to, handoffError: r.isError ? r.text : null, handoffStatus: r.data?.status });
@@ -318,7 +324,7 @@ if (role) {
       record({ ...seen, didItself: true, integrate: integrated.data, completeError: completed.isError ? completed.text : null });
       finish("did it");
     }
-    await handOn(title.includes("[design]") ? "architect" : "engineer", "Goal: do what the title says. Done when the file for it is on the main branch.");
+    await handOn(title.includes("[design]") ? planner() : builder(), "Goal: do what the title says. Done when the file for it is on the main branch.");
   }
 
   if (instructions.includes("**You do not land or complete this duty.**")) {
@@ -349,7 +355,7 @@ if (role) {
     const memory = await tool("board_memory");
     const wrote = await tool("board_memory_write", { body: `${memory.data?.body ? memory.data.body + "\n" : "## Notes\n"}- ${role} worked ${dutyId}.`, based_on: memory.data?.version ?? 0 });
     record({ ...seen, event: "team-build", refused: { integrate: landed.isError && /duty_handoff/.test(landed.text), complete: completed.isError && /duty_handoff/.test(completed.text) }, memoryError: wrote.isError ? wrote.text : null, noteError: noted && noted.isError ? noted.text : null, noteId: noted?.data?.duty_id || null });
-    await handOn("qa", fixing ? "Fixed every finding; see the fix file." : "Built it and committed. Tests pass.");
+    await handOn(reviewer(), fixing ? "Fixed every finding; see the fix file." : "Built it and committed. Tests pass.");
   }
 
   if (instructions.includes("**You are the check before this counts.**")) {
@@ -359,7 +365,7 @@ if (role) {
     const ahead = git("log", "--format=%s", "origin/main..HEAD");
     if (title.includes("[bounce]") && !fixed) {
       record({ ...seen, event: "team-review", built, fixed, ahead, verdict: "sent back" });
-      await handOn("engineer", "1. The footer file is missing a fix. Add it.");
+      await handOn(builder(), "1. The footer file is missing a fix. Add it.");
     }
     const integrated = await tool("duty_integrate");
     const completed = await tool("duty_complete", { duty_id: dutyId, outcome_summary: `Verified and landed in ${integrated.data?.commit}` });
@@ -368,7 +374,7 @@ if (role) {
   }
 
   // A planner: its handoff is the plan.
-  await handOn("engineer", "Plan: 1. Add the file. 2. Test it.");
+  await handOn(builder(), "Plan: 1. Add the file. 2. Test it.");
 }
 
 if (title.includes("[crash]")) {
