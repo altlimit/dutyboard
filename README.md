@@ -191,7 +191,8 @@ it from another address.
   console reads where it points from the `/altengine.json` altengine writes beside it.
 
 **Upgrading has two halves.** The board and the console change when someone opens the link again —
-or uses *Redeploy* on the app in the altengine console — which reads `latest` and deploys whatever
+or uses *Check for updates* then *Update* on the app under *Deployed apps* in the altengine console —
+which reads `latest` and deploys whatever
 changed. The page says what will change before anything does. `/health` reports the version
 deployed, and the console's **Machines** page and every `dutyboard` say when a newer one is out, with
 the link. Machines update themselves with `alt update altlimit/dutyboard && dutyboard --service`

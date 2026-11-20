@@ -30,7 +30,7 @@ func altengineConsole() string {
 }
 
 // ManifestURL is the newest release's manifest. A deployment made from it upgrades from the same
-// address: altengine's own "Redeploy" reads it again and gets whatever is newest then.
+// address: altengine's "Check for updates" reads it again and gets whatever is newest then.
 func ManifestURL() string { return deployBase() + "latest/altengine.json" }
 
 // DeployLink opens the deploy page for DutyBoard. app names the deployment to upgrade — the name
