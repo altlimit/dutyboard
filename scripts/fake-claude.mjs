@@ -285,6 +285,31 @@ if (/draft this board's team/.test(prompt)) {
 
 // A duty on a board with a team: work as the role the system prompt names.
 const role = (instructions.match(/^# Your role: (.+)$/m) || [])[1] || "";
+// FAKE_CLAUDE_THINK, for a demo: work through what this role would do — read, change, check — for
+// that many seconds, reporting each step as Claude Code does when it starts a command or calls a tool.
+// The daemon turns each into the duty's "now" line, so the office can be watched doing things.
+const think = Number(process.env.FAKE_CLAUDE_THINK || 0);
+if (role && think) {
+  const read = (file_path) => ({ name: "Read", input: { file_path } });
+  const edit = (file_path) => ({ name: "Edit", input: { file_path } });
+  const run = (command) => ({ name: "Bash", input: { command } });
+  const tool = (server, name) => ({ name: `mcp__${server}__${name}`, input: {} });
+  const steps = {
+    "Duty Officer": [read("README.md"), { name: "Grep", input: { pattern: "cart" } }, tool("dutyboard", "duty_search"), tool("dutyboard", "board_roster")],
+    Architect: [read("docs/architecture.md"), { name: "Grep", input: { pattern: "checkout" } }, read("src/checkout/session.ts"), edit("docs/plans/gift-cards.md")],
+    Engineer: [read("src/cart/total.ts"), edit("src/cart/total.ts"), edit("src/cart/total.test.ts"), run("npm test -- --run src/cart"), run("npm run lint"), run("git commit -m 'Round once, at display'")],
+    "Senior Engineer": [read("db/migrations/0042_invoices.sql"), edit("db/migrations/0043_refunds.sql"), run("npm run migrate -- --dry-run"), run("npm test")],
+    QA: [run("git diff main...HEAD --stat"), read("src/cart/total.ts"), run("npx playwright test e2e/checkout.spec.ts"), tool("playwright", "browser_take_screenshot"), run("npm test")],
+    Strategist: [tool("analytics", "top_pages"), tool("analytics", "search_terms"), edit("plans/spring-campaign.md")],
+    Writer: [read("posts/style-guide.md"), edit("posts/gift-cards-launch.md"), tool("storefront-shop", "product_update"), tool("storefront-shop", "file_finalize")],
+    Editor: [read("posts/gift-cards-launch.md"), { name: "Grep", input: { pattern: "TODO" } }, edit("posts/gift-cards-launch.md")],
+  }[role] || [read("README.md")];
+  const each = (think * 1000) / steps.length;
+  for (const step of steps) {
+    say({ type: "assistant", message: { content: [{ type: "tool_use", ...step }] } });
+    await new Promise((r) => setTimeout(r, each));
+  }
+}
 if (role) {
   const handoffTool = listedTools.find((t) => t.name === "duty_handoff");
   const seen = {

@@ -18,6 +18,7 @@ import { useRouter } from "vue-router";
 import { plainClick } from "../lib/clicks.js";
 import PixelPerson from "./PixelPerson.vue";
 import PixelSprite from "./PixelSprite.vue";
+import Marquee from "./Marquee.vue";
 import { activityLine } from "../lib/runners.js";
 import { until } from "../lib/duties.js";
 import { SEATS, TRAY_SHOWN, WANDER_MS, atDesk, buildingFloor, floorMoves, hangoutGroups, levelLabel } from "../lib/team.js";
@@ -126,7 +127,12 @@ function bubbleOf(desk) {
   // helping someone else.
   if (arriving[desk.key] || !present(desk)) return null;
   if (desk.asking.length) return { kind: "ask", mark: "?", title: desk.asking[0].title, more: desk.asking.length - 1 };
-  if (desk.working.length) return { kind: "work", mark: "", title: desk.working[0].duty.title, more: desk.working.length - 1 };
+  if (desk.working.length) {
+    // The duty, and what the machine working it is doing this moment: "Daily shop shift — Running the tests".
+    const w = desk.working[0];
+    const now = w.activity ? activityLine(w.activity) : "";
+    return { kind: "work", mark: "", title: now ? `${w.duty.title} — ${now}` : w.duty.title, more: desk.working.length - 1 };
+  }
   const l = linger[desk.key];
   if (l) return { kind: l.kind, mark: l.mark, title: l.title, more: 0 };
   // The time first: on a narrow desk the title is what gets cut, and "in 3h" is the news.
@@ -469,7 +475,9 @@ function animate(el, item, kind) {
             <span v-if="bubbleOf(desk)" class="cube__bubble" aria-hidden="true">
               <PixelSprite v-if="bubbleOf(desk).kind === 'clock'" class="cube__clock" name="clock" :scale="1.25" />
               <b v-if="bubbleOf(desk).mark" class="cube__mark">{{ bubbleOf(desk).mark }}</b>
-              <span class="cube__title">{{ bubbleOf(desk).title }}</span>
+              <!-- Only work in progress scrolls: what a working desk is doing changes as you watch. Anything
+                   else is cut short — pointing at the desk says it in full underneath. -->
+              <Marquee class="cube__title" :text="bubbleOf(desk).title" :still="bubbleOf(desk).kind !== 'work'" />
               <span v-if="bubbleOf(desk).more" class="cube__also">+{{ bubbleOf(desk).more }}</span>
             </span>
           </component>
@@ -496,7 +504,9 @@ function animate(el, item, kind) {
         <span v-if="visitors[pointedDesk.key]" class="info__line info__line--dim">
           {{ visitors[pointedDesk.key].map((v) => v.name).join(" and ") }} came over to help
         </span>
-        <span v-else-if="!pointedDesk.asking.length" class="info__line">
+        <!-- Where they are and what they are up to — only when there is no work in hand or question
+             waiting, which the lines above already say. -->
+        <span v-if="!pointedDesk.asking.length && !pointedDesk.working.length" class="info__line">
           {{
             linger[pointedDesk.key]
               ? `Just ${linger[pointedDesk.key].said} ${linger[pointedDesk.key].title}`
