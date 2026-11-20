@@ -115,6 +115,10 @@ function configure(env) {
     // person where to approve it. The function cannot work this out: the console is a static site
     // anywhere, and this is only ever called by the thing it serves.
     consoleUrl: env.DUTYBOARD_CONSOLE_URL || "",
+    // The app this deployment is in altengine, when it was deployed from DutyBoard's manifest — the
+    // name an upgrade link gives, so it updates this deployment and not a new one. Empty for one the
+    // provisioner made.
+    app: env.DUTYBOARD_APP || "",
   };
 }
 
@@ -394,6 +398,7 @@ export default {
         // who approves it.
         machines: true,
         console_url: cfg.consoleUrl || (await recordedConsoleUrl(health)),
+        app: cfg.app || null,
         // Whether the constraint that stops two agents holding one duty is actually in
         // place. It is created on demand, so it can fail — and a mutex that is silently
         // absent is worse than one nobody claimed to have.

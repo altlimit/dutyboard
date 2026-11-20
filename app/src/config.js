@@ -27,6 +27,9 @@ const env = {
   functions: deployed.functions || import.meta.env.VITE_FUNCTIONS_INSTANCE || "dutyboard",
   api: deployed.api || import.meta.env.VITE_API_URL || "",
   fn: deployed.fn || import.meta.env.VITE_FUNCTION_NAME || "board",
+  // The deployment's name in altengine, for a console deployed from DutyBoard's manifest (runtime.js):
+  // what an upgrade link names. Empty for one the provisioner published.
+  app: deployed.app || "",
 };
 
 /** What this build was compiled to talk to, before anyone retargets it. Exported so the
@@ -125,4 +128,5 @@ export const config = {
   // The default (unnamed) namespace cannot ride a URL path, so it travels as the
   // reserved `_default` sentinel and the server maps it back.
   namespace: "_default",
+  app: env.app,
 };

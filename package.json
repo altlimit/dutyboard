@@ -4,7 +4,7 @@
   "license": "MIT",
   "private": true,
   "type": "module",
-  "description": "DutyBoard — a coordination bus, external working memory and human-in-the-loop decision engine for autonomous agents, built on altengine functions + datastore + auth + channel.",
+  "description": "DutyBoard \u2014 a coordination bus, external working memory and human-in-the-loop decision engine for autonomous agents, built on altengine functions + datastore + auth + channel.",
   "scripts": {
     "dev": "npm run dev -w app",
     "dev:site": "sitegen -site site -public site/public -serve",
@@ -14,7 +14,7 @@
     "build:site": "sitegen -site site -public site/public -minify -clean && node -e \"require('fs').copyFileSync('agent/OPERATING.md','site/public/agent.md')\"",
     "provision": "sh scripts/provision.sh",
     "setup": "npm run build:fn && cd cli && go run ./cmd/dutyboard --provision-only --local --source ..",
-    "deploy": "npm run build:fn && npm run build:app && cd cli && go run ./cmd/dutyboard --provision-only --source ..",
+    "deploy": "npm run build:fn && npm run build:app && node scripts/build-deploy.mjs",
     "deploy:site": "node scripts/deploy-site.mjs",
     "demo": "node scripts/demo.mjs",
     "smoke": "node scripts/smoke.mjs",
@@ -22,7 +22,8 @@
     "check:session": "node scripts/session-check.mjs",
     "smoke:runner": "node scripts/smoke-runner.mjs",
     "smoke:team": "node scripts/smoke-team.mjs",
-    "check:team": "node scripts/roster-check.mjs"
+    "check:team": "node scripts/roster-check.mjs",
+    "build:deploy": "node scripts/build-deploy.mjs"
   },
   "devDependencies": {
     "esbuild": "^0.25.0"

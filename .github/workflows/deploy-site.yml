@@ -1,8 +1,10 @@
-# Publish www.dutyboard.com — the marketing site, and nothing else — to an altengine static instance.
+# Publish www.dutyboard.com — the marketing site, and the deploy folders the deploy link reads — to an
+# altengine static instance.
 #
-# dutyboard.com serves no console and knows no deployment: every DutyBoard's console is published
-# to that deployment's own static site by `dutyboard --provision-only`. So this builds site/ alone,
-# and runs when site/ (or what it publishes) changes.
+# dutyboard.com serves no console and knows no deployment: every DutyBoard's console is deployed to
+# that deployment's own static site from its manifest. The manifests themselves are published here, at
+# /deploy/v<version>/ and /deploy/latest/. This runs when site/ (or what it publishes) changes, and
+# after every release (release.yml asks for it).
 #
 # IT SKIPS UNTIL IT IS CONFIGURED. With no ALTENGINE_KEY secret the job says what is missing and
 # passes, rather than painting main red for a deploy nobody has set up.
@@ -20,6 +22,7 @@ on:
       - "site/**"
       - "agent/OPERATING.md"
       - "scripts/deploy-site.mjs"
+      - "scripts/fetch-deploys.mjs"
       - ".github/workflows/deploy-site.yml"
   workflow_dispatch:
 
@@ -50,6 +53,13 @@ jobs:
       # No npm install: building the site and deploy-site.mjs need only node and sitegen.
       - name: Build
         run: npm run build:site
+
+      # The deploy link's manifest, function and console, from the recent releases: the site is
+      # replaced whole, so every build brings them back.
+      - name: Deploy folders
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/fetch-deploys.mjs
 
       - id: gate
         env:

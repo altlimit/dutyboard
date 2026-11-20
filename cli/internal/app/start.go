@@ -167,26 +167,26 @@ func pairMachine(ctx context.Context, u *ui.UI, cfg *state.Config, f Flags) (str
 	if server == "" {
 		pick, err := u.Choose("No DutyBoard connected.", []string{
 			"Connect to an existing DutyBoard",
-			"Set up my own on altengine (needs an altengine API key)",
+			"Set up my own on altengine — deploy it from your browser",
 		}, 0)
 		if err != nil {
 			return "", err
 		}
 		if pick == 1 {
-			res, err := Provision(ctx, u, f)
-			if err != nil {
-				return "", err
-			}
-			server = res.APIURL
-			if res.ConsoleURL != "" {
-				cfg.Console = res.ConsoleURL
-			}
+			u.Step("Deploy to altengine")
+			u.Say("Sign in to altengine, pick an organization, and deploy. It makes your own DutyBoard, in your own")
+			u.Say("account; when it is done, the page links to its console.")
+			showDeployLink(u, DeployLink(""), f.Open)
+			u.Say("")
 		} else {
-			u.Say("The API URL is on the console's Machines page, e.g. https://abc123-fn.altengine.app/board")
-			server, err = u.Ask("DutyBoard API URL", "")
-			if err != nil {
-				return "", err
-			}
+			u.Say("Its console's address — the page you open in your browser — or the API URL from its Machines page.")
+		}
+		address, err := u.Ask("Your DutyBoard's console address", "")
+		if err != nil {
+			return "", err
+		}
+		if server, err = ResolveBoard(ctx, address); err != nil {
+			return "", err
 		}
 	}
 	// Before the next question, not after it: an address that is not a DutyBoard is said so at once.
@@ -277,7 +277,7 @@ func boardAt(ctx context.Context, server string) (*provision.HealthInfo, error) 
 		return nil, fmt.Errorf("%s is %w (%v)", server, ErrNotBoard, err)
 	}
 	if !health.Machines {
-		return nil, fmt.Errorf("the DutyBoard at %s (v%s) is too old to pair machines — upgrade it with `dutyboard --provision-only`", server, health.Version)
+		return nil, fmt.Errorf("the DutyBoard at %s (v%s) is too old to pair machines — upgrade it from %s", server, health.Version, DeployLink(health.App))
 	}
 	return health, nil
 }
@@ -302,34 +302,90 @@ func ResolveBoard(ctx context.Context, address string) (string, error) {
 
 var consoleConfig = regexp.MustCompile(`(?s)window\.DUTYBOARD_CONFIG\s*=\s*(\{.*\})\s*;`)
 
-// consoleAPI reads the API address out of the config.js next to the console at address.
+// consoleAPI reads the API address out of what sits next to the console at address: the
+// /altengine.json altengine generates for a console deployed from the manifest, or the config.js the
+// provisioner wrote.
 func consoleAPI(ctx context.Context, address string) (string, bool) {
+	if api, ok := runtimeConfigAPI(ctx, address); ok {
+		return api, true
+	}
+	return configJSAPI(ctx, address)
+}
+
+// besideConsole is the address of a file next to the console's index.html, whatever page of it was
+// copied — its routes are after the #.
+func besideConsole(address, name string) (string, bool) {
 	u, err := url.Parse(address)
 	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
 		return "", false
 	}
-	// Whatever page of the console was copied — its routes are after the # — config.js is beside index.html.
 	u.Fragment, u.RawQuery = "", ""
 	u.Path = strings.TrimSuffix(u.Path, "index.html")
 	if !strings.HasSuffix(u.Path, "/") {
 		u.Path += "/"
 	}
-	u.Path += "config.js"
+	u.Path += name
+	return u.String(), true
+}
+
+// fetchSmall GETs a small file, or fails.
+func fetchSmall(ctx context.Context, address string) ([]byte, bool) {
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, address, nil)
 	if err != nil {
-		return "", false
+		return nil, false
 	}
 	res, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return "", false
+		return nil, false
 	}
 	defer res.Body.Close()
 	if res.StatusCode != http.StatusOK {
+		return nil, false
+	}
+	body, err := io.ReadAll(io.LimitReader(res.Body, 1<<16))
+	return body, err == nil
+}
+
+// runtimeConfigAPI reads the board function's address out of /altengine.json: the functions
+// instance's URL, under which the function is `board`.
+func runtimeConfigAPI(ctx context.Context, address string) (string, bool) {
+	at, ok := besideConsole(address, "altengine.json")
+	if !ok {
 		return "", false
 	}
-	body, _ := io.ReadAll(io.LimitReader(res.Body, 1<<16))
+	body, ok := fetchSmall(ctx, at)
+	if !ok {
+		return "", false
+	}
+	var rc struct {
+		Instances map[string]struct {
+			Service string  `json:"service"`
+			URL     *string `json:"url"`
+		} `json:"instances"`
+	}
+	if json.Unmarshal(body, &rc) != nil {
+		return "", false
+	}
+	for _, i := range rc.Instances {
+		if i.Service == "functions" && i.URL != nil && *i.URL != "" {
+			return strings.TrimRight(*i.URL, "/") + "/" + provision.FunctionName, true
+		}
+	}
+	return "", false
+}
+
+// configJSAPI reads the API address out of the config.js the provisioner wrote next to the console.
+func configJSAPI(ctx context.Context, address string) (string, bool) {
+	at, ok := besideConsole(address, "config.js")
+	if !ok {
+		return "", false
+	}
+	body, ok := fetchSmall(ctx, at)
+	if !ok {
+		return "", false
+	}
 	m := consoleConfig.FindSubmatch(body)
 	if m == nil {
 		return "", false

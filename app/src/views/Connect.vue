@@ -12,7 +12,7 @@
 import { onMounted, ref } from "vue";
 import { useRoute } from "vue-router";
 import { config, DEFAULTS, clearOverrides, saveOverrides } from "../config.js";
-import { CONSOLE_VERSION } from "../lib/version.js";
+import { CONSOLE_VERSION, deployLink } from "../lib/version.js";
 
 const route = useRoute();
 
@@ -261,9 +261,8 @@ onMounted(() => {
     </form>
 
     <p class="small muted">
-      Not set up yet? <code>dutyboard --provision-only</code> sets up a DutyBoard in your altengine
-      account and publishes a console for it —
-      <a href="https://github.com/altlimit/dutyboard#run-your-own">see how</a>. Or
+      Not set up yet? <a :href="deployLink()" target="_blank" rel="noopener noreferrer">Deploy DutyBoard</a> into your
+      own altengine account, from your browser — it makes the board and a console for it. Or
       <router-link :to="{ name: 'signin' }">go back to signing in</router-link>.
     </p>
   </div>

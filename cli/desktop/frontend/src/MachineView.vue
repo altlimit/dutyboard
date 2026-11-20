@@ -2,9 +2,8 @@
 import { computed, nextTick, onMounted, onUnmounted, ref } from "vue";
 import { Events } from "@wailsio/runtime";
 import { Machine, Setup, Updates } from "../bindings/github.com/altlimit/dutyboard/cli/desktop";
-import type { DeploymentStatus, Provisioned, UpdateStatus } from "../bindings/github.com/altlimit/dutyboard/cli/desktop";
+import type { DeploymentStatus, UpdateStatus } from "../bindings/github.com/altlimit/dutyboard/cli/desktop";
 import { Snapshot, State } from "../bindings/github.com/altlimit/dutyboard/cli/desktop/host";
-import SetupProgress from "./SetupProgress.vue";
 
 // The machine once it is connected: what it is doing, and its log.
 const props = defineProps<{ status: Snapshot }>();
@@ -14,11 +13,9 @@ const busy = ref(false);
 const problem = ref("");
 const logEl = ref<HTMLElement | null>(null);
 
-// The DutyBoard this machine works for, next to the version this app carries. An upgrade is offered
-// only when the app's is later AND this machine holds an altengine key to deploy it with.
+// The DutyBoard this machine works for, next to the version this app carries. When the app's is later,
+// the machine says so and links to where whoever deployed it upgrades it, in their browser.
 const deployment = ref<DeploymentStatus | null>(null);
-const upgrading = ref(false);
-const upgraded = ref("");
 
 async function checkDeployment() {
   try {
@@ -64,11 +61,6 @@ async function setAutostart(on: boolean) {
   autostart.value = await Machine.Autostart();
 }
 
-function upgradeDone(result: unknown) {
-  upgraded.value = (result as Provisioned).version;
-  upgrading.value = false;
-  checkDeployment();
-}
 
 const labels: Record<string, string> = {
   [State.Unpaired]: "Not set up",
@@ -155,15 +147,6 @@ onUnmounted(() => {
       <span id="state" class="badge" :class="badges[status.state]" :data-state="status.state">{{ label }}</span>
     </header>
 
-    <SetupProgress
-      v-if="upgrading"
-      :title="'Upgrading your DutyBoard to v' + deployment?.ours + '…'"
-      :run="() => Setup.Upgrade()"
-      @done="upgradeDone"
-      @back="upgrading = false"
-    />
-
-    <template v-else>
     <section v-if="update?.state === 'ready'" id="update-ready" class="notice upgrade">
       <div>
         <strong>DutyBoard {{ update.version }} is ready to install.</strong>
@@ -176,20 +159,19 @@ onUnmounted(() => {
       <button id="update-now" class="primary" :disabled="busy" @click="act(Updates.RestartNow)">Install and restart now</button>
     </section>
 
-    <section v-if="deployment?.canUpgrade" id="upgrade" class="notice upgrade">
+    <section v-if="deployment?.behind" id="upgrade" class="notice upgrade">
       <div>
-        <strong>An upgrade is ready for your DutyBoard.</strong>
+        <strong>DutyBoard v{{ deployment.ours }} is out.</strong>
         <p>
-          It is on v{{ deployment.version }}, and this app carries v{{ deployment.ours }}. Upgrading changes the board
-          and the console for everyone on it; this machine keeps working while it runs.
+          Your DutyBoard is on v{{ deployment.version }}. Whoever deployed it upgrades it in altengine, from their browser;
+          it changes the board and the console for everyone on it, and this machine keeps working meanwhile.
         </p>
       </div>
-      <button id="upgrade-now" class="primary" @click="upgrading = true">Upgrade to v{{ deployment.ours }}</button>
+      <button id="upgrade-now" class="primary" @click="Setup.Open(deployment.upgradeLink)">Open the upgrade</button>
     </section>
     <p v-else-if="deployment?.appIsOlder" id="app-older" class="notice notice--warn">
       Your DutyBoard is on v{{ deployment.version }} and this app is v{{ deployment.ours }}. Update the app to match it.
     </p>
-    <p v-else-if="upgraded" id="upgraded" class="notice">Your DutyBoard is now on v{{ upgraded }}.</p>
 
     <section class="panel">
       <p v-if="status.state === State.External">
@@ -260,7 +242,6 @@ onUnmounted(() => {
       </div>
       <pre ref="logEl" id="log"><template v-if="lines.length">{{ lines.join("\n") }}</template><span v-else class="muted">Nothing logged yet.</span></pre>
     </section>
-    </template>
   </main>
 </template>
 

@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/altlimit/dutyboard/cli/internal/altengine"
 	"github.com/altlimit/dutyboard/cli/internal/assets"
 	"github.com/altlimit/dutyboard/cli/internal/board"
 	"github.com/altlimit/dutyboard/cli/internal/localmcp"
@@ -36,6 +35,7 @@ type Deployment struct {
 	Behind  bool   // the deployment is older: this binary can upgrade it
 	Ahead   bool   // the deployment is newer: it is this binary that needs updating
 	Console string // where the deployment says its console is
+	App     string // its name in altengine, when it was deployed from the link: what an upgrade names
 }
 
 // CheckDeployment asks the DutyBoard cfg is paired with what version it is, and compares. It asks
@@ -52,33 +52,8 @@ func CheckDeployment(ctx context.Context, cfg *state.Config, source string) (*De
 		Behind:  versionLess(health.Version, ours),
 		Ahead:   versionLess(ours, health.Version),
 		Console: health.ConsoleURL,
+		App:     health.App,
 	}, nil
-}
-
-// UpgradeFlags are f, aimed at the deployment this machine uses — so that upgrading does not ask
-// which one.
-func UpgradeFlags(cfg *state.Config, f Flags) Flags {
-	if f.Altengine == "" {
-		f.Altengine = cfg.Altengine
-	}
-	if f.Instance == "" && cfg.Instances != nil {
-		f.Instance = cfg.Instances["functions"]
-	}
-	return f
-}
-
-// CanProvision reports whether this machine holds what provisioning on altengineURL needs without
-// asking a person for it: an altengine key in the environment or kept here, or an emulator, which
-// takes any. It is altengineKey's own order, stopped short of the prompt.
-func CanProvision(altengineURL string) bool {
-	if os.Getenv("ALTENGINE_KEY") != "" {
-		return true
-	}
-	if altengine.New(altengineURL, "").Local() {
-		return true
-	}
-	k, err := state.Credential(state.AltengineKey)
-	return err == nil && k != ""
 }
 
 // checkDeployment compares the DutyBoard this machine is paired with to the one this binary deploys,
@@ -99,26 +74,10 @@ func checkDeployment(ctx context.Context, u *ui.UI, cfg *state.Config, f Flags) 
 	case d.Ours == "" || d.Version == "":
 		u.OK("DutyBoard v%s at %s", d.Version, cfg.Server)
 	case d.Behind:
-		u.Say("Your DutyBoard is v%s; this dutyboard deploys v%s.", d.Version, d.Ours)
-		u.Say("Upgrading changes the board and the console for everyone on it. It needs an altengine API key.")
-		yes, err := u.Confirm(fmt.Sprintf("Upgrade it to v%s now?", d.Ours), true)
-		if err != nil || !yes {
-			if !yes {
-				u.Note("left at v%s — `dutyboard --provision-only` upgrades it later", d.Version)
-			}
-			return err
-		}
-		if _, err := Provision(ctx, u, UpgradeFlags(cfg, f)); err != nil {
-			u.Warn("the upgrade did not finish: %v", err)
-			u.Note("this machine carries on with the DutyBoard as it is; `dutyboard --provision-only` tries again")
-			return nil
-		}
-		// Provision saved its own copy of the config.
-		fresh, err := state.LoadConfig()
-		if err != nil {
-			return err
-		}
-		*cfg = *fresh
+		// Upgrading is the owner's, in their browser, as themselves: this machine only says so. It works
+		// on with the DutyBoard as it is meanwhile.
+		u.Say("Your DutyBoard is v%s; v%s is out. Upgrading changes the board and the console for everyone on it.", d.Version, d.Ours)
+		u.Say("Whoever deployed it upgrades it at %s", DeployLink(d.App))
 	case d.Ahead:
 		u.Warn("your DutyBoard is v%s and this dutyboard is v%s — update it: alt update altlimit/dutyboard", d.Version, d.Ours)
 	default:

@@ -7,6 +7,7 @@ import { useRoute, useRouter } from "vue-router";
 import { api, subscribeLive } from "../lib/altengine.js";
 import { user as me } from "../lib/session.js";
 import { config } from "../config.js";
+import { deployLink } from "../lib/version.js";
 import { ago, expiryChoices, statusLabel } from "../lib/duties.js";
 import { newRepoDraft, noRepo, profileDraft, profilePayload, requestNewRepo, runnerLimited, runStateLabel } from "../lib/runners.js";
 import BoardAccess from "../components/BoardAccess.vue";
@@ -1329,8 +1330,8 @@ function tabKey(event) {
           </table>
         </div>
         <p v-if="!loading && !webhooksOn" class="small muted">
-          Webhooks are off on this deployment: it has no task queue. Deploy it again with
-          <code class="mono">dutyboard --provision-only</code> to add one.
+          Webhooks are off on this deployment: it has no task queue.
+          <a :href="deployLink(config.app)" target="_blank" rel="noopener noreferrer">Deploying it again from its link</a> adds one.
         </p>
       </section>
 

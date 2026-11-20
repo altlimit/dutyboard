@@ -6,7 +6,9 @@
 # or, in a checkout:
 #
 #   ./scripts/provision.sh            # local emulator, everything provisioned and deployed
-#   ./scripts/provision.sh --hosted   # against hosted altengine (needs ALTENGINE_KEY)
+#
+# For development, against the local altengine emulator. A hosted DutyBoard is deployed from its
+# link instead — https://console.altengine.net/deploy?manifest=https%3A%2F%2Fwww.dutyboard.com%2Fdeploy%2Flatest%2Faltengine.json
 #
 # What it does, in order: installs the tools (alt, then sitegen, the altengine emulator and
 # the `dutyboard` binary through it), gets the source, installs the npm dependencies, starts
@@ -17,9 +19,7 @@
 # WHY THIS IS STILL SHELL. Provisioning itself is the `dutyboard` binary (cli/), which needs
 # nothing else installed. What it deploys from a checkout has to be built first, though —
 # Node for the function and console, sitegen for the site — and this is the part that runs
-# before any of that exists. To provision without a checkout at all:
-#
-#   alt install altlimit/dutyboard && dutyboard --provision-only
+# before any of that exists.
 #
 # Safe to re-run. Every step is idempotent: an instance that exists is left alone, an
 # index that exists is not duplicated, and an emulator that is already up is used rather
@@ -54,9 +54,6 @@ DutyBoard provisioner
 
   ./scripts/provision.sh [options]
 
-  --hosted            provision hosted altengine instead of a local emulator
-                      (requires ALTENGINE_KEY; see the README for the two steps
-                      that can only be done in the console)
   --dir DIR           where to clone, when not already in a checkout (default: ./dutyboard)
   --branch NAME       branch to clone (default: main)
   --no-start          do not start the emulator, even if nothing is answering
@@ -64,8 +61,7 @@ DutyBoard provisioner
   -h, --help          this
 
 Environment:
-  ALTENGINE_URL       API origin (default: http://127.0.0.1:9191 local, https://api.altengine.net hosted)
-  ALTENGINE_KEY       API key with 'full' on the functions instance (hosted only; 'dev' locally)
+  ALTENGINE_URL       the emulator's API origin (default: http://127.0.0.1:9191)
   DUTYBOARD_ORIGINS   comma-separated origins the console is served from, for CORS
   GITHUB_TOKEN        raises the GitHub API rate limit, and is needed for private repos
 EOF
@@ -73,7 +69,8 @@ EOF
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --hosted) TARGET=hosted ;;
+    --hosted) die "a hosted DutyBoard is deployed from its link, not provisioned" \
+                "Open: https://console.altengine.net/deploy?manifest=https%3A%2F%2Fwww.dutyboard.com%2Fdeploy%2Flatest%2Faltengine.json" ;;
     --local) TARGET=local ;;
     --dir) DIR="${2:?--dir needs a path}"; shift ;;
     --branch) BRANCH="${2:?--branch needs a name}"; shift ;;
@@ -87,12 +84,8 @@ done
 
 case "$TARGET" in
   local)  ALTENGINE_URL="${ALTENGINE_URL:-http://127.0.0.1:9191}"; ALTENGINE_KEY="${ALTENGINE_KEY:-dev}" ;;
-  hosted) ALTENGINE_URL="${ALTENGINE_URL:-https://api.altengine.net}"
-          [ -n "${ALTENGINE_KEY:-}" ] || die "--hosted needs an API key" \
-            "Create one in the console (Settings → API keys) with:" \
-            "  • control access to instances and functions" \
-            "  • data access to datastore, auth and channel" \
-            "then:  ALTENGINE_KEY=ak_… ./scripts/provision.sh --hosted" ;;
+  *)      die "this provisions the local emulator only" \
+            "A hosted DutyBoard is deployed from its link: https://console.altengine.net/deploy?manifest=https%3A%2F%2Fwww.dutyboard.com%2Fdeploy%2Flatest%2Faltengine.json" ;;
 esac
 export ALTENGINE_URL ALTENGINE_KEY
 
@@ -211,8 +204,7 @@ if [ "$TARGET" = local ]; then
       BIN="$ROOT/.altengine/altengine"
     else
       die "no altengine emulator available" \
-        "Either install it:        alt install altlimit/altengine" \
-        "or point at a hosted org: ALTENGINE_KEY=ak_… ./scripts/provision.sh --hosted"
+        "Install it:  alt install altlimit/altengine"
     fi
     say "starting: $BIN dev -data .altengine"
     nohup "$BIN" dev -data "$ROOT/.altengine" >"$ROOT/.altengine/dev.log" 2>&1 &

@@ -10,69 +10,7 @@ import (
 
 	"github.com/altlimit/dutyboard/cli/internal/altengine"
 	"github.com/altlimit/dutyboard/cli/internal/state"
-	"github.com/altlimit/dutyboard/cli/internal/ui"
 )
-
-// SignInAltengine runs "Sign in with altengine" and keeps the key it ends in: in the browser here,
-// or — `device` — with a code the person enters on any device. A grant that leaves out what
-// provisioning needs is refused (and the key revoked) rather than kept to fail later. `open` shows
-// the browser the consent page; nil opens the system browser.
-func SignInAltengine(ctx context.Context, u *ui.UI, device bool, open func(string) error) (*altengine.Token, error) {
-	if open == nil {
-		open = openBrowser
-	}
-	return signIn(ctx, u, device, &altengine.OAuth{}, open)
-}
-
-func signIn(ctx context.Context, u *ui.UI, device bool, o *altengine.OAuth, open func(string) error) (*altengine.Token, error) {
-	var t *altengine.Token
-	var err error
-	name := altengine.DeviceName()
-	if device {
-		t, err = o.SignInDevice(ctx, name, func(dc altengine.DeviceCode) {
-			u.Say("To let DutyBoard reach your altengine, open %s and enter the code %s", dc.VerificationURI, dc.UserCode)
-			u.Say("Waiting for you to approve it there…")
-		})
-	} else {
-		u.Say("Opening altengine in your browser: sign in, choose the organization, and approve DutyBoard.")
-		t, err = o.SignIn(ctx, name, func(link string) error {
-			// Always shown: an opener can report success and still put no window in front of anyone
-			// (Windows' explorer.exe from WSL does), and then this link is the only way on.
-			_ = open(link)
-			u.Say("Only if no browser tab opened, open this link (one tab only): %s", link)
-			return nil
-		})
-	}
-	if err != nil {
-		return nil, err
-	}
-	if err := o.Check(ctx, t); err != nil {
-		return nil, err
-	}
-	if err := rememberAltengineKey(t.Key, true); err != nil {
-		return nil, err
-	}
-	if t.Replaced {
-		u.OK("signed in to altengine: %s — this computer's earlier key was replaced", t.OrgName)
-	} else {
-		u.OK("signed in to altengine: %s", t.OrgName)
-	}
-	return t, nil
-}
-
-// rememberAltengineKey keeps the key provisioning and upgrades use, and whether it came from
-// signing in — which decides the names a new deployment may take.
-func rememberAltengineKey(key string, signedIn bool) error {
-	if err := state.SetCredential(state.AltengineKey, key); err != nil {
-		return err
-	}
-	cfg, err := state.LoadConfig()
-	if err != nil {
-		return err
-	}
-	cfg.AltengineSignedIn = signedIn
-	return cfg.Save()
-}
 
 // ForgetAltengineKey removes the kept key: revoked, or signed out.
 func ForgetAltengineKey() error {

@@ -37,13 +37,13 @@ blockers and outcomes only. A poll answers in a couple of hundred tokens.
 app/         the console                                 (Vue 3 + Vite, its own package)
 site/        the marketing site at www.dutyboard.com     (sitegen)
 functions/   the state machine, one deployed module      (altengine functions)
-backend/     instance configuration the provisioner applies
-cli/         `dutyboard`: the provisioner, and the runner that works boards on a machine (Go)
+backend/     instance configuration the manifest declares (indexes, access rules, sign-up form)
+cli/         `dutyboard`: the runner that works boards on a machine (Go)
 cli/desktop/ the same program as a Windows app that lives in the system tray (Wails 3, Vue 3 + TypeScript)
-scripts/     local provisioning, site deploy, the demo seeder and the end-to-end smoke tests
+scripts/     the deploy folder, local provisioning, site deploy, the demo seeder and the smoke tests
 ```
 
-The three builds share nothing. `app/` builds to `app/dist`, which the provisioner publishes to
+The three builds share nothing. `app/` builds to `app/dist`, which the manifest deploys to
 **each deployment's own static site**. `site/` builds to `site/public`, which is all that
 www.dutyboard.com serves: a marketing page and the setup instructions, with no console and no
 knowledge of any deployment. So no single page stands in front of everyone's boards.
@@ -90,7 +90,16 @@ The prefix is what tells them apart. A token or key is shown once and never agai
 
 ## Run your own
 
-Install `dutyboard` with [alt](https://github.com/altlimit/alt) — no sudo, no package manager —
+**Deploy DutyBoard** into your own [altengine](https://www.altengine.net) account, from your browser:
+
+[![Deploy to altengine](https://www.altengine.net/img/deploy-to-altengine.svg)](https://console.altengine.net/deploy?manifest=https%3A%2F%2Fwww.dutyboard.com%2Fdeploy%2Flatest%2Faltengine.json)
+
+You sign in to altengine, choose an organization, see every instance it will create, and click
+Deploy. It runs as you, within your role: nothing on any machine holds a key to do it. When it is
+done the page links to your console, where you sign up — the first account is the owner. Opening the
+same link later upgrades it ([below](#deploying-and-upgrading)).
+
+**Then put a machine to work.** Install `dutyboard` with [alt](https://github.com/altlimit/alt) — no sudo, no package manager —
 and run it:
 
 ```bash
@@ -100,9 +109,9 @@ dutyboard
 
 That is the whole setup, as a checklist that asks only about what is not done yet:
 
-1. **Your DutyBoard.** With none connected, choose *Set up my own on altengine*, which provisions it
-   (below). With one connected, it compares the version your DutyBoard runs with the one this binary
-   deploys, and offers to upgrade it when it is behind.
+1. **Your DutyBoard.** With none connected, give it your console's address — or choose *Set up my own
+   on altengine*, which opens the deploy link first. With one connected, it compares the version your
+   DutyBoard runs with this binary's, and says where to upgrade it when it is behind.
 2. **This machine**, paired with a code you approve in the console.
 3. **Starting by itself** — at login, or at boot on a server — and restarted when what is running is
    not this binary.
@@ -122,8 +131,8 @@ installs for you alone, with no administrator, and is in the Start menu and in W
 installed apps, which is where it is removed from. Removing it leaves what it kept — its home,
 `%LOCALAPPDATA%\DutyBoard` — alone.
 
-- **Set up my own DutyBoard** asks for the altengine key, shows provisioning as it happens, and sends
-  you to your console to sign up.
+- **Set up my own DutyBoard** opens the deploy link in your browser; once it is deployed and you have
+  signed up in its console, you give the app that console's address.
 - **Join a DutyBoard** asks for its address: the console's, the one you open in your browser, or the
   API address from the console's Machines page.
 - Either way it asks which folder this machine keeps its projects in — each board's repository is
@@ -136,8 +145,8 @@ installed apps, which is where it is removed from. Removing it leaves what it ke
   `dutyboard`, so the machine is started by one of them, not both.
 - On a machine that already runs `dutyboard` from a command-line install, the app says so and offers
   to run it instead.
-- When the app carries a later version than your DutyBoard, and this machine holds an altengine key,
-  it offers to upgrade it.
+- When the app carries a later version than your DutyBoard, it says so and links to the upgrade, which
+  whoever deployed it runs in their browser.
 
 **It keeps itself up to date.** A few times a day it looks for a newer release, downloads it, and
 checks it twice: its SHA-256 against the release's, and its signature against its own — an update is
@@ -152,48 +161,37 @@ macOS and Linux use the command above.
 A home other than the default (`$DUTYBOARD_HOME`) keeps its secrets under a name of its own in the
 keyring, so two homes on one account do not share a machine key.
 
-To set up or upgrade DutyBoard without putting the machine you run it on to work — from CI, or for an
-agent following [llms.txt](https://www.dutyboard.com/llms.txt) — provision only:
+### Deploying and upgrading
 
-```bash
-dutyboard --provision-only        # signs in to altengine (or takes a key), or reads $ALTENGINE_KEY
+DutyBoard is deployed from its manifest — [altengine's "Deploy to altengine"](https://www.altengine.net/docs/deploy-to-altengine/).
+Each release publishes one at `https://www.dutyboard.com/deploy/v<version>/altengine.json`, beside the
+function and the console it deploys, and the newest at `/deploy/latest/`
+([`scripts/build-deploy.mjs`](scripts/build-deploy.mjs) builds it). The deploy link points at
+`latest`:
+
+```
+https://console.altengine.net/deploy?manifest=https%3A%2F%2Fwww.dutyboard.com%2Fdeploy%2Flatest%2Faltengine.json
 ```
 
-(`alt run altlimit/dutyboard --provision-only` does the same without installing anything.)
+`dutyboard --provision-only` prints it, and opens it where there is a browser. It makes, or upgrades:
 
-**Sign in with altengine** is how it reaches your account: it opens altengine in your browser, you
-choose the organization and approve DutyBoard, and it receives an API key with only what it asked
-for — full control of the instances whose names start with `dutyboard`, and nothing else in the
-organization, which it cannot even list. Over SSH or on a machine with no display (or with
-`--device`) it shows a code to enter on any device instead. The key is kept on this machine for later
-upgrades, appears under Settings → API keys in the altengine console, where it can be revoked, and
-is replaced rather than added to when this machine signs in again. `dutyboard --sign-out` revokes
-it. Because of that prefix, a signed-in deployment's instances must be named `dutyboard…`; to use
-one named otherwise, or the local emulator, paste a key instead.
+- the instances — `<app>` (datastore, functions), `<app>-auth`, `<app>-live`, `<app>-files`,
+  `<app>-search`, `<app>-tasks`, and the static site `<app>-console` — where `<app>` is the name
+  chosen on the deploy page, `dutyboard` unless you change it;
+- their config, the indexes and the access rules;
+- the function, with its grants, its schedule, and its instance names as env;
+- the `webhooks` queue token webhooks are delivered from;
+- **the console**, whose own address is added to the function's CORS list and the auth instance's
+  allowed origins, and given to the function, so a machine pairing says where to approve it. The
+  console reads where it points from the `/altengine.json` altengine writes beside it.
 
-Provisioning finds a DutyBoard already in the organization and upgrades it, or provisions a new one:
-
-- the instances — `dutyboard` (datastore, functions), `dutyboard-auth`, `dutyboard-live`,
-  `dutyboard-files`, `dutyboard-search`, `dutyboard-tasks`, and the static site `dutyboard-console`
-  — and their config;
-- the indexes and the access rules;
-- the function, with its grants;
-- **the console**, published to the root of `dutyboard-console` with a `config.js` pointing it at
-  that function, and that site's origin added to the function's CORS list and the auth instance's
-  allowed origins;
-- a check that `/health` reports the version it just deployed.
-
-It prints the console's address and records it in the deployment's datastore, where `/health`
-reads it back, so a `dutyboard` that is pairing a machine can tell you where to approve it. It is
-also always in the altengine console, as the `dutyboard-console` static site. Every step is
-idempotent, so running it again is how you upgrade. The binary carries the function and the
-console it deploys: the machine running it needs no Node and no checkout.
-
-**Upgrading has two halves.** The server and the console change only when they are provisioned
-again — `--provision-only`, or `dutyboard` itself, which offers it when your DutyBoard is older than
-the binary; `/health` reports the version they are at. Machines update themselves with
-`alt update altlimit/dutyboard && dutyboard --service`. A release that changes only the runner needs
-the second; one that changes the board, the API or the console needs the first too.
+**Upgrading has two halves.** The board and the console change when someone opens the link again —
+or uses *Redeploy* on the app in the altengine console — which reads `latest` and deploys whatever
+changed. The page says what will change before anything does. `/health` reports the version
+deployed, and the console's **Machines** page and every `dutyboard` say when a newer one is out, with
+the link. Machines update themselves with `alt update altlimit/dutyboard && dutyboard --service`
+(the desktop app updates itself). A release that changes only the runner needs the second; one that
+changes the board, the API or the console needs the first too.
 
 **Whether they agree** is on the console's **Machines** page, under *Versions*: this console's own
 build, what the board function reports, and what each machine is running right now — a machine
@@ -201,52 +199,18 @@ reports its version on every call, not the one it happened to pair with. They ar
 and updated separately, and when one lags the symptom is a feature that is simply missing rather
 than broken, which is slow to work out any other way.
 
-**The key** needs the **MCP / AI agent access** toggles on the key form, which are off by default:
-`Instances & data: Write` and `Functions: Write`. Not Full — nothing here deletes an instance —
-with one exception: making the webhooks queue on `dutyboard-tasks` needs `Instances & data: Full`,
-because altengine counts creating or changing a queue as full access. Without it everything else is
-set up, and token webhooks stay off (the run says so). So use Full the first time, or the first time
-after an upgrade that brings webhooks; later upgrades can use Write, and the queue already there
-keeps delivering. Only webhooks need this. It is only needed to set up and upgrade, so the provisioner does not keep it unless you say so;
-projects the runner deploys use a narrower key of their own (see
-[Running agents on your machine](#running-agents-on-your-machine)).
-
-**It never publishes over a site it did not make.** A static deploy replaces a whole site, so an
-existing static instance is only written to when what it serves was published by the provisioner
-(its deployments are labelled `dutyboard v<version>`) or it serves nothing. A deployment from
-before consoles had a site of their own kept its console under `/app` on the static instance named
-like its functions instance; that site is upgraded in place, and `/app` links are sent on to the
-root.
-
-**Webhooks go out through altengine tasks.** The deploy makes `dutyboard-tasks` and a `webhooks`
-queue on it; each event is a task aimed at a token's URL, which the platform POSTs and retries.
-An altengine without the tasks service gets everything else, and webhooks stay off.
-
-**It takes dutyboard.com off your origins.** Once your console is up, `https://www.dutyboard.com`
-— and the console's previous origin, if it moved — are removed from the function's CORS list and
-the auth instance's allowed origins. A page there has no business calling your deployment.
-
-If the platform refuses to change the auth instance's sign-up form and allowed origins from an
-API key, it prints what to set in the altengine console instead:
-[`backend/signup.json`](backend/signup.json)'s fields, and the console's origin. On older
-altengine it also could not create the auth and channel instances; it lists those as console work
-and waits, re-checking every few seconds.
+**A DutyBoard made before the link** — by `dutyboard --provision-only` with an API key, under the
+same instance names — is upgraded by the same link: deploy it under its existing name, and altengine
+offers to adopt the instances it finds, keeping their data. From then on it upgrades like any other.
 
 **On sign-up, decide before you finish.** A new deployment opens sign-up, which is what you want
 for exactly as long as it takes to create your own account — after that it is an open door onto
-your quota. Turn it off in the auth instance's settings once you have signed up. Allowed origins
-are not a substitute: CORS binds browsers, and nothing else.
+your quota. Turn it off in the auth instance's settings once you have signed up; upgrades leave it as
+you set it. Allowed origins are not a substitute: CORS binds browsers, and nothing else.
 
-Two hosted details, both found the hard way:
-
-- **Subdomains are minted, not the instance name.** A functions instance called `dutyboard`
-  answers on `https://<random>-fn.altengine.app`, and a static site on another random subdomain.
-  The provisioner asks the platform where things landed rather than guessing. Renaming the
-  console's subdomain in the altengine console changes its origin, and sign-in fails until
-  `--provision-only` runs again and allows the new one.
-- **The console addresses its auth instance by ID.** Sign-in carries no API key, so the platform
-  has no organization in which to resolve a name. The `config.js` the provisioner writes uses the
-  ID; the datastore and channel stay names, because those calls carry an identity token.
+The console addresses its auth instance by ID: sign-in carries no API key, so the platform has no
+organization in which to resolve a name. The datastore and channel stay names, because those calls
+carry an identity token.
 
 ### Letting an agent install it
 
@@ -260,21 +224,18 @@ one.
 
 `app/dist` is the whole console. Serve it from anywhere and put a `config.js` next to its
 `index.html` setting `window.DUTYBOARD_CONFIG` — the fields are in
-[`app/src/config.js`](app/src/config.js), and `ConsoleConfig` in
-[`cli/internal/provision`](cli/internal/provision/provision.go) writes one. Add the origin you
-serve it from to the auth instance's allowed origins and the function's CORS list. So that machines
-pairing can say where to go, give the function its address: the `DUTYBOARD_CONSOLE_URL` secret
-(`env` exposure, set in the altengine console — hosted, secrets cannot be set with an API key), or a
-`settings/deployment` document with a `console_url` field in the datastore, which is what the
-provisioner writes.
+[`app/src/config.js`](app/src/config.js) — or an `altengine.json` like the one altengine generates
+([`app/src/runtime.js`](app/src/runtime.js) reads it). Add the origin you serve it from to the auth
+instance's allowed origins and the function's CORS list. So that machines pairing can say where to
+go, give the function its address in the `DUTYBOARD_CONSOLE_URL` env value.
 
 A console with no `config.js` values can be pointed at a deployment from its sign-in screen
 (**Connect your altengine**), which keeps the values in that browser.
 
-The provisioner tells the function which instances are its own by writing their names into the
-code it deploys, so a deployment named anything other than `dutyboard` needs nothing set by hand. A
-bundle you deploy yourself reads them from `DUTYBOARD_DATASTORE`, `DUTYBOARD_AUTH`,
-`DUTYBOARD_CHANNEL`, `DUTYBOARD_BLOB` and `DUTYBOARD_SEARCH` (`env`-exposure secrets) instead.
+The function reads which instances are its own from env — `DUTYBOARD_DATASTORE`, `DUTYBOARD_AUTH`,
+`DUTYBOARD_CHANNEL`, `DUTYBOARD_BLOB`, `DUTYBOARD_SEARCH` and `DUTYBOARD_TASKS` — which the manifest
+sets to the names the deploy chose, so a deployment named anything other than `dutyboard` needs
+nothing set by hand.
 
 ## Working on DutyBoard
 
@@ -315,10 +276,10 @@ provisioning, the console and the marketing site.
 
 | Command | What it does |
 | --- | --- |
-| `npm run provision` | Everything below, in order, from nothing. `--hosted` for hosted altengine. |
+| `npm run provision` | Everything below, in order, from nothing, against the emulator. |
 | `altengine dev` | The emulator: every data plane plus an admin console, on :9191. |
 | `npm run setup` | Bundles the function and provisions the emulator from this checkout. |
-| `npm run deploy` | Builds the function and console and provisions hosted altengine from this checkout, console included. |
+| `npm run deploy` | Builds the deploy folder, `dist/deploy/`: the manifest, the function and the console. To try it on hosted altengine before a release, serve that folder at any https address and open the deploy link with its `altengine.json`. |
 | `npm run dev` | The console, on :5173. |
 | `npm run dev:site` | The marketing site, watched, on :8888. |
 | `npm run build` | The function, the console and the site. `build:fn`, `build:app` and `build:site` do one each. |
@@ -329,9 +290,9 @@ provisioning, the console and the marketing site.
 | `npm run smoke:runner` | A real `dutyboard` daemon working a board on the emulator, with a stand-in agent (as Claude Code, Codex and Cursor). |
 | `node scripts/webpush-check.mjs` | Web Push encryption and signing, checked against an independent receiver. Runs in CI. |
 
-Provisioning is HTTP — the emulator's admin API locally, the MCP endpoint hosted — which is why
-it lives in [`cli/internal/provision`](cli/internal/provision). `npm run setup` and
-`npm run deploy` run it with `go run`, so a checkout needs Go 1.25 as well as Node. `npm run setup`
+Provisioning the emulator is HTTP to its admin API, which is why it lives in
+[`cli/internal/provision`](cli/internal/provision); it declares what the manifest does, under the
+same names. `npm run setup` runs it with `go run`, so a checkout needs Go 1.25 as well as Node. `npm run setup`
 is not optional: instances auto-create on first use but their *config* does not, so the console
 would sign you up and then get 403 on every read.
 
@@ -552,9 +513,10 @@ shows in the console; opened on another computer than the machine, you paste bac
 page ended on, which is useless without what the machine kept. Connect again after adding a target.
 Or set it by hand with `dutyboard --deploy-key`, giving that key the same access and nothing more,
 since agents run as you and could read it. A function deployed with grants on other instances needs a
-key that holds those too, which Connect does not ask for: set that key by hand. The key
-`--provision-only` uses manages your whole DutyBoard: a pasted one is not kept unless you say so, and
-one from signing in is kept, reaching only the `dutyboard…` instances. The runner
+key that holds those too, which Connect does not ask for: set that key by hand. A machine
+holds no key that manages your DutyBoard itself: that is deployed from the link, by a person. One an
+older `dutyboard` kept to provision with is offered for removal when you set a deploy key, and
+`dutyboard --sign-out` revokes it. The runner
 checks the deploy key against every board's instances as it starts, and says on the Machines page
 what the key is missing before any duty gets as far as deploying.
 

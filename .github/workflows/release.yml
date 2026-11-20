@@ -53,6 +53,10 @@ jobs:
       - run: |
           mkdir -p release
           tar -czf "release/dutyboard-web_${GITHUB_REF_NAME#v}.tar.gz" -C cli/internal/assets/web .
+      # The deploy folder — manifest, function, console — that the site publishes for the deploy link.
+      - run: |
+          node scripts/build-deploy.mjs --out dist/deploy
+          tar -czf "release/dutyboard-deploy_${GITHUB_REF_NAME#v}.tar.gz" -C dist/deploy .
 
       - run: go vet ./... && go test ./...
         working-directory: cli
@@ -221,3 +225,16 @@ jobs:
           [IO.File]::WriteAllText("$PWD/pkg/DutyBoard-Desktop.exe.sha256", "$hash  DutyBoard-Desktop.exe`n")
           gh release upload $env:GITHUB_REF_NAME pkg/DutyBoard-Setup.exe pkg/DutyBoard-Desktop.exe pkg/DutyBoard-Desktop.exe.sha256 --repo $env:GITHUB_REPOSITORY --clobber
           if ($LASTEXITCODE -ne 0) { throw 'upload failed' }
+
+  # The deploy link reads its manifest from the site, so the site is published again once the release
+  # carries this version's deploy folder. A release made with GITHUB_TOKEN triggers no other workflow
+  # by itself; asking for a workflow_dispatch is the one way it may.
+  site:
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh workflow run deploy-site.yml --repo "$GITHUB_REPOSITORY" --ref main

@@ -12,7 +12,7 @@ import PairMachine from "../components/PairMachine.vue";
 import SidePanel from "../components/SidePanel.vue";
 import { useDutyPanel } from "../lib/useDutyPanel.js";
 import { AGENTS, runnerLimited, runStateLabel, readinessStatus } from "../lib/runners.js";
-import { CONSOLE_VERSION, differs, serviceVersion } from "../lib/version.js";
+import { CONSOLE_VERSION, deployLink, differs, serviceVersion } from "../lib/version.js";
 
 // Your machines: the computers running `dutyboard` for you, what each is working on, and the
 // controls that are the program's settings — there is no settings file to edit on the machine.
@@ -558,7 +558,8 @@ onUnmounted(() => {
         </p>
         <p v-if="behind.length" class="hint" style="margin: 0">
           Behind: {{ behind.join(", ") }}. A feature that is missing rather than broken is usually this. Update a
-          machine where it runs; update the board and this console with <code class="mono">dutyboard --provision-only</code>.
+          machine where it runs; the board and this console are upgraded in altengine by whoever deployed them —
+          <a :href="deployLink(config.app)" target="_blank" rel="noopener noreferrer">upgrade your DutyBoard</a>.
         </p>
         <p style="margin: 0">
           API URL, for pairing a machine: <code class="mono">{{ config.api }}</code>

@@ -1,9 +1,4 @@
-import { createApp } from "vue";
-import App from "./App.vue";
-import { router } from "./router.js";
-import "./styles.css";
+import { loadRuntimeConfig } from "./runtime.js";
 
-import { watchNotifications } from "./lib/notify.js";
-
-createApp(App).use(router).mount("#app");
-watchNotifications();
+// Where this console points first, then the app — see runtime.js.
+loadRuntimeConfig().finally(() => import("./start.js"));

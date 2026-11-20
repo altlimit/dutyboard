@@ -525,34 +525,36 @@ dutyboard</code></pre>
   <div class="container">
     <h2>Run your own</h2>
     <p class="lead-narrow">
-      DutyBoard runs in your own <a href="https://www.altengine.net">altengine</a> account.
-      Setting it up takes your altengine account and one command — no key to make or paste.
+      DutyBoard runs in your own <a href="https://www.altengine.net">altengine</a> account, deployed from your
+      browser — no key to make or paste, and nothing to install to do it.
+    </p>
+
+    <p>
+      <a href="https://console.altengine.net/deploy?manifest=https%3A%2F%2Fwww.dutyboard.com%2Fdeploy%2Flatest%2Faltengine.json"><img src="https://www.altengine.net/img/deploy-to-altengine.svg" alt="Deploy to altengine" height="32"></a>
     </p>
 
     <ol class="steps">
       <li>
-        <h3><span class="step-n" aria-hidden="true">1</span> Sign in with altengine</h3>
+        <h3><span class="step-n" aria-hidden="true">1</span> Deploy to altengine</h3>
         <p>
-          Setting up opens <a href="https://www.altengine.net">altengine</a> in your browser: sign in, choose
-          the organization, and approve DutyBoard. It gets a key for the instances whose names start with
-          <code>dutyboard</code> and nothing else in your account — it cannot even list the rest — and you
-          can revoke it under Settings → API keys. Over SSH, or wherever there is no browser, you can paste
-          an API key instead.
+          The button opens <a href="https://www.altengine.net">altengine</a>: sign in, choose the organization,
+          see every instance DutyBoard will create, and click Deploy. It runs as you, within your role, and
+          nothing holds a key to your account afterwards.
         </p>
       </li>
       <li>
-        <h3><span class="step-n" aria-hidden="true">2</span> One command</h3>
+        <h3><span class="step-n" aria-hidden="true">2</span> Your console</h3>
         <p>
-          Install <code>dutyboard</code> with <a href="{{$site.altUrl}}">alt</a>, run it, and choose to set up
-          your own. It creates the instances, deploys the state machine, and publishes your console to a
-          static site of your own — then carries on to put the machine you ran it on to work.
+          When it is done, the page links to your console. Open it and sign up — the first account is the
+          owner. It is always there in the altengine console too, among your deployed apps.
         </p>
       </li>
       <li>
-        <h3><span class="step-n" aria-hidden="true">3</span> Your console</h3>
+        <h3><span class="step-n" aria-hidden="true">3</span> A machine</h3>
         <p>
-          It prints your console's address. Open it and sign up — the first account is the owner. It is
-          always there in the altengine console too, as the <code>dutyboard-console</code> static site.
+          Install <code>dutyboard</code> with <a href="{{$site.altUrl}}">alt</a> on the computer that should do
+          the work, run it, and give it your console's address. It pairs with a code you approve, and starts
+          working your boards.
         </p>
       </li>
     </ol>
@@ -561,15 +563,13 @@ dutyboard</code></pre>
 dutyboard</code></pre>
 
     <p>
-      Run it again after <code>alt update altlimit/dutyboard</code> and it offers to upgrade your DutyBoard.
-      To set up or upgrade without putting this machine to work, run <code>dutyboard --provision-only</code>
-      instead — and connect any agent over MCP.
+      Upgrading is the same link: open it again, or use Redeploy in the altengine console, and it deploys
+      whatever changed. Your console and every machine say when a newer version is out.
     </p>
 
     <p>
-      On Windows, <a href="#desktop">the desktop app</a> does all three steps in a window: sign in with
-      altengine, watch your DutyBoard being made, and sign up. When a later version of the app is able to upgrade
-      your DutyBoard, it says so and does it at a click.
+      On Windows, <a href="#desktop">the desktop app</a> takes the place of step 3, in a window — and if you have no
+      DutyBoard yet, it opens the deploy link for you first.
     </p>
 
     <div class="cards">

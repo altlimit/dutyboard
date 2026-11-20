@@ -6,7 +6,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"net/http"
 	"os"
 	"os/signal"
 	"strings"
@@ -43,16 +42,11 @@ type Flags struct {
 	DeployKey     bool
 	MCPSecrets    bool
 	Stop          bool
-	// Device signs in to altengine with a code entered on another device, instead of a browser here.
-	Device bool
-	// SignOut revokes the altengine key kept here, when it came from signing in, and forgets it.
+	// SignOut revokes the altengine key an older dutyboard kept here to provision with, and forgets it.
 	SignOut bool
 	// Open shows a page in the person's browser — the desktop app's own way of doing it. Nil is the
 	// system browser.
 	Open func(string) error
-	// Key is an altengine key a person gave in a window. There is no flag for it: on a command line
-	// it would be in the shell's history and the process list.
-	Key string
 }
 
 // Main runs the program and returns its exit code.
@@ -70,12 +64,12 @@ func Main(args []string) int {
 
 	var f Flags
 	fs := flag.NewFlagSet("dutyboard", flag.ContinueOnError)
-	fs.BoolVar(&f.ProvisionOnly, "provision-only", false, "provision or upgrade DutyBoard on altengine, then exit")
+	fs.BoolVar(&f.ProvisionOnly, "provision-only", false, "set up or upgrade a DutyBoard: opens its deploy link (with --local, provisions the emulator), then exit")
 	fs.BoolVar(&f.Local, "local", false, "provision the local altengine emulator (http://127.0.0.1:9191)")
 	fs.StringVar(&f.Altengine, "altengine", "", "altengine API origin (default: $ALTENGINE_URL, else hosted)")
-	fs.StringVar(&f.Source, "source", "", "deploy the function and console from this DutyBoard checkout")
-	fs.StringVar(&f.Instance, "instance", "", "use, or create, the deployment on this functions instance without asking")
-	fs.StringVar(&f.Origins, "origins", "", "extra console origins to allow, comma-separated (default: $DUTYBOARD_ORIGINS)")
+	fs.StringVar(&f.Source, "source", "", "with --local: deploy the function and console from this DutyBoard checkout")
+	fs.StringVar(&f.Instance, "instance", "", "with --local: the deployment's functions instance (default dutyboard)")
+	fs.StringVar(&f.Origins, "origins", "", "with --local: extra console origins to allow, comma-separated (default: $DUTYBOARD_ORIGINS)")
 	fs.BoolVar(&f.ShowVersion, "version", false, "print the version")
 	fs.StringVar(&f.Server, "server", "", "the DutyBoard API URL to pair this machine with")
 	fs.StringVar(&f.Name, "name", "", "this machine's name, when pairing")
@@ -84,8 +78,7 @@ func Main(args []string) int {
 	fs.BoolVar(&f.Service, "service", false, "set dutyboard to start by itself (at boot on a server) without asking, start it, and exit")
 	fs.BoolVar(&f.DeployKey, "deploy-key", false, "set the altengine key this machine deploys projects with, then exit")
 	fs.BoolVar(&f.MCPSecrets, "mcp-secrets", false, "set the secrets your boards' MCP servers need on this machine, then exit")
-	fs.BoolVar(&f.Device, "device", false, "sign in to altengine with a code you enter on another device (no browser here)")
-	fs.BoolVar(&f.SignOut, "sign-out", false, "sign this machine out of altengine: revoke and forget the key kept here")
+	fs.BoolVar(&f.SignOut, "sign-out", false, "revoke and forget the altengine key an older dutyboard kept here to provision with")
 	fs.BoolVar(&f.Stop, "stop", false, "stop the dutyboard running on this machine; the duties it holds resume when it starts again")
 	fs.Usage = func() {
 		fmt.Fprintln(fs.Output(), "dutyboard — runs your DutyBoard's work on this machine.")
@@ -109,6 +102,8 @@ func Main(args []string) int {
 
 	var err error
 	switch {
+	case f.ProvisionOnly && !emulator(f):
+		err = DeployOrUpgrade(ctx, u, f)
 	case f.ProvisionOnly:
 		_, err = Provision(ctx, u, f)
 	case f.DeployKey:
@@ -134,7 +129,40 @@ func Main(args []string) int {
 	return 0
 }
 
-// Provision provisions or upgrades a deployment and records it in config.json.
+// emulator reports whether f aims at a local altengine emulator rather than hosted altengine.
+func emulator(f Flags) bool {
+	if f.Local {
+		return true
+	}
+	base := f.Altengine
+	if base == "" {
+		base = os.Getenv("ALTENGINE_URL")
+	}
+	return base != "" && altengine.New(base, "").Local()
+}
+
+// DeployOrUpgrade sends a person to the deploy link: their DutyBoard's, to upgrade it, when this
+// machine is paired with one deployed from the link; a new one's otherwise.
+func DeployOrUpgrade(ctx context.Context, u *ui.UI, f Flags) error {
+	app := ""
+	if cfg, err := state.LoadConfig(); err == nil && cfg.Server != "" {
+		if h, err := provision.Health(ctx, cfg.Server); err == nil {
+			app = h.App
+			u.Say("Your DutyBoard is v%s at %s.", h.Version, cfg.Server)
+		}
+	}
+	u.Step("Deploy to altengine")
+	if app != "" {
+		u.Say("Upgrading changes the board and the console for everyone on it. Sign in to altengine and deploy:")
+	} else {
+		u.Say("Sign in to altengine, pick an organization, and deploy. It makes your own DutyBoard, in your own account.")
+	}
+	showDeployLink(u, DeployLink(app), f.Open)
+	return nil
+}
+
+// Provision provisions or upgrades the DutyBoard on a local emulator — for development and the
+// smoke tests — and records it in config.json. A hosted one is deployed from its link instead.
 func Provision(ctx context.Context, u *ui.UI, f Flags) (*provision.Result, error) {
 	base := f.Altengine
 	if base == "" {
@@ -143,21 +171,17 @@ func Provision(ctx context.Context, u *ui.UI, f Flags) (*provision.Result, error
 	if f.Local && base == "" {
 		base = "http://127.0.0.1:9191"
 	}
-	client := altengine.New(base, "")
+	// The emulator takes any key.
+	client := altengine.New(base, "dev")
+	if !client.Local() {
+		return nil, provision.ErrHosted
+	}
 
 	bundle, err := loadAssets(ctx, u, f.Source)
 	if err != nil {
 		return nil, err
 	}
 	u.Say("DutyBoard v%s  (%s)", bundle.Version, bundle.Source)
-
-	key, typed, signedIn, stored := f.Key, f.Key != "", false, false
-	if key == "" {
-		if key, typed, signedIn, stored, err = altengineKey(ctx, u, client, f); err != nil {
-			return nil, err
-		}
-	}
-	client.Key = key
 
 	extra := f.Origins
 	if extra == "" {
@@ -169,24 +193,7 @@ func Provision(ctx context.Context, u *ui.UI, f Flags) (*provision.Result, error
 			origins = append(origins, strings.TrimRight(o, "/"))
 		}
 	}
-	opts := provision.Options{Client: client, Assets: bundle, UI: u, Instance: f.Instance, Origins: origins}
-	if signedIn {
-		opts.NamePrefix = altengine.NamePrefix
-	}
-	res, err := provision.Run(ctx, opts)
-	if err != nil && stored && altengine.IsStatus(err, http.StatusUnauthorized) {
-		// The key kept here was revoked: the person who signed in left the organization or reset their
-		// password, or someone removed it in the altengine console. Keeping it would fail every upgrade
-		// the same way, so it goes, and a person is asked again.
-		if ferr := ForgetAltengineKey(); ferr != nil {
-			u.Warn("could not remove the key kept on this machine: %v", ferr)
-		}
-		u.Warn("altengine no longer accepts the key kept on this machine — it was revoked")
-		if !u.Interactive {
-			return nil, errors.New("altengine revoked the key kept on this machine — sign in again")
-		}
-		return Provision(ctx, u, f)
-	}
+	res, err := provision.Run(ctx, provision.Options{Client: client, Assets: bundle, UI: u, Instance: f.Instance, Origins: origins})
 	if err != nil {
 		return nil, err
 	}
@@ -199,23 +206,6 @@ func Provision(ctx context.Context, u *ui.UI, f Flags) (*provision.Result, error
 	if err := cfg.Save(); err != nil {
 		return nil, err
 	}
-	// Only a key a person just typed is offered for keeping. One from the environment belongs to
-	// whatever set it — a CI job must never leave a credential file behind. And not by default: this
-	// key can manage the whole deployment, agents on this machine run as the same user, and all it
-	// is needed for again is the next upgrade. Projects deploy with a key of their own.
-	if typed && u.Interactive {
-		u.Say("This key can manage your DutyBoard deployment. Agents on this machine run as you and could read a key kept here,")
-		u.Say("so keep it only if this machine runs no agents. Projects deploy with a narrower key: `dutyboard --deploy-key`.")
-		keep, err := u.Confirm("Keep this key on this machine for the next upgrade?", false)
-		if err != nil {
-			return nil, err
-		}
-		if keep {
-			if err := rememberAltengineKey(key, false); err != nil {
-				u.Warn("could not store the key: %v", err)
-			}
-		}
-	}
 
 	u.Step("Done")
 	u.Say("API:      %s", res.APIURL)
@@ -223,58 +213,6 @@ func Provision(ctx context.Context, u *ui.UI, f Flags) (*provision.Result, error
 		u.Say("Console:  %s", res.ConsoleURL)
 	}
 	return res, nil
-}
-
-// altengineKey finds the key: $ALTENGINE_KEY, then the stored one, then a person — who, on hosted
-// altengine, can sign in instead of making and pasting a key. The emulator takes anything, and `dev`
-// is what it is usually given. `typed` says a person pasted it; `signedIn` that it came from "Sign in
-// with altengine", so it reaches only instances named `dutyboard…`; `stored` that it was kept here.
-func altengineKey(ctx context.Context, u *ui.UI, c *altengine.Client, f Flags) (key string, typed, signedIn, stored bool, err error) {
-	if k := os.Getenv("ALTENGINE_KEY"); k != "" {
-		return k, false, false, false, nil
-	}
-	if c.Local() {
-		return "dev", false, false, false, nil
-	}
-	if k, err := state.Credential(state.AltengineKey); err == nil && k != "" {
-		cfg, _ := state.LoadConfig()
-		return k, false, cfg != nil && cfg.AltengineSignedIn, true, nil
-	}
-	// Only with someone there to approve it: run from CI with no key, a sign-in would wait ten minutes
-	// for nobody, where asking for the key fails at once and says what is missing.
-	if altengine.CanSignIn(c.BaseURL) && u.Interactive {
-		device := f.Device || browserless()
-		label := "Sign in with altengine — opens your browser"
-		if device {
-			label = "Sign in with altengine — with a code you enter on any device"
-		}
-		pick, err := u.Choose("How should DutyBoard reach your altengine?", []string{label, "Paste an altengine API key"}, 0)
-		if err != nil {
-			return "", false, false, false, err
-		}
-		if pick == 0 {
-			t, err := SignInAltengine(ctx, u, device, f.Open)
-			switch {
-			case err == nil:
-				return t.Key, false, true, false, nil
-			case errors.Is(err, altengine.ErrDeviceFlowUnavailable):
-				u.Warn("%v", err)
-				u.Say("Run this on a machine with a browser to sign in, or paste a key.")
-			default:
-				return "", false, false, false, err
-			}
-		}
-	}
-	u.Say("An altengine API key with control access to instances and functions")
-	u.Say("(altengine console → Settings → API keys).")
-	k, err := u.Secret("altengine API key")
-	if err != nil {
-		return "", false, false, false, err
-	}
-	if k == "" {
-		return "", false, false, false, errors.New("no key given")
-	}
-	return k, true, false, false, nil
 }
 
 // loadAssets picks where the function and console come from: a checkout named on the command line,
@@ -351,13 +289,13 @@ func SetDeployKey(ctx context.Context, u *ui.UI, f Flags) error {
 	u.OK("stored this machine's deploy key")
 
 	if k, _ := state.Credential(state.AltengineKey); k != "" && k != key {
-		drop, err := u.Confirm("This machine also keeps the key DutyBoard was provisioned with, which can manage your whole deployment. Remove it?", true)
+		drop, err := u.Confirm("This machine also keeps the key an older dutyboard provisioned with, which can manage your whole deployment. Remove it?", true)
 		if err != nil {
 			return err
 		}
 		if drop {
 			_ = state.DeleteCredential(state.AltengineKey)
-			u.OK("removed the provisioning key; the next upgrade asks for it")
+			u.OK("removed the provisioning key; upgrades are deployed from the link now")
 		}
 	}
 	return reloadDaemon(u)

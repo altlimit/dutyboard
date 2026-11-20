@@ -4,39 +4,18 @@ import (
 	"context"
 	"errors"
 	"os"
-	"strconv"
 	"strings"
-	"sync"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 
 	"github.com/altlimit/dutyboard/cli/desktop/host"
-	"github.com/altlimit/dutyboard/cli/internal/altengine"
 	"github.com/altlimit/dutyboard/cli/internal/app"
 	"github.com/altlimit/dutyboard/cli/internal/daemon"
 	"github.com/altlimit/dutyboard/cli/internal/state"
-	"github.com/altlimit/dutyboard/cli/internal/ui"
 )
 
 func init() {
-	application.RegisterEvent[SetupLine]("setup:line")
-	application.RegisterEvent[SetupQuestion]("setup:question")
 	application.RegisterEvent[SetupPairing]("setup:pairing")
-}
-
-// SetupLine is one line of what setting up is doing, as the terminal would print it.
-type SetupLine struct {
-	Kind string `json:"kind"` // step, say, note, ok, warn
-	Text string `json:"text"`
-}
-
-// SetupQuestion is something setting up needs a person to decide before it goes on.
-type SetupQuestion struct {
-	ID      string   `json:"id"`
-	Kind    string   `json:"kind"` // ask, secret, confirm, choose
-	Text    string   `json:"text"`
-	Options []string `json:"options"`
-	Default string   `json:"default"` // ask: the text; confirm: "yes" or "no"; choose: the option's index
 }
 
 // SetupPairing is the code a person approves in the console to let this machine in.
@@ -49,7 +28,6 @@ type SetupPairing struct {
 // SetupDefaults is what the first screens start from.
 type SetupDefaults struct {
 	MachineName string `json:"machineName"`
-	Hosted      string `json:"hosted"`   // altengine's own address, used when none is given
 	Server      string `json:"server"`   // a DutyBoard already set up here and not yet paired with
 	Console     string `json:"console"`  // and its console
 	Projects    string `json:"projects"` // the folder this machine would keep its boards' repositories in
@@ -58,35 +36,18 @@ type SetupDefaults struct {
 	Autostart bool `json:"autostart"`
 }
 
-// SignedIn is the altengine organization signing in reached.
-type SignedIn struct {
-	Org string `json:"org"`
-	// Replaced is this computer having signed in before: its earlier key was replaced, not added to.
-	Replaced bool `json:"replaced"`
-}
-
-// Provisioned is a DutyBoard that now exists.
-type Provisioned struct {
-	Server  string `json:"server"`
-	Console string `json:"console"`
-	Version string `json:"version"`
-}
-
-// Setup is the first run: making a DutyBoard, and connecting this machine to one. It is the terminal
-// checklist's own steps (cli/internal/app), with a window where the terminal was.
+// Setup is the first run: connecting this machine to a DutyBoard, and sending a person who has none
+// to deploy their own. It is the terminal checklist's own steps (cli/internal/app), with a window
+// where the terminal was.
 type Setup struct {
 	h       *host.Host
 	app     *application.App
 	machine *Machine
-
-	mu      sync.Mutex
-	seq     int
-	waiting map[string]chan string
 }
 
 // Defaults is what the first screens start from.
 func (s *Setup) Defaults() SetupDefaults {
-	d := SetupDefaults{MachineName: app.DefaultMachineName(), Hosted: altengine.DefaultURL, Autostart: state.IsDefaultHome()}
+	d := SetupDefaults{MachineName: app.DefaultMachineName(), Autostart: state.IsDefaultHome()}
 	if cfg, err := state.LoadConfig(); err == nil {
 		d.Server, d.Console, d.Projects = cfg.Server, cfg.Console, daemon.ProjectsRoot(cfg)
 	}
@@ -114,46 +75,15 @@ func (s *Setup) ChooseFolder(from string) (string, error) {
 	return path, err
 }
 
-// SignIn is "Sign in with altengine": the consent page opens in the browser, and the key it ends in
-// is kept for Provision and every later upgrade. It returns when the person approves or declines;
-// cancelling the call stops the wait.
-func (s *Setup) SignIn(ctx context.Context) (*SignedIn, error) {
-	u := ui.NewRemote(&window{s: s, ctx: ctx})
-	t, err := app.SignInAltengine(ctx, u, false, s.open)
-	if err != nil {
-		return nil, err
-	}
-	return &SignedIn{Org: t.OrgName, Replaced: t.Replaced}, nil
-}
-
-// open shows a page in the person's browser.
-func (s *Setup) open(url string) error { return s.app.Browser.OpenURL(url) }
-
-// Provision makes a DutyBoard on altengine, or brings one up to this version — the same run either
-// way. What it does arrives as setup:line events and what it needs to know as setup:question events,
-// answered with Answer. altengineURL is empty for altengine itself; an emulator's address is the
-// other thing it can be. Cancelling the call stops it where it is, which is safe: every step can be
-// run again.
-//
-// An empty key uses the one kept here — what SignIn keeps.
-func (s *Setup) Provision(ctx context.Context, altengineURL, key string) (*Provisioned, error) {
-	u := ui.NewRemote(&window{s: s, ctx: ctx})
-	res, err := app.Provision(ctx, u, app.Flags{Altengine: strings.TrimSpace(altengineURL), Key: strings.TrimSpace(key), Open: s.open})
-	if err != nil {
-		return nil, err
-	}
-	return &Provisioned{Server: res.APIURL, Console: res.ConsoleURL, Version: res.Version}, nil
-}
-
 // DeploymentStatus is the DutyBoard this machine works for, next to the one this app would deploy.
 type DeploymentStatus struct {
 	Reachable bool   `json:"reachable"`
 	Version   string `json:"version"` // what is deployed
 	Ours      string `json:"ours"`    // what this app deploys
-	// CanUpgrade is the app carrying a later version AND this machine holding an altengine key to
-	// deploy it with. A machine that only joined someone's DutyBoard has no such key, and upgrading
-	// is not its job: it is told nothing rather than asked for one.
-	CanUpgrade bool `json:"canUpgrade"`
+	// Behind is the app carrying a later version than is deployed. Upgrading is done in a browser by
+	// whoever deployed it, at UpgradeLink; this machine only says so.
+	Behind      bool   `json:"behind"`
+	UpgradeLink string `json:"upgradeLink"`
 	// AppIsOlder is the other way round: the deployment is ahead, and it is this app that needs updating.
 	AppIsOlder bool `json:"appIsOlder"`
 }
@@ -172,29 +102,15 @@ func (s *Setup) Deployment(ctx context.Context) DeploymentStatus {
 		Reachable:  true,
 		Version:    d.Version,
 		Ours:       d.Ours,
-		CanUpgrade: d.Behind && app.CanProvision(cfg.Altengine),
+		Behind:      d.Behind,
+		UpgradeLink: app.DeployLink(d.App),
 		AppIsOlder: d.Ahead,
 	}
 }
 
-// Upgrade brings the DutyBoard this machine is paired with up to the version this app carries. It is
-// Provision aimed at that deployment, so it reports and asks the same way; the machine keeps working
-// while it runs.
-func (s *Setup) Upgrade(ctx context.Context) (*Provisioned, error) {
-	cfg, err := state.LoadConfig()
-	if err != nil {
-		return nil, err
-	}
-	if cfg.Server == "" {
-		return nil, errors.New("this machine is not connected to a DutyBoard")
-	}
-	u := ui.NewRemote(&window{s: s, ctx: ctx})
-	res, err := app.Provision(ctx, u, app.UpgradeFlags(cfg, app.Flags{Open: s.open}))
-	if err != nil {
-		return nil, err
-	}
-	return &Provisioned{Server: res.APIURL, Console: res.ConsoleURL, Version: res.Version}, nil
-}
+// OpenDeploy opens the page that deploys a new DutyBoard into the person's own altengine account. They
+// sign in there, pick an organization and deploy it as themselves; nothing is kept on this machine.
+func (s *Setup) OpenDeploy() error { return s.app.Browser.OpenURL(app.DeployLink("")) }
 
 // Join connects this machine to a DutyBoard, and starts it working. address is the DutyBoard's API
 // address or its console's. The code to approve arrives as a setup:pairing event, and the call
@@ -241,92 +157,10 @@ func (s *Setup) Join(ctx context.Context, address, name, projects string, autost
 	return paired.OwnerName, nil
 }
 
-// Answer gives a question its answer: the text for ask and secret, "yes" or "no" for confirm, the
-// option's index for choose.
-func (s *Setup) Answer(id, value string) {
-	s.mu.Lock()
-	ch := s.waiting[id]
-	delete(s.waiting, id)
-	s.mu.Unlock()
-	if ch != nil {
-		ch <- value
-	}
-}
-
 // Open opens a page in the person's browser: the console, to sign up or to approve a machine.
 func (s *Setup) Open(url string) error {
 	if !strings.HasPrefix(url, "https://") && !strings.HasPrefix(url, "http://") {
 		return errors.New("not a web address")
 	}
 	return s.app.Browser.OpenURL(url)
-}
-
-// window is ui.Remote on the app's window, for one run.
-type window struct {
-	s   *Setup
-	ctx context.Context
-}
-
-func (w *window) Event(kind, text string) {
-	w.s.app.Event.Emit("setup:line", SetupLine{Kind: kind, Text: text})
-}
-
-func (w *window) ask(q SetupQuestion) (string, error) {
-	s := w.s
-	ch := make(chan string, 1)
-	s.mu.Lock()
-	s.seq++
-	q.ID = strconv.Itoa(s.seq)
-	if s.waiting == nil {
-		s.waiting = map[string]chan string{}
-	}
-	s.waiting[q.ID] = ch
-	s.mu.Unlock()
-	if q.Options == nil {
-		q.Options = []string{}
-	}
-	s.app.Event.Emit("setup:question", q)
-	select {
-	case v := <-ch:
-		return v, nil
-	case <-w.ctx.Done():
-		s.mu.Lock()
-		delete(s.waiting, q.ID)
-		s.mu.Unlock()
-		return "", w.ctx.Err()
-	}
-}
-
-func (w *window) Ask(question, def string) (string, error) {
-	v, err := w.ask(SetupQuestion{Kind: "ask", Text: question, Default: def})
-	if err == nil && strings.TrimSpace(v) == "" {
-		v = def
-	}
-	return strings.TrimSpace(v), err
-}
-
-func (w *window) Secret(question string) (string, error) {
-	v, err := w.ask(SetupQuestion{Kind: "secret", Text: question})
-	return strings.TrimSpace(v), err
-}
-
-func (w *window) Confirm(question string, def bool) (bool, error) {
-	d := "no"
-	if def {
-		d = "yes"
-	}
-	v, err := w.ask(SetupQuestion{Kind: "confirm", Text: question, Default: d})
-	return v == "yes", err
-}
-
-func (w *window) Choose(question string, options []string, def int) (int, error) {
-	v, err := w.ask(SetupQuestion{Kind: "choose", Text: question, Options: options, Default: strconv.Itoa(def)})
-	if err != nil {
-		return 0, err
-	}
-	n, err := strconv.Atoi(v)
-	if err != nil || n < 0 || n >= len(options) {
-		return 0, errors.New("no option chosen")
-	}
-	return n, nil
 }

@@ -81,8 +81,8 @@ onMounted(async () => {
     // auth instance does not know its new address yet.
     error.value = /origin/i.test(err.message || "")
       ? `This page's address, ${location.origin}, is not on your deployment's allowed origins yet — ` +
-        `run \`dutyboard --provision-only\` again (it adds wherever the console is now served), or add it ` +
-        `to the auth instance's allowed origins and the functions instance's CORS list in the altengine console.`
+        `add it to the auth instance's allowed origins and the functions instance's CORS list in the altengine ` +
+        `console. Deploying DutyBoard again from its link adds the address its own console is served from.`
       : `Could not reach the auth service (${err.message}). Check that the altengine this console points at is up.`;
   }
 });

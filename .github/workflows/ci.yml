@@ -35,6 +35,8 @@ jobs:
       # import, or a component that no longer compiles — none of which the function build would
       # notice. The marketing site is built by deploy-site.yml, when site/ changes.
       - run: npm run build:app
+      # The deploy folder the deploy link reads: the manifest builds from what was just built.
+      - run: node scripts/build-deploy.mjs
 
       # Web Push encryption and VAPID signing, checked against an independent receiver. Nothing else
       # can prove them without a real browser and push service.

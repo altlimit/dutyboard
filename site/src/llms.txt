@@ -12,61 +12,30 @@ API at www.dutyboard.com; setup gives your user their own addresses for both.
 
 ## What you need
 
-1. **A way to run a program on your user's machine.** Setup is one command. If you cannot run
-   commands, give your user the two commands below and wait for them to paste back what it
-   printed. Do not try to rebuild the setup by hand with altengine's MCP tools: the console is
-   a built web app the program publishes, and there is no by-hand route that ends with a
-   working console.
+1. **Your user, in a browser.** DutyBoard is deployed from altengine's deploy page, by a signed-in
+   person, as themselves. There is no command or API key for it, and nothing for you to run. Do not
+   try to rebuild it by hand with altengine's MCP tools: the console is a built web app the deploy
+   publishes, and there is no by-hand route that ends with a working console.
 
-2. **Your user's altengine account.** Run in a terminal, `dutyboard --provision-only` offers
-   **Sign in with altengine**: it opens altengine in the browser, your user picks the organization
-   and approves, and DutyBoard receives a key for the instances named `dutyboard…` and nothing
-   else. That needs your user at the keyboard, so give them the command to run (below) rather
-   than running it yourself. It keeps that key for later upgrades; `dutyboard --sign-out` revokes it.
-
-   If you run it yourself — no terminal — it does not offer to sign in and reads `ALTENGINE_KEY`
-   instead. Your user creates that key at https://console.altengine.net. On the key form's
-   **MCP / AI agent access** block — off by default:
-
-   | Toggle                  | Set to    | Why                                                   |
-   |-------------------------|-----------|-------------------------------------------------------|
-   | Instances & data        | **Write** | create the instances, configure them, publish the console |
-   | Functions               | **Write** | deploy the state machine                              |
-   | Usage                   | None      | not used                                              |
-   | Live desktop inspection | None      | not used                                              |
-
-   **Write, not Full** — with one exception. Full also lets a key delete instances, and setup
-   deletes nothing. But making the queue token webhooks are delivered through needs
-   **Instances & data: Full**: with Write, everything else is set up and webhooks stay off,
-   and the run prints `tasks queue dutyboard-tasks/webhooks: … PERMISSION_DENIED … token
-   webhooks stay off`. If your user wants webhooks, have them use Full for that first run;
-   later upgrades work with Write and keep the queue. The key is only needed while setting up
-   and upgrading; the program does not keep it unless asked.
-
-Before running anything, tell your user which altengine organization it will be set up in.
-Instances count against a quota and a bill.
+2. **Your user's altengine account,** with a role that may create instances. Before they deploy,
+   tell them which organization they should pick: instances count against a quota and a bill.
 
 
 ## Set it up
 
+Give your user this link:
+
 ```
-alt install altlimit/dutyboard            # https://github.com/altlimit/alt — no sudo
-dutyboard --provision-only                # your user, in a terminal: signs in with altengine
-ALTENGINE_KEY=ae_… dutyboard --provision-only   # or you, with a key your user made
+https://console.altengine.net/deploy?manifest=https%3A%2F%2Fwww.dutyboard.com%2Fdeploy%2Flatest%2Faltengine.json
 ```
 
-(`alt run altlimit/dutyboard --provision-only` does the same without installing.)
+They sign in to altengine, pick the organization, see every instance it will create, and click
+Deploy. The page lets them name the app; `dutyboard` unless they change it. Opening the same link
+later upgrades it — and a DutyBoard set up earlier, by `dutyboard --provision-only` with an API
+key, is upgraded the same way: deployed under its existing name, altengine offers to adopt its
+instances and keeps their data.
 
-It finds a DutyBoard already in the organization or creates one, and every step is safe to run
-again — the same command upgrades. It:
-
-- creates the instances below, or uses the ones already there;
-- configures the datastore, channel presence, the declared indexes and the access rules that
-  scope every browser read to the person reading;
-- deploys the state machine as the function `board`;
-- publishes the console to the static site `dutyboard-console`, with a config pointing it at
-  this deployment, and allows that site's origin on the function and the auth instance;
-- checks `/health` reports the version it deployed.
+It creates, under the app's name (`dutyboard` below):
 
 | service   | name                | what it holds                                    |
 |-----------|---------------------|--------------------------------------------------|
@@ -76,22 +45,18 @@ again — the same command upgrades. It:
 | functions | `dutyboard`         | the state machine — every write goes through it   |
 | blob      | `dutyboard-files`   | screenshots and recordings on a duty              |
 | search    | `dutyboard-search`  | finished work, so an agent can ask whether something was done before |
-| tasks     | `dutyboard-tasks`   | the `webhooks` queue for token events, when available and permitted |
+| tasks     | `dutyboard-tasks`   | the `webhooks` queue for token events             |
 | static    | `dutyboard-console` | the console                                      |
 
-If it prints that auth or channel "must be created in the console", that altengine predates
-creating them over the API. Ask your user to create them at https://console.altengine.net with
-those exact names; the program waits and carries on by itself.
-
-When it finishes it prints two addresses. Give both to your user:
+When it finishes, the page links to the console. Ask your user for two addresses:
 
 - **Console** — `https://<slug>.altengine.app/`. They open it and sign up; on a new deployment
   the first account is the owner. Suggest turning sign-up off afterwards (auth instance
   settings) if nobody else should be able to make an account.
-- **API** — `https://<slug>-fn.altengine.app/board`. Agents and machines connect to this.
+- **API** — `https://<slug>-fn.altengine.app/board`, on the console's Machines page. Agents and
+  machines connect to this.
 
-Both are also in the altengine console, under the `dutyboard-console` static site and the
-`dutyboard` functions instance, if either is lost.
+Both are also in the altengine console, among the deployed apps, if either is lost.
 
 
 ## After it is running
@@ -215,8 +180,8 @@ That restarts the running `dutyboard` on the new binary; the duties it held are 
 `dutyboard --stop` stops it.
 
 **Upgrade both halves.** Updating the binary and restarting the service upgrades that machine.
-Run the updated `dutyboard --provision-only` too (or accept the upgrade offered by interactive
-`dutyboard`) to upgrade the function and console. The Machines page's Versions section shows
+Your user upgrades the function and console by opening the deploy link again (`dutyboard
+--provision-only` prints it). The Machines page's Versions section shows
 the console, function and machine versions. Machine agent priorities and board overrides need
 2.27.0 or later; inherited machine defaults need 2.28.0 or later; duty overrides need 2.30.0. Update both halves when
 adopting new features.

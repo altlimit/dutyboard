@@ -27,5 +27,15 @@ export function serviceVersion() {
   return asked;
 }
 
+/** DutyBoard's manifest: the newest release, which every deployment made from it upgrades from. */
+export const MANIFEST_URL = "https://www.dutyboard.com/deploy/latest/altengine.json";
+
+/**
+ * altengine's deploy page for DutyBoard. Whoever opens it signs in and deploys as themselves. `app` is
+ * the deployment to upgrade — config.app, for a console deployed from the link — and "" makes one.
+ */
+export const deployLink = (app = "") =>
+  `https://console.altengine.net/deploy?manifest=${encodeURIComponent(MANIFEST_URL)}${app ? `&name=${encodeURIComponent(app)}` : ""}`;
+
 /** True when two versions are both known and differ — the only case worth saying anything about. */
 export const differs = (a, b) => !!a && !!b && a !== b && a !== "dev" && b !== "dev";
