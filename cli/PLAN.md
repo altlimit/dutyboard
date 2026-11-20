@@ -668,7 +668,7 @@ musictheory over needs a release and its owner at a Windows terminal (see below)
   a board's agent reports it as a problem and does not work the board. A board's extra tools add to
   the defaults rather than replacing them.
 - **Consoles** are published per deployment, to the root of `<prefix>-console`; www.dutyboard.com is
-  only the marketing site (see the README's "Run your own").
+  only the marketing site (see the README's "Deploy your own").
 
 Verified by:
 

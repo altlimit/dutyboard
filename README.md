@@ -13,7 +13,7 @@ they get to it, and the answer rides along the next time any agent picks that du
 [![Deploy to altengine](https://www.altengine.net/img/deploy-to-altengine.svg)](https://console.altengine.net/deploy?manifest=https%3A%2F%2Fwww.dutyboard.com%2Fdeploy%2Flatest%2Faltengine.json)
 
 Deploy your own into your [altengine](https://www.altengine.net) account from your browser, sign up in
-its console, and add machines from its **Machines** page. [More](#run-your-own).
+its console, and add machines from its **Machines** page. [More](#deploy-your-own).
 
 What it deliberately does not hold: shell output, diffs, tool traces. Intent, state,
 blockers and outcomes only. A poll answers in a couple of hundred tokens.
@@ -93,7 +93,7 @@ for anyone else's board, and does not have to remember to try.
 
 The prefix is what tells them apart. A token or key is shown once and never again.
 
-## Run your own
+## Deploy your own
 
 **Deploy DutyBoard** into your own [altengine](https://www.altengine.net) account, from your browser:
 
