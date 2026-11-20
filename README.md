@@ -173,6 +173,11 @@ function and the console it deploys, and the newest at `/deploy/latest/`
 https://console.altengine.net/deploy?manifest=https%3A%2F%2Fwww.dutyboard.com%2Fdeploy%2Flatest%2Faltengine.json
 ```
 
+altengine's *Check for updates* re-reads the address a deployment was last deployed from, so one
+made from `latest` always hears about the newest release. The versioned folders are for pinning: a
+deployment made from `/deploy/v<version>/altengine.json` stays on that release until someone deploys
+it from another address.
+
 `dutyboard --provision-only` prints it, and opens it where there is a browser. It makes, or upgrades:
 
 - the instances — `<app>` (datastore, functions), `<app>-auth`, `<app>-live`, `<app>-files`,
