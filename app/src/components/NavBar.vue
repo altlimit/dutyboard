@@ -1,15 +1,23 @@
 <script setup>
-import { computed } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { signOut } from "../lib/altengine.js";
 import { signedIn, user } from "../lib/session.js";
 import { THEMES, currentTheme, cycleTheme } from "../lib/theme.js";
 import { config, isRetargeted } from "../config.js";
-import { CONSOLE_VERSION } from "../lib/version.js";
+import { CONSOLE_VERSION, deployLink, releaseStatus } from "../lib/version.js";
 
 // Which console this is, always in view: the first thing to rule out when something behaves
 // differently from what was released, and a screenshot then says it without being asked.
 const consoleVersion = CONSOLE_VERSION === "dev" ? "dev" : `v${CONSOLE_VERSION}`;
+
+// A newer DutyBoard, beside the version, for as long as it is out — "Not now" on the notice under the
+// bar hides that notice, not this.
+const update = ref(null);
+onMounted(async () => {
+  const s = await releaseStatus();
+  if (s && s.update_available) update.value = s;
+});
 
 const route = useRoute();
 const router = useRouter();
@@ -62,6 +70,16 @@ async function leave() {
           <span class="brand__version" :title="`Console ${consoleVersion}`">{{ consoleVersion }}</span>
         </span>
       </router-link>
+      <a
+        v-if="signedIn && update"
+        class="brand__update"
+        :href="deployLink(update.app || config.app)"
+        target="_blank"
+        rel="noopener noreferrer"
+        :title="`DutyBoard v${update.latest} is out — this one is v${update.current}`"
+      >
+        Update<span class="sr-only"> to DutyBoard v{{ update.latest }}</span>
+      </a>
 
       <nav v-if="signedIn" class="topbar__nav" aria-label="Main">
         <router-link class="navlink" :to="{ name: 'dashboard' }">Dashboard</router-link>

@@ -222,6 +222,14 @@ main:focus { outline: none; }
   opacity: 0.8;
   font-variant-numeric: tabular-nums;
 }
+/* A newer DutyBoard is out: beside the version, a small link to the update. */
+.brand__update {
+  display: inline-flex; align-items: center; gap: 0.35rem; flex: none;
+  padding: 0.15rem 0.55rem; border-radius: 999px; font-size: 0.75rem; font-weight: 650;
+  color: var(--accent); background: var(--accent-soft); border: 1px solid var(--accent); text-decoration: none;
+}
+.brand__update::before { content: ""; width: 0.4rem; height: 0.4rem; border-radius: 50%; background: currentColor; }
+.brand__update:hover { filter: brightness(1.1); }
 /* The tile is inside the SVG now, so this only has to size it. */
 .brand__mark {
   width: 1.5rem;
