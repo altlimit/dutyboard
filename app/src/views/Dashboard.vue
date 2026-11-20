@@ -22,6 +22,9 @@ const WAITING_SHOWN = 8;
 /** Duties an agent holds right now, across every board, most recently heard from first. */
 const running = ref([]);
 const RUNNING_SHOWN = 6;
+/** What agents finished last, across every board, most recent first, with what each one did. */
+const finished = ref([]);
+const FINISHED_SHOWN = 6;
 /** Finished work per day for the fortnight, or null when it could not be counted. */
 const trend = ref(null);
 const UPCOMING_SHOWN = 5;
@@ -33,7 +36,7 @@ const rowsOf = (res) => (res.documents || []).map((d) => ({ ...d.data, key: Stri
 
 /** What only this page shows, read with the counts each time. Each part is best-effort. */
 async function loadDashboard() {
-  const [asks, active, done, team] = await Promise.allSettled([
+  const [asks, active, done, team, recent] = await Promise.allSettled([
     query("duties", {
       where: [{ field: "status", op: "=", value: "needs_decision" }],
       order: [{ field: "updated_at", dir: "asc" }],
@@ -46,9 +49,15 @@ async function loadDashboard() {
     }),
     aggregate("finishes", finishesRequest()),
     aggregate("role_events", roleRecordRequest()),
+    query("duties", {
+      where: [{ field: "status", op: "=", value: "done" }],
+      order: [{ field: "updated_at", dir: "desc" }],
+      limit: FINISHED_SHOWN,
+    }),
   ]);
   if (asks.status === "fulfilled") waiting.value = rowsOf(asks.value);
   if (active.status === "fulfilled") running.value = rowsOf(active.value);
+  if (recent.status === "fulfilled") finished.value = rowsOf(recent.value);
   if (done.status === "fulfilled") trend.value = finishesByDay(done.value.groups);
   // A DutyBoard from before teams has no record to read, and a board without a team adds no rows:
   // either way the panel is left out.
@@ -153,7 +162,8 @@ function runNote(d) {
            that asked one has stopped on that duty, and it is the one thing here blocked until you
            act. Beside them, what is being worked and what the schedules file next. -->
       <div v-if="all.length" class="overview">
-        <section aria-labelledby="waiting-h" class="panel overview__main">
+        <div class="overview__main">
+        <section aria-labelledby="waiting-h" class="panel">
           <div class="panel__head">
             <h2 id="waiting-h">Needs you <span v-if="waitingTotal" class="badge badge--needs_decision">{{ waitingTotal }}</span></h2>
           </div>
@@ -175,6 +185,29 @@ function runNote(d) {
             {{ waitingTotal - waiting.length }} more — the boards below say where.
           </p>
         </section>
+
+        <!-- What came of the work, so the page shows results and not only what is pending. -->
+        <section aria-labelledby="finished-h" class="panel">
+          <div class="panel__head">
+            <h2 id="finished-h">Recently finished</h2>
+            <span v-if="trend && finished7" class="muted feed__count">{{ plural(finished7, "duty", "duties") }} this week</span>
+          </div>
+          <ul v-if="finished.length" class="feed">
+            <li v-for="d in finished" :key="d.key">
+              <DutyLink class="feed__item" :project-id="d.project_id" :duty-id="d.key">
+                <span class="duty__title">{{ d.title }}</span>
+                <span class="duty__meta">
+                  <span class="badge">{{ nameOf[d.project_id] || d.project_id }}</span>
+                  <span v-if="d.assigned_agent_id" class="nowrap">{{ d.assigned_agent_id }}</span>
+                  <span class="nowrap">finished {{ ago(d.finished_at || d.updated_at) }}</span>
+                </span>
+                <span v-if="d.outcome_summary" class="duty__ask duty__ask--done">{{ plain(d.outcome_summary) }}</span>
+              </DutyLink>
+            </li>
+          </ul>
+          <p v-else class="feed__empty">Nothing finished yet. Each duty an agent completes lands here with what it did.</p>
+        </section>
+        </div>
 
         <div class="overview__side">
           <section aria-labelledby="running-h" class="panel">

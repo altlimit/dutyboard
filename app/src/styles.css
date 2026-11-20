@@ -380,7 +380,8 @@ input[aria-invalid="true"], textarea[aria-invalid="true"] { border-color: var(--
   gap: 0.75rem;
   align-items: start;
 }
-.overview__side { display: grid; gap: 0.75rem; min-width: 0; }
+.overview__side, .overview__main { display: grid; gap: 0.75rem; min-width: 0; align-content: start; }
+.duty__ask.duty__ask--done { border-left-color: var(--ok); }
 .overview .panel { min-width: 0; }
 .feed__count { font-size: 0.85rem; }
 /* Rows inside a panel rather than a card each: the panel is the card. */
