@@ -12,7 +12,7 @@ import PairMachine from "../components/PairMachine.vue";
 import SidePanel from "../components/SidePanel.vue";
 import { useDutyPanel } from "../lib/useDutyPanel.js";
 import { AGENTS, runnerLimited, runStateLabel, readinessStatus } from "../lib/runners.js";
-import { CONSOLE_VERSION, deployLink, differs, serviceVersion } from "../lib/version.js";
+import { CONSOLE_VERSION, deployLink, differs, releaseStatus, serviceVersion } from "../lib/version.js";
 
 // Your machines: the computers running `dutyboard` for you, what each is working on, and the
 // controls that are the program's settings — there is no settings file to edit on the machine.
@@ -29,6 +29,8 @@ const setupFor = ref({}); // machine_id → { project_id, path }
 // released together and updated separately. When one lags, the symptom is a feature that is simply
 // missing, which is a slow thing to work out from the outside. So they are put side by side.
 const boardVersion = ref("");
+// The newest DutyBoard released, when the board can say (see lib/version.js releaseStatus).
+const release = ref(null);
 const behind = computed(() => {
   const out = [];
   if (differs(CONSOLE_VERSION, boardVersion.value)) out.push("the board itself");
@@ -272,6 +274,7 @@ onMounted(async () => {
     document.getElementById(`machine-${focus.value}`)?.scrollIntoView({ block: "start" });
   }
   serviceVersion().then((v) => (boardVersion.value = v));
+  releaseStatus().then((r) => (release.value = r));
   timer = setInterval(() => {
     if (!document.hidden && !busy.value) load({ quiet: true });
   }, 10_000);
@@ -541,10 +544,11 @@ onUnmounted(() => {
       </li>
     </ul>
 
-    <details v-if="!loading" class="versions small" :open="behind.length > 0">
+    <details v-if="!loading" class="versions small" :open="behind.length > 0 || !!release?.update_available">
       <summary>
         Versions:
-        <template v-if="behind.length">not everything is on {{ consoleVersion }}</template>
+        <template v-if="release?.update_available">v{{ release.latest }} is out</template>
+        <template v-else-if="behind.length">not everything is on {{ consoleVersion }}</template>
         <template v-else-if="boardVersion">everything is on {{ consoleVersion }}</template>
         <template v-else>console {{ consoleVersion }}</template>
       </summary>
@@ -556,6 +560,13 @@ onUnmounted(() => {
             · {{ m.name }} <strong>{{ m.cli_version || "?" }}</strong>
           </template>
         </p>
+        <p v-if="release?.update_available" class="hint" style="margin: 0">
+          DutyBoard v{{ release.latest }} is the newest release. Whoever deployed this one updates the board and the
+          console in altengine —
+          <a :href="deployLink(release.app || config.app)" target="_blank" rel="noopener noreferrer">update your DutyBoard</a>
+          — and machines update themselves.
+        </p>
+        <p v-else-if="release?.latest" class="muted" style="margin: 0">v{{ release.latest }} is the newest release.</p>
         <p v-if="behind.length" class="hint" style="margin: 0">
           Behind: {{ behind.join(", ") }}. A feature that is missing rather than broken is usually this. Update a
           machine where it runs; the board and this console are upgraded in altengine by whoever deployed them —
@@ -596,6 +607,7 @@ button.machine__toggle:hover:not(:disabled) { background: none; color: var(--acc
 .machine__danger { border-top: 1px solid var(--border); padding-top: 0.9rem; }
 .versions summary { cursor: pointer; color: var(--text-dim); }
 .versions > .stack { margin-top: 0.6rem; }
+.versions code + .link { margin-left: 0.4rem; }
 .ready__list { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.5rem; }
 .ready__item { display: grid; grid-template-columns: 1.4rem 1fr; gap: 0.4rem; align-items: start; }
 .ready__mark { font-weight: 700; text-align: center; }

@@ -155,7 +155,8 @@ const manifest = {
         // Where a machine being paired sends a person to approve it.
         DUTYBOARD_CONSOLE_URL: "${console:url}",
       },
-      config: { corsOrigins: ["${console:origin}"], allowedHosts: PUSH_HOSTS },
+      // The push services, and DutyBoard's own site, where /release reads the newest version.
+      config: { corsOrigins: ["${console:origin}"], allowedHosts: [...PUSH_HOSTS, "www.dutyboard.com"] },
       functions: {
         board: {
           module: { url: "./board.mjs", sha256: sha256(code) },

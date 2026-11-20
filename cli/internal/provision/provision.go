@@ -67,6 +67,10 @@ const WebhookQueue = "webhooks"
 // PushHosts are the browsers' push services, which the function must reach to send a notification to
 // a device with no console open — and nothing else. Kept in step with PUSH_HOSTS in
 // functions/src/webpush.js.
+// ReleaseHost is DutyBoard's own site, where the function's /release reads the newest version — as
+// the manifest allows it.
+const ReleaseHost = "www.dutyboard.com"
+
 var PushHosts = []string{"fcm.googleapis.com", "updates.push.services.mozilla.com", "web.push.apple.com", "*.notify.windows.com"}
 
 // Map is the names by service, as config.json keeps them.

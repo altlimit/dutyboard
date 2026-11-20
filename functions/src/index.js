@@ -86,6 +86,7 @@ import {
 import { createSchedule, deleteSchedule, listSchedules, scheduleHistory, syncScheduleZones, tickAllSchedules, updateSchedule } from "./schedules.js";
 import { setBoardAccess, removeBoardAccess, listBoardAccess, linkedBoards } from "./board-access.js";
 import { VERSION } from "./version.js";
+import { releaseStatus } from "./release.js";
 
 
 
@@ -409,6 +410,11 @@ export default {
           .then((r) => r.every(Boolean))
           .catch(() => false),
       });
+    }
+
+    // Unauthenticated like /health: whether a newer DutyBoard is out, for the console's update notice.
+    if (path === "/release") {
+      return json(await releaseStatus(env, configure(env)));
     }
 
     try {

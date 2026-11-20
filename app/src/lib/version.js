@@ -37,5 +37,21 @@ export const MANIFEST_URL = "https://www.dutyboard.com/deploy/latest/altengine.j
 export const deployLink = (app = "") =>
   `https://console.altengine.net/deploy?manifest=${encodeURIComponent(MANIFEST_URL)}${app ? `&name=${encodeURIComponent(app)}` : ""}`;
 
+let releaseAsked = null;
+
+/**
+ * Whether a newer DutyBoard is out: the board function's `/release`, which reads the newest version
+ * from DutyBoard's site (the console cannot — the site sends no CORS headers). Asked once per page
+ * load; null when it cannot say, which is never a reason to show anything.
+ */
+export function releaseStatus() {
+  if (releaseAsked) return releaseAsked;
+  releaseAsked = fetch(`${config.api}/release`)
+    .then((res) => (res.ok ? res.json() : null))
+    .then((body) => (body && typeof body.current === "string" ? body : null))
+    .catch(() => null);
+  return releaseAsked;
+}
+
 /** True when two versions are both known and differ — the only case worth saying anything about. */
 export const differs = (a, b) => !!a && !!b && a !== b && a !== "dev" && b !== "dev";
