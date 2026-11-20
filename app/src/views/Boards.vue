@@ -12,6 +12,7 @@ import ProfileForm from "../components/ProfileForm.vue";
 import NewRepoFields from "../components/NewRepoFields.vue";
 import BoardTable from "../components/BoardTable.vue";
 import OfficeBuilding from "../components/OfficeBuilding.vue";
+import WaitingOnYou from "../components/WaitingOnYou.vue";
 
 const router = useRouter();
 const route = useRoute();
@@ -64,6 +65,8 @@ const PER_STATUS = 200;
 const showQuiet = ref(false);
 const rosters = ref({});
 const officeDuties = ref([]);
+/** Duties finished lately: one that leaves a desk is shown as done, not just gone. */
+const officeDone = ref([]);
 const officeLoaded = ref(false);
 const liveState = ref("");
 
@@ -78,6 +81,10 @@ const officeBoards = computed(() => {
 });
 const hiddenQuiet = computed(() => (counts.value && !showQuiet.value ? all.value.filter((b) => isQuiet(b, counts.value)).length : 0));
 const activity = computed(() => runsByDuty(runners.value));
+/** Questions waiting on you, answered under the building; a "?" in it brings one here. */
+const asking = computed(() => officeDuties.value.filter((d) => d.status === "needs_decision").sort((a, b) => (a.updated_at || 0) - (b.updated_at || 0)));
+const boardsById = computed(() => Object.fromEntries(officeBoards.value.map((b) => [b.project_id, b])));
+const waiting = ref(null);
 
 const rowsOf = (res) => (res.documents || []).map((d) => ({ ...d.data, key: String(d.key) }));
 
@@ -85,7 +92,14 @@ const rowsOf = (res) => (res.documents || []).map((d) => ({ ...d.data, key: Stri
 async function loadOfficeDuties() {
   const read = (status, dir) =>
     query("duties", { where: [{ field: "status", op: "=", value: status }], order: [{ field: "updated_at", dir }], limit: PER_STATUS }).then(rowsOf);
-  const [active, queued, asks] = await Promise.all([read("active", "desc"), read("queued", "desc"), read("needs_decision", "asc")]);
+  const [active, queued, asks, done] = await Promise.all([
+    read("active", "desc"),
+    read("queued", "desc"),
+    read("needs_decision", "asc"),
+    query("duties", { where: [{ field: "status", op: "=", value: "done" }], order: [{ field: "updated_at", dir: "desc" }], limit: 30 }).then(rowsOf),
+  ]);
+  // Together, so a duty that left a desk and the record of it being done arrive in the same reading.
+  officeDone.value = done;
   officeDuties.value = [...active, ...queued, ...asks];
 }
 
@@ -344,7 +358,10 @@ watch(
           <button v-else-if="showQuiet" type="button" class="link small" @click="showQuiet = false">Hide quiet boards</button>
         </p>
         <p v-if="!officeLoaded" class="muted" role="status">Opening the office…</p>
-        <OfficeBuilding v-else :boards="officeBoards" :duties="officeDuties" :activity="activity" />
+        <template v-else>
+          <OfficeBuilding :boards="officeBoards" :duties="officeDuties" :recent="officeDone" :activity="activity" @ask="(key) => waiting && waiting.open(key)" />
+          <WaitingOnYou ref="waiting" :duties="asking" :boards="boardsById" @answered="loadOfficeDuties" />
+        </template>
       </template>
     </template>
   </div>

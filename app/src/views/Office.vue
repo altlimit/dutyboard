@@ -9,9 +9,9 @@
 import { computed, onUnmounted, ref, watch } from "vue";
 import BoardNav from "../components/BoardNav.vue";
 import OfficeBuilding from "../components/OfficeBuilding.vue";
+import WaitingOnYou from "../components/WaitingOnYou.vue";
 import { api, query, subscribeLive } from "../lib/altengine.js";
 import { ago } from "../lib/duties.js";
-import { plain } from "../lib/markdown.js";
 import { activityByDuty } from "../lib/runners.js";
 import { officeFeed, roleNames } from "../lib/team.js";
 
@@ -143,6 +143,8 @@ onUnmounted(() => {
   if (runnerTimer) clearTimeout(runnerTimer);
 });
 
+/** The questions waiting on you, beside the building; a "?" in it brings one to the front. */
+const waiting = ref(null);
 const dutyLink = (d) => ({ name: "duty", params: { projectId: props.projectId, dutyId: d.key } });
 </script>
 
@@ -176,21 +178,11 @@ const dutyLink = (d) => ({ name: "duty", params: { projectId: props.projectId, d
       <div class="office">
         <section aria-labelledby="floor-h" style="min-width: 0">
           <h2 id="floor-h" class="sr-only">The team</h2>
-          <OfficeBuilding :boards="rooms" :duties="duties" :activity="activity" single />
+          <OfficeBuilding :boards="rooms" :duties="duties" :recent="done" :activity="activity" single @ask="(key) => waiting && waiting.open(key)" />
         </section>
 
         <aside class="rooms">
-          <section class="room room--you" aria-labelledby="room-you-h">
-            <h2 id="room-you-h" class="room__h">Meeting room <span class="room__sub">waiting for you · {{ needsYou.length }}</span></h2>
-            <ul v-if="needsYou.length" class="room__list">
-              <li v-for="d in needsYou.slice(0, 5)" :key="d.key">
-                <router-link :to="dutyLink(d)">{{ d.title }}</router-link>
-                <span v-if="d.last_question" class="room__note">{{ plain(d.last_question) }}</span>
-              </li>
-            </ul>
-            <p v-else class="room__empty">Nobody is waiting on you.</p>
-            <p v-if="needsYou.length > 5" class="muted small" style="margin: 0">and {{ needsYou.length - 5 }} more</p>
-          </section>
+          <WaitingOnYou ref="waiting" class="room room--you" :duties="needsYou" :boards="{ [projectId]: rooms[0] || {} }" single @answered="loadDuties" />
 
           <section v-if="blocked.length" class="room" aria-labelledby="room-blocked-h">
             <h2 id="room-blocked-h" class="room__h">Waiting room <span class="room__sub">behind other work · {{ blocked.length }}</span></h2>

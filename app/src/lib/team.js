@@ -135,6 +135,41 @@ export const TRAY_SHOWN = 3;
 /** People drawn at one cubicle: a role can work several duties at once. */
 export const SEATS = 2;
 
+/** A small, stable number from a string: the same input always gives the same answer. */
+export function hashOf(text) {
+  let h = 2166136261;
+  for (const ch of String(text)) h = Math.imul(h ^ ch.charCodeAt(0), 16777619) >>> 0;
+  return h;
+}
+
+/**
+ * How long people stay where they are when they have nothing to do: at their desk dozing, or in a
+ * particular corner of the breakroom. Long enough not to fidget, short enough that the office lives.
+ */
+export const WANDER_MS = 4 * 60 * 1000;
+
+/** Whether a role with nothing to do is dozing at its desk this stretch, rather than on a break. */
+export const dozing = (key, stretch) => hashOf(`${key}|doze|${stretch}`) % 3 === 0;
+
+const HANGOUTS = ["chat", "chat", "game", "coffee", "couch"];
+
+/**
+ * The breakroom's people in little groups, each doing something — chatting, playing at the arcade,
+ * by the coffee, on the couch — so it reads as a room and not a queue. Stable for a stretch.
+ */
+export function hangoutGroups(people, stretch) {
+  const groups = [];
+  for (let i = 0; i < people.length; ) {
+    const size = 1 + (hashOf(`${people[i].key}|size|${stretch}`) % 3);
+    const members = people.slice(i, i + size);
+    i += size;
+    let activity = HANGOUTS[hashOf(`${members[0].key}|do|${stretch}`) % HANGOUTS.length];
+    if (activity === "chat" && members.length < 2) activity = "coffee";
+    groups.push({ key: members.map((p) => p.key).join("|"), people: members, activity, lift: hashOf(`${members[0].key}|y`) % 16 });
+  }
+  return groups;
+}
+
 const ROOM_COLORS = ["#4f7fd9", "#3fa37a", "#d0783a", "#9467cf", "#cf4f7f", "#3a9fb0", "#b39337", "#6a8f3a"];
 
 /** A board's colour in the office — its room's trim, and the tag its people wear in the breakroom. */
@@ -154,7 +189,8 @@ const SOLO = { id: "", name: "Agent", summary: "Whoever claims a duty works it s
  * `boards` is `[{ project_id, name, roster }]`, where `roster` is `{ intake, roles }` or null for a
  * board with no team. `duties` are the unfinished duties of all of them. A role working a duty sits
  * at its cubicle; one with nothing in hand is in the breakroom, with whatever is waiting for it
- * stacked in its tray. Duties that want a person are on the room's meeting table.
+ * stacked in its tray. A role that asked a person something stays at its desk with the question
+ * (`asking`) — that is the one thing on the floor waiting for whoever is looking.
  */
 export function buildingFloor({ boards, duties, activity = {} }) {
   const byBoard = new Map();
@@ -169,7 +205,7 @@ export function buildingFloor({ boards, duties, activity = {} }) {
     const pointer = b.roster && b.roster.intake ? b.roster : null;
     const teamed = !!(pointer && pointer.roles && pointer.roles.length);
     const roles = teamed ? pointer.roles : [SOLO];
-    const desks = roles.map((role) => ({ key: `${b.project_id}:${role.id}`, role, working: [], tray: [] }));
+    const desks = roles.map((role) => ({ key: `${b.project_id}:${role.id}`, role, working: [], asking: [], tray: [] }));
     const deskOf = new Map(desks.map((d) => [d.role.id, d]));
     const front = (teamed && deskOf.get(pointer.intake)) || desks[0];
     const room = { board: b, color: boardColor(b.project_id), teamed, desks, needsYou: [], blocked: 0 };
@@ -178,39 +214,56 @@ export function buildingFloor({ boards, duties, activity = {} }) {
       const desk = teamed && (duty.kind || "work") === "work" ? deskOf.get(dutyRoleId(duty, pointer)) || front : front;
       if (duty.status === "active") desk.working.push({ duty, activity: activity[duty.key] || null });
       else if (duty.status === "queued") desk.tray.push(duty);
-      else if (duty.status === "needs_decision") room.needsYou.push(duty);
+      else if (duty.status === "needs_decision") {
+        room.needsYou.push(duty);
+        desk.asking.push(duty);
+      }
       else if (duty.status === "blocked") room.blocked++;
     }
     for (const d of desks) d.tray.sort(queueOrder);
     room.needsYou.sort((a, c) => (a.updated_at || 0) - (c.updated_at || 0));
+    for (const d of desks) d.asking.sort((a, c) => (a.updated_at || 0) - (c.updated_at || 0));
     return room;
   });
 
   const breakroom = rooms.flatMap((room) =>
-    room.desks.filter((d) => !d.working.length).map((d) => ({ key: d.key, role: d.role, board: room.board, color: room.color, waiting: d.tray.length })),
+    room.desks.filter((d) => !atDesk(d)).map((d) => ({ key: d.key, role: d.role, board: room.board, color: room.color, waiting: d.tray.length })),
   );
   return { rooms, breakroom, working: rooms.reduce((n, r) => n + r.desks.filter((d) => d.working.length).length, 0) };
 }
 
+/** Whether a role is at its desk: working a duty, or waiting there for a person's answer. */
+export const atDesk = (desk) => desk.working.length > 0 || desk.asking.length > 0;
+
 /**
- * What changed between two floors that is worth showing as movement: a role that got up from the
- * breakroom to its desk or went back, and a duty that moved from one role's desk to another's.
+ * What changed between two floors that is worth showing as movement:
+ *
+ *   walks     a role that got up from the breakroom to its desk, or went back;
+ *   handoffs  a duty that moved from one role's desk to another's, and whether it was sent back;
+ *   left      a duty that was on a desk and is no longer on the floor at all — finished, usually.
  */
 export function floorMoves(before, after) {
-  if (!before || !after) return { walks: [], handoffs: [] };
-  const working = (floor) => new Set(floor.rooms.flatMap((r) => r.desks.filter((d) => d.working.length).map((d) => d.key)));
+  if (!before || !after) return { walks: [], handoffs: [], left: [] };
+  const present = (floor) => new Set(floor.rooms.flatMap((r) => r.desks.filter(atDesk).map((d) => d.key)));
   const deskOfDuty = (floor) => {
     const out = new Map();
-    for (const r of floor.rooms) for (const d of r.desks) for (const x of [...d.working.map((w) => w.duty), ...d.tray]) out.set(x.key, d.key);
+    for (const r of floor.rooms) {
+      for (const d of r.desks) for (const x of [...d.working.map((w) => w.duty), ...d.asking, ...d.tray]) out.set(x.key, { desk: d.key, duty: x });
+    }
     return out;
   };
-  const [was, now] = [working(before), working(after)];
+  const [was, now] = [present(before), present(after)];
   const keys = new Set(after.rooms.flatMap((r) => r.desks.map((d) => d.key)));
   const walks = [...keys].filter((k) => was.has(k) !== now.has(k)).map((key) => ({ key, to: now.has(key) ? "desk" : "break" }));
   const [from, to] = [deskOfDuty(before), deskOfDuty(after)];
   const handoffs = [];
-  for (const [duty, desk] of to) if (from.has(duty) && from.get(duty) !== desk) handoffs.push({ duty, from: from.get(duty), to: desk });
-  return { walks, handoffs };
+  const left = [];
+  for (const [id, at] of to) {
+    const old = from.get(id);
+    if (old && old.desk !== at.desk) handoffs.push({ duty: id, title: at.duty.title, from: old.desk, to: at.desk, sent_back: !!(at.duty.handoff && at.duty.handoff.sent_back) });
+  }
+  for (const [id, old] of from) if (!to.has(id)) left.push({ duty: id, title: old.duty.title, desk: old.desk });
+  return { walks, handoffs, left };
 }
 
 /**
