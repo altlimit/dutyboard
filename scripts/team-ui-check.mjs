@@ -128,11 +128,12 @@ assert.equal(offTeam.rooms[0].teamed, false, "a team that was turned off draws a
 assert.deepEqual(buildingFloor({ boards: [], duties: inShop }), { rooms: [], breakroom: [], working: 0 });
 
 // A board with a scheduled duty coming keeps whoever picks it up in their seat, on call.
-const due = { at: Date.UTC(2026, 10, 20, 9), title: "Weekly sales report" };
+const due = { at: Date.UTC(2026, 10, 20, 9), title: "Weekly sales report", schedule_id: "sch_1" };
 const calm = buildingFloor({ boards: [shop, blog], duties: [], next: { shop: due, blog: due } });
 assert.deepEqual(calm.rooms[0].desks.find((d) => d.role.id === "duty-officer").onCall, due, "the role that reads new duties first, which is who a scheduled duty goes to");
 assert.equal(calm.rooms[0].desks.filter((d) => d.onCall).length, 1, "and nobody else");
 assert.deepEqual(calm.rooms[1].desks[0].onCall, due, "on a board with no team, its one agent");
+assert.equal(buildingFloor({ boards: [shop], duties: [], next: { shop: { at: 1, title: "Old server" } } }).rooms[0].desks[0].onCall.schedule_id, "", "a server too old to name the schedule still puts someone on call");
 assert.ok(!calm.breakroom.some((p) => p.key === "shop:duty-officer" || p.key === "blog:"), "so they are not on a break");
 assert.equal(calm.breakroom.length, 4);
 const busyFront = buildingFloor({ boards: [shop], duties: [{ key: "x", project_id: "shop", kind: "work", status: "active", role: null }], next: { shop: due } });

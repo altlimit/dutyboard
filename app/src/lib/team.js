@@ -225,7 +225,7 @@ export function buildingFloor({ boards, duties, activity = {}, next = {} }) {
     room.needsYou.sort((a, c) => (a.updated_at || 0) - (c.updated_at || 0));
     for (const d of desks) d.asking.sort((a, c) => (a.updated_at || 0) - (c.updated_at || 0));
     const scheduled = next[b.project_id];
-    if (scheduled && scheduled.at && !atDesk(front)) front.onCall = { at: scheduled.at, title: scheduled.title || "" };
+    if (scheduled && scheduled.at && !atDesk(front)) front.onCall = { at: scheduled.at, title: scheduled.title || "", schedule_id: scheduled.schedule_id || "" };
     return room;
   });
 

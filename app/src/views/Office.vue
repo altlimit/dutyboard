@@ -12,6 +12,7 @@ import OfficeBuilding from "../components/OfficeBuilding.vue";
 import WaitingOnYou from "../components/WaitingOnYou.vue";
 import QuickDuty from "../components/QuickDuty.vue";
 import DutyDrawer from "../components/DutyDrawer.vue";
+import ScheduleDrawer from "../components/ScheduleDrawer.vue";
 import { useRoute, useRouter } from "vue-router";
 import { plainClick } from "../lib/clicks.js";
 import { api, query, subscribeLive } from "../lib/altengine.js";
@@ -168,9 +169,19 @@ const quick = ref(null);
 const route = useRoute();
 const router = useRouter();
 const reading = computed(() => (route.query.duty ? String(route.query.duty) : ""));
-const openDuty = (dutyId) => router.push({ query: { ...route.query, duty: dutyId } });
+const openDuty = (dutyId) => {
+  const { schedule, ...rest } = route.query;
+  router.push({ query: { ...rest, duty: dutyId } });
+};
 function closeDuty() {
   const { duty, ...rest } = route.query;
+  router.replace({ query: rest });
+}
+/** The recurring duty the on-call desk is waiting for, read over the office the same way. */
+const readingSchedule = computed(() => (route.query.schedule ? String(route.query.schedule) : ""));
+const openSchedule = ({ scheduleId }) => router.push({ query: { ...route.query, schedule: scheduleId } });
+function closeSchedule() {
+  const { schedule, ...rest } = route.query;
   router.replace({ query: rest });
 }
 /** A duty's own address, so its link still opens in a new tab when asked to. */
@@ -216,7 +227,7 @@ function readHere(event, dutyId) {
       <div class="office">
         <section aria-labelledby="floor-h" style="min-width: 0">
           <h2 id="floor-h" class="sr-only">The team</h2>
-          <OfficeBuilding :boards="rooms" :duties="duties" :recent="done" :next="next" :activity="activity" single @ask="openDuty" @open="({ dutyId }) => openDuty(dutyId)" @add="() => quick && quick.open(projectId)" />
+          <OfficeBuilding :boards="rooms" :duties="duties" :recent="done" :next="next" :activity="activity" single @ask="openDuty" @open="({ dutyId }) => openDuty(dutyId)" @schedule="openSchedule" @add="() => quick && quick.open(projectId)" />
         </section>
 
         <aside class="rooms">
@@ -254,6 +265,7 @@ function readHere(event, dutyId) {
       </div>
     </template>
     <DutyDrawer v-if="reading" :key="reading" :project-id="projectId" :duty-id="reading" @close="closeDuty" />
+    <ScheduleDrawer v-else-if="readingSchedule" :key="readingSchedule" :project-id="projectId" :schedule-id="readingSchedule" @close="closeSchedule" @open="({ dutyId }) => openDuty(dutyId)" />
   </div>
 </template>
 

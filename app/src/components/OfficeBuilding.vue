@@ -39,8 +39,9 @@ const props = defineProps({
 // A "?" in the building is a question waiting on you: selecting it asks the page to open the question
 // where it can be answered, rather than leaving the office.
 // "+ Duty" on a room's plate asks the page to open a new duty on that board.
-// A cubicle's duty opens over the office ("open"), rather than taking you away from it.
-const emit = defineEmits(["ask", "add", "open"]);
+// A cubicle's duty opens over the office ("open"), and an on-call desk's recurring duty too
+// ("schedule"), rather than taking you away from it.
+const emit = defineEmits(["ask", "add", "open", "schedule"]);
 const router = useRouter();
 
 /** People drawn in the breakroom before the rest are a number. */
@@ -76,25 +77,32 @@ const deskName = (key) => {
   return "";
 };
 
-const dutyLink = (d) => ({ name: "duty", params: { projectId: d.project_id, dutyId: d.key } });
 /**
- * Where a cubicle takes you: the question waiting on you, else what it is working on, else what it
- * just passed on or finished, else the next thing in its tray, else the board.
+ * What selecting a cubicle opens — whatever its bubble is about: the question waiting on you, what it
+ * is working on, what it just passed on or finished, the recurring duty it is on call for. With no
+ * bubble, the next thing in its tray, else the board's own office.
  */
-/** The address a cubicle's link carries, so it still opens in a new tab when asked to. */
-const hrefOf = (to) => router.resolve(to).href;
-/** A plain click on a cubicle with a duty opens it over the office; anything else is the browser's. */
-function openDesk(event, link) {
-  if (link.name !== "duty" || !plainClick(event)) return;
-  event.preventDefault();
-  emit("open", { projectId: link.params.projectId, dutyId: link.params.dutyId });
+function deskTarget(room, desk) {
+  const projectId = room.board.project_id;
+  const duty = desk.asking[0] || (desk.working[0] && desk.working[0].duty);
+  if (duty) return { kind: "duty", projectId, id: duty.key };
+  if (linger[desk.key]) return { kind: "duty", projectId, id: linger[desk.key].duty };
+  if (present(desk) && desk.onCall && desk.onCall.schedule_id) return { kind: "schedule", projectId, id: desk.onCall.schedule_id };
+  if (desk.tray[0]) return { kind: "duty", projectId, id: desk.tray[0].key };
+  return props.single ? null : { kind: "office", projectId };
 }
-
-function deskLink(room, desk) {
-  const d = desk.asking[0] || (desk.working[0] && desk.working[0].duty) || desk.tray[0];
-  if (d) return dutyLink(d);
-  if (linger[desk.key]) return { name: "duty", params: { projectId: room.board.project_id, dutyId: linger[desk.key].duty } };
-  return props.single ? null : { name: "office", params: { projectId: room.board.project_id } };
+/** The address a cubicle's link carries, so it still opens in a new tab when asked to. */
+function hrefOf(t) {
+  if (t.kind === "duty") return router.resolve({ name: "duty", params: { projectId: t.projectId, dutyId: t.id } }).href;
+  if (t.kind === "schedule") return router.resolve({ name: "settings", params: { projectId: t.projectId }, query: { tab: "recurring" } }).href;
+  return router.resolve({ name: "office", params: { projectId: t.projectId } }).href;
+}
+/** A plain click opens a duty or a recurring duty over the office; anything else is the browser's. */
+function openDesk(event, t) {
+  if (t.kind === "office" || !plainClick(event)) return;
+  event.preventDefault();
+  if (t.kind === "duty") emit("open", { projectId: t.projectId, dutyId: t.id });
+  else emit("schedule", { projectId: t.projectId, scheduleId: t.id });
 }
 
 /** How a person in the breakroom is named on hover. */
@@ -412,10 +420,10 @@ function animate(el, item, kind) {
       <ul class="cubes">
         <li v-for="desk in room.desks" :key="desk.key">
           <component
-            :is="desk.asking.length ? 'button' : deskLink(room, desk) ? 'a' : 'div'"
-            :href="desk.asking.length || !deskLink(room, desk) ? undefined : hrefOf(deskLink(room, desk))"
+            :is="desk.asking.length ? 'button' : deskTarget(room, desk) ? 'a' : 'div'"
+            :href="desk.asking.length || !deskTarget(room, desk) ? undefined : hrefOf(deskTarget(room, desk))"
             :type="desk.asking.length ? 'button' : undefined"
-            @click="desk.asking.length ? emit('ask', desk.asking[0].key) : deskLink(room, desk) && openDesk($event, deskLink(room, desk))"
+            @click="desk.asking.length ? emit('ask', desk.asking[0].key) : deskTarget(room, desk) && openDesk($event, deskTarget(room, desk))"
             class="cube"
             :class="[{ 'cube--working': seated(desk) }, bubbleOf(desk) ? `cube--${bubbleOf(desk).kind}` : '']"
             :data-desk="desk.key"

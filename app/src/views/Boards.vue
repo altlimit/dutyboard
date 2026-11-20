@@ -15,6 +15,7 @@ import OfficeBuilding from "../components/OfficeBuilding.vue";
 import WaitingOnYou from "../components/WaitingOnYou.vue";
 import QuickDuty from "../components/QuickDuty.vue";
 import DutyDrawer from "../components/DutyDrawer.vue";
+import ScheduleDrawer from "../components/ScheduleDrawer.vue";
 
 const router = useRouter();
 const route = useRoute();
@@ -94,7 +95,17 @@ const quick = ref(null);
  * closes it and a reload or a shared link opens it again.
  */
 const reading = computed(() => (office.value && route.query.duty && route.query.on ? { projectId: String(route.query.on), dutyId: String(route.query.duty) } : null));
-const openDuty = ({ projectId, dutyId }) => router.push({ query: { ...route.query, duty: dutyId, on: projectId } });
+const openDuty = ({ projectId, dutyId }) => {
+  const { schedule, ...rest } = route.query;
+  router.push({ query: { ...rest, duty: dutyId, on: projectId } });
+};
+/** A recurring duty read over the office — from the desk on call for it — kept in the address too. */
+const readingSchedule = computed(() => (office.value && route.query.schedule && route.query.on ? { projectId: String(route.query.on), scheduleId: String(route.query.schedule) } : null));
+const openSchedule = ({ projectId, scheduleId }) => router.push({ query: { ...route.query, schedule: scheduleId, on: projectId } });
+function closeSchedule() {
+  const { schedule, on, ...rest } = route.query;
+  router.replace({ query: rest });
+}
 /** A "?" desk: its duty, open over the office, where it can be answered. */
 function openAsking(key) {
   const d = asking.value.find((x) => x.key === key);
@@ -391,9 +402,11 @@ watch(
             @ask="(key) => openAsking(key)"
             @add="(id) => quick && quick.open(id)"
             @open="openDuty"
+            @schedule="openSchedule"
           />
           <WaitingOnYou ref="waiting" :duties="asking" :boards="boardsById" @answered="loadOfficeDuties" @open="openDuty" />
           <DutyDrawer v-if="reading" :key="reading.dutyId" :project-id="reading.projectId" :duty-id="reading.dutyId" @close="closeDuty" />
+          <ScheduleDrawer v-else-if="readingSchedule" :key="readingSchedule.scheduleId" :project-id="readingSchedule.projectId" :schedule-id="readingSchedule.scheduleId" @close="closeSchedule" @open="openDuty" />
         </template>
       </template>
     </template>
