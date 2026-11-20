@@ -13,7 +13,13 @@ import Attachments from "../components/Attachments.vue";
 import { markdown, plain } from "../lib/markdown.js";
 import { user } from "../lib/session.js";
 
-const props = defineProps({ projectId: { type: String, required: true }, dutyId: { type: String, required: true } });
+const props = defineProps({
+  projectId: { type: String, required: true },
+  dutyId: { type: String, required: true },
+  // Shown inside the office, in a panel over it: no board navigation, and deleting it closes the panel.
+  embedded: { type: Boolean, default: false },
+});
+const emit = defineEmits(["close"]);
 const router = useRouter();
 
 /** One page of the decision log. Newest first, because almost every visit is about the
@@ -287,7 +293,8 @@ async function remove() {
   const destination = duty.value.kind === "note" ? "notes" : "board";
   await act(async () => {
     await api("/duty/delete", { duty_id: props.dutyId });
-    router.push({ name: destination, params: { projectId: props.projectId } });
+    if (props.embedded) emit("close");
+    else router.push({ name: destination, params: { projectId: props.projectId } });
   });
 }
 
@@ -312,9 +319,9 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="wrap wrap--narrow stack">
-    <BoardNav :project-id="projectId" :active="duty?.kind === 'note' ? 'notes' : 'board'" />
-    <p style="margin: 0">
+  <div class="stack" :class="embedded ? 'duty-embedded' : 'wrap wrap--narrow'">
+    <BoardNav v-if="!embedded" :project-id="projectId" :active="duty?.kind === 'note' ? 'notes' : 'board'" />
+    <p v-if="!embedded" style="margin: 0">
       <router-link :to="{ name: duty?.kind === 'note' ? 'notes' : 'board', params: { projectId } }">← {{ duty?.kind === 'note' ? 'Back to Notes' : 'Back to the board' }}</router-link>
     </p>
 

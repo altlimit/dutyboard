@@ -2,8 +2,10 @@
 // One question an agent has put to you, answerable where you are: the question, the options it
 // offered as buttons, and a box for an answer of your own. A suggestion waiting for approval is
 // approved or rejected the same way. The same calls the duty's own page makes.
-import { onMounted, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
+import { useRouter } from "vue-router";
 import { api, query } from "../lib/altengine.js";
+import { plainClick } from "../lib/clicks.js";
 import { ago } from "../lib/duties.js";
 import { markdown } from "../lib/markdown.js";
 
@@ -14,7 +16,15 @@ const props = defineProps({
   // The role on the board's team that is waiting, when it has one.
   role: { type: String, default: "" },
 });
-const emit = defineEmits(["answered"]);
+// `open` asks to read the whole duty where you are; the title is still a real link for a new tab.
+const emit = defineEmits(["answered", "open"]);
+const router = useRouter();
+const href = computed(() => router.resolve({ name: "duty", params: { projectId: props.duty.project_id, dutyId: props.duty.key } }).href);
+function openHere(event) {
+  if (!plainClick(event)) return;
+  event.preventDefault();
+  emit("open", { projectId: props.duty.project_id, dutyId: props.duty.key });
+}
 
 const question = ref(props.duty.last_question || "");
 const options = ref([]);
@@ -72,7 +82,7 @@ defineExpose({ focus });
 <template>
   <article class="ask">
     <header class="ask__head">
-      <router-link class="ask__title" :to="{ name: 'duty', params: { projectId: duty.project_id, dutyId: duty.key } }">{{ duty.title }}</router-link>
+      <a class="ask__title" :href="href" @click="openHere">{{ duty.title }}</a>
       <span class="ask__meta">
         <span v-if="board" class="badge">{{ board }}</span>
         <span v-if="role">{{ role }}</span>

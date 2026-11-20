@@ -15,7 +15,7 @@ const props = defineProps({
 });
 
 // After an answer is sent, so the page can read the floor again without waiting for the live event.
-const emit = defineEmits(["answered"]);
+const emit = defineEmits(["answered", "open"]);
 
 const SHOWN = 8;
 const showAll = ref(false);
@@ -63,6 +63,7 @@ defineExpose({ open });
         :board="single ? '' : (boards[d.project_id] && boards[d.project_id].name) || d.project_id"
         :role="roleOf(d)"
         @answered="answered"
+        @open="(where) => emit('open', where)"
       />
     </div>
     <button v-if="duties.length > SHOWN && !showAll" type="button" class="link small" @click="showAll = true">Show all {{ duties.length }}</button>

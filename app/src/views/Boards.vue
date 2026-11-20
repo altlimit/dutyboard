@@ -14,6 +14,7 @@ import BoardTable from "../components/BoardTable.vue";
 import OfficeBuilding from "../components/OfficeBuilding.vue";
 import WaitingOnYou from "../components/WaitingOnYou.vue";
 import QuickDuty from "../components/QuickDuty.vue";
+import DutyDrawer from "../components/DutyDrawer.vue";
 
 const router = useRouter();
 const route = useRoute();
@@ -87,6 +88,22 @@ const asking = computed(() => officeDuties.value.filter((d) => d.status === "nee
 const boardsById = computed(() => Object.fromEntries(officeBoards.value.map((b) => [b.project_id, b])));
 const waiting = ref(null);
 const quick = ref(null);
+
+/**
+ * The duty read over the office, kept in the address — `duty` and the board it is `on` — so Back
+ * closes it and a reload or a shared link opens it again.
+ */
+const reading = computed(() => (office.value && route.query.duty && route.query.on ? { projectId: String(route.query.on), dutyId: String(route.query.duty) } : null));
+const openDuty = ({ projectId, dutyId }) => router.push({ query: { ...route.query, duty: dutyId, on: projectId } });
+/** A "?" desk: its duty, open over the office, where it can be answered. */
+function openAsking(key) {
+  const d = asking.value.find((x) => x.key === key);
+  if (d) openDuty({ projectId: d.project_id, dutyId: d.key });
+}
+function closeDuty() {
+  const { duty, on, ...rest } = route.query;
+  router.replace({ query: rest });
+}
 
 const rowsOf = (res) => (res.documents || []).map((d) => ({ ...d.data, key: String(d.key) }));
 
@@ -353,12 +370,16 @@ watch(
     <template v-else>
       <p v-if="!all.length" class="empty">No boards yet, so the building is empty. Create one, then put it on a machine.</p>
       <template v-else>
-        <p class="row small muted" style="margin: 0; gap: 0.6rem">
-          <span v-if="liveState" class="livedot" :class="`livedot--${liveState}`" role="status">{{ liveState === "live" ? "Live" : liveState }}</span>
-          <span>{{ officeBoards.length }} {{ officeBoards.length === 1 ? "room" : "rooms" }}</span>
-          <button v-if="hiddenQuiet" type="button" class="link small" @click="showQuiet = true">Show {{ hiddenQuiet }} quiet {{ hiddenQuiet === 1 ? "board" : "boards" }}</button>
-          <button v-else-if="showQuiet" type="button" class="link small" @click="showQuiet = false">Hide quiet boards</button>
-        </p>
+        <div class="row row--between">
+          <p class="row small muted" style="margin: 0; gap: 0.6rem">
+            <span v-if="liveState" class="livedot" :class="`livedot--${liveState}`" role="status">{{ liveState === "live" ? "Live" : liveState }}</span>
+            <span>{{ officeBoards.length }} {{ officeBoards.length === 1 ? "room" : "rooms" }}</span>
+            <button v-if="hiddenQuiet" type="button" class="link small" @click="showQuiet = true">Show {{ hiddenQuiet }} quiet {{ hiddenQuiet === 1 ? "board" : "boards" }}</button>
+            <button v-else-if="showQuiet" type="button" class="link small" @click="showQuiet = false">Hide quiet boards</button>
+          </p>
+          <!-- At the top, and opening over the office: no scrolling down to file something. -->
+          <QuickDuty ref="quick" :boards="officeBoards" @added="loadOfficeDuties" />
+        </div>
         <p v-if="!officeLoaded" class="muted" role="status">Opening the office…</p>
         <template v-else>
           <OfficeBuilding
@@ -367,11 +388,12 @@ watch(
             :recent="officeDone"
             :next="upcoming ? upcoming.next : {}"
             :activity="activity"
-            @ask="(key) => waiting && waiting.open(key)"
+            @ask="(key) => openAsking(key)"
             @add="(id) => quick && quick.open(id)"
+            @open="openDuty"
           />
-          <QuickDuty ref="quick" :boards="officeBoards" @added="loadOfficeDuties" />
-          <WaitingOnYou ref="waiting" :duties="asking" :boards="boardsById" @answered="loadOfficeDuties" />
+          <WaitingOnYou ref="waiting" :duties="asking" :boards="boardsById" @answered="loadOfficeDuties" @open="openDuty" />
+          <DutyDrawer v-if="reading" :key="reading.dutyId" :project-id="reading.projectId" :duty-id="reading.dutyId" @close="closeDuty" />
         </template>
       </template>
     </template>

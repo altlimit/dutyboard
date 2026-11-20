@@ -11,6 +11,9 @@ import BoardNav from "../components/BoardNav.vue";
 import OfficeBuilding from "../components/OfficeBuilding.vue";
 import WaitingOnYou from "../components/WaitingOnYou.vue";
 import QuickDuty from "../components/QuickDuty.vue";
+import DutyDrawer from "../components/DutyDrawer.vue";
+import { useRoute, useRouter } from "vue-router";
+import { plainClick } from "../lib/clicks.js";
 import { api, query, subscribeLive } from "../lib/altengine.js";
 import { ago } from "../lib/duties.js";
 import { activityByDuty } from "../lib/runners.js";
@@ -160,7 +163,24 @@ onUnmounted(() => {
 /** The questions waiting on you, beside the building; a "?" in it brings one to the front. */
 const waiting = ref(null);
 const quick = ref(null);
-const dutyLink = (d) => ({ name: "duty", params: { projectId: props.projectId, dutyId: d.key } });
+
+// The duty read over the office, kept in the address so Back closes it and a reload opens it again.
+const route = useRoute();
+const router = useRouter();
+const reading = computed(() => (route.query.duty ? String(route.query.duty) : ""));
+const openDuty = (dutyId) => router.push({ query: { ...route.query, duty: dutyId } });
+function closeDuty() {
+  const { duty, ...rest } = route.query;
+  router.replace({ query: rest });
+}
+/** A duty's own address, so its link still opens in a new tab when asked to. */
+const hrefOf = (dutyId) => router.resolve({ name: "duty", params: { projectId: props.projectId, dutyId } }).href;
+/** A link to a duty in the side lists: a plain click reads it here, anything else is the browser's. */
+function readHere(event, dutyId) {
+  if (!plainClick(event)) return;
+  event.preventDefault();
+  openDuty(dutyId);
+}
 </script>
 
 <template>
@@ -177,7 +197,7 @@ const dutyLink = (d) => ({ name: "duty", params: { projectId: props.projectId, d
         </p>
       </div>
       <div class="row">
-        <button class="primary" type="button" @click="quick && quick.open(projectId)">Add a duty</button>
+        <QuickDuty v-if="board" ref="quick" :boards="[{ project_id: projectId, name: board.name }]" @added="loadDuties" />
         <router-link class="btn" :to="{ name: 'board', params: { projectId } }">All duties</router-link>
       </div>
     </div>
@@ -196,17 +216,16 @@ const dutyLink = (d) => ({ name: "duty", params: { projectId: props.projectId, d
       <div class="office">
         <section aria-labelledby="floor-h" style="min-width: 0">
           <h2 id="floor-h" class="sr-only">The team</h2>
-          <OfficeBuilding :boards="rooms" :duties="duties" :recent="done" :next="next" :activity="activity" single @ask="(key) => waiting && waiting.open(key)" @add="() => quick && quick.open(projectId)" />
+          <OfficeBuilding :boards="rooms" :duties="duties" :recent="done" :next="next" :activity="activity" single @ask="openDuty" @open="({ dutyId }) => openDuty(dutyId)" @add="() => quick && quick.open(projectId)" />
         </section>
 
         <aside class="rooms">
-          <QuickDuty ref="quick" class="room" :boards="[{ project_id: projectId, name: board.name }]" @added="loadDuties" />
-          <WaitingOnYou ref="waiting" class="room room--you" :duties="needsYou" :boards="{ [projectId]: rooms[0] || {} }" single @answered="loadDuties" />
+          <WaitingOnYou ref="waiting" class="room room--you" @open="({ dutyId }) => openDuty(dutyId)" :duties="needsYou" :boards="{ [projectId]: rooms[0] || {} }" single @answered="loadDuties" />
 
           <section v-if="blocked.length" class="room" aria-labelledby="room-blocked-h">
             <h2 id="room-blocked-h" class="room__h">Waiting room <span class="room__sub">behind other work · {{ blocked.length }}</span></h2>
             <ul class="room__list">
-              <li v-for="d in blocked.slice(0, 4)" :key="d.key"><router-link :to="dutyLink(d)">{{ d.title }}</router-link></li>
+              <li v-for="d in blocked.slice(0, 4)" :key="d.key"><a :href="hrefOf(d.key)" @click="readHere($event, d.key)">{{ d.title }}</a></li>
             </ul>
           </section>
 
@@ -214,7 +233,7 @@ const dutyLink = (d) => ({ name: "duty", params: { projectId: props.projectId, d
             <h2 id="room-feed-h" class="room__h">Across the floor <span class="room__sub">latest handoffs</span></h2>
             <ul v-if="feed.length" class="room__list">
               <li v-for="e in feed" :key="e.key">
-                <router-link :to="{ name: 'duty', params: { projectId, dutyId: e.duty_id } }">{{ e.title }}</router-link>
+                <a :href="hrefOf(e.duty_id)" @click="readHere($event, e.duty_id)">{{ e.title }}</a>
                 <span class="room__note" :class="{ 'room__note--back': e.sent_back }">{{ e.text }} · {{ ago(e.at) }}</span>
               </li>
             </ul>
@@ -225,7 +244,7 @@ const dutyLink = (d) => ({ name: "duty", params: { projectId: props.projectId, d
             <h2 id="room-done-h" class="room__h">Out tray <span class="room__sub">finished</span></h2>
             <ul v-if="finished.length" class="room__list">
               <li v-for="d in finished" :key="d.key">
-                <router-link :to="dutyLink(d)">{{ d.title }}</router-link>
+                <a :href="hrefOf(d.key)" @click="readHere($event, d.key)">{{ d.title }}</a>
                 <span class="room__note">{{ ago(d.finished_at || d.updated_at) }}</span>
               </li>
             </ul>
@@ -234,6 +253,7 @@ const dutyLink = (d) => ({ name: "duty", params: { projectId: props.projectId, d
         </aside>
       </div>
     </template>
+    <DutyDrawer v-if="reading" :key="reading" :project-id="projectId" :duty-id="reading" @close="closeDuty" />
   </div>
 </template>
 

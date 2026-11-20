@@ -14,6 +14,8 @@
 //             at the desk stacked with whatever waits for them. The groups drift every few minutes. Every duty in it is a link to the duty; the same is said in words for a
 // screen reader, and in the strip under the building on hover or focus.
 import { computed, nextTick, onUnmounted, reactive, ref, watch } from "vue";
+import { useRouter } from "vue-router";
+import { plainClick } from "../lib/clicks.js";
 import PixelPerson from "./PixelPerson.vue";
 import PixelSprite from "./PixelSprite.vue";
 import { activityLine } from "../lib/runners.js";
@@ -37,7 +39,9 @@ const props = defineProps({
 // A "?" in the building is a question waiting on you: selecting it asks the page to open the question
 // where it can be answered, rather than leaving the office.
 // "+ Duty" on a room's plate asks the page to open a new duty on that board.
-const emit = defineEmits(["ask", "add"]);
+// A cubicle's duty opens over the office ("open"), rather than taking you away from it.
+const emit = defineEmits(["ask", "add", "open"]);
+const router = useRouter();
 
 /** People drawn in the breakroom before the rest are a number. */
 const BREAK_SHOWN = 40;
@@ -77,6 +81,15 @@ const dutyLink = (d) => ({ name: "duty", params: { projectId: d.project_id, duty
  * Where a cubicle takes you: the question waiting on you, else what it is working on, else what it
  * just passed on or finished, else the next thing in its tray, else the board.
  */
+/** The address a cubicle's link carries, so it still opens in a new tab when asked to. */
+const hrefOf = (to) => router.resolve(to).href;
+/** A plain click on a cubicle with a duty opens it over the office; anything else is the browser's. */
+function openDesk(event, link) {
+  if (link.name !== "duty" || !plainClick(event)) return;
+  event.preventDefault();
+  emit("open", { projectId: link.params.projectId, dutyId: link.params.dutyId });
+}
+
 function deskLink(room, desk) {
   const d = desk.asking[0] || (desk.working[0] && desk.working[0].duty) || desk.tray[0];
   if (d) return dutyLink(d);
@@ -399,10 +412,10 @@ function animate(el, item, kind) {
       <ul class="cubes">
         <li v-for="desk in room.desks" :key="desk.key">
           <component
-            :is="desk.asking.length ? 'button' : deskLink(room, desk) ? 'router-link' : 'div'"
-            :to="desk.asking.length ? undefined : deskLink(room, desk) || undefined"
+            :is="desk.asking.length ? 'button' : deskLink(room, desk) ? 'a' : 'div'"
+            :href="desk.asking.length || !deskLink(room, desk) ? undefined : hrefOf(deskLink(room, desk))"
             :type="desk.asking.length ? 'button' : undefined"
-            @click="desk.asking.length && emit('ask', desk.asking[0].key)"
+            @click="desk.asking.length ? emit('ask', desk.asking[0].key) : deskLink(room, desk) && openDesk($event, deskLink(room, desk))"
             class="cube"
             :class="[{ 'cube--working': seated(desk) }, bubbleOf(desk) ? `cube--${bubbleOf(desk).kind}` : '']"
             :data-desk="desk.key"

@@ -1,13 +1,12 @@
 <script setup>
-import DutyAgentPriority from "../components/DutyAgentPriority.vue";
+import DutyForm from "../components/DutyForm.vue";
 import BoardNav from "../components/BoardNav.vue";
-import { computed, onUnmounted, provide, reactive, ref, watch } from "vue";
+import { computed, onUnmounted, provide, ref, watch } from "vue";
 import { roleNames } from "../lib/team.js";
-import { aggregate, api, putSigned, query, subscribeLive } from "../lib/altengine.js";
-import { STATUS_COLUMNS, PRIORITIES, expiryChoices, ago, columnOrder, sortColumn } from "../lib/duties.js";
+import { aggregate, api, query, subscribeLive } from "../lib/altengine.js";
+import { STATUS_COLUMNS, ago, columnOrder, sortColumn } from "../lib/duties.js";
 import BoardColumn from "../components/BoardColumn.vue";
 import { activityByDuty, runnerSummary } from "../lib/runners.js";
-import { pastedFiles } from "../lib/paste.js";
 import { plain } from "../lib/markdown.js";
 
 const props = defineProps({ projectId: { type: String, required: true } });
@@ -157,17 +156,6 @@ function clearSearch() {
 const error = ref("");
 const liveState = ref("connecting");
 const showForm = ref(false);
-/** How long a finished duty stays, as the board's settings say a new one should start. */
-const defaultExpiry = () => (board.value && board.value.profile && board.value.profile.expire_after_days) || 0;
-const blankDraft = () => ({ title: "", brief: "", priority: "next", agent_options: null, expire_after_days: defaultExpiry() });
-const draft = ref(blankDraft());
-const adding = ref(false);
-
-// Files chosen while writing the duty, uploaded once it exists. A screenshot of the bug is
-// often the clearest brief there is, and making someone add the duty, open it, and attach
-// from there is how the screenshot ends up described in words instead.
-const draftFiles = ref([]); // File[]
-const uploading = ref([]); // [{ name, pct }], reactive, while bytes are in flight
 // Files that did not make it onto a duty that did. Kept apart from `error` because it needs
 // a link to the duty — the duty exists, and that page is where to try again.
 const attachFailed = ref(null); // { dutyId, title, lines: string[] }
@@ -377,8 +365,6 @@ async function openBoard() {
   try {
     const res = await api("/board/open", { project_id: props.projectId });
     board.value = res.project || null;
-    // The form may already be open; nothing typed into it yet means nothing chosen in it yet.
-    if (!draft.value.title && !draft.value.brief) draft.value.expire_after_days = defaultExpiry();
     agents.value = res.agents || [];
     runners.value = res.runners || [];
     searchable.value = res.search === true;
@@ -463,97 +449,11 @@ function connect(mint) {
   );
 }
 
-const human = (bytes) =>
-  bytes < 1024 ? `${bytes} B` : bytes < 1048576 ? `${Math.round(bytes / 1024)} KB` : `${(bytes / 1048576).toFixed(1)} MB`;
-
-function pickDraftFiles(event) {
-  draftFiles.value = [...draftFiles.value, ...(event.target.files || [])];
-  event.target.value = ""; // so the same file can be chosen again after removing it
-}
-
-const dropDraftFile = (file) => (draftFiles.value = draftFiles.value.filter((f) => f !== file));
-
-// While the form is open, a pasted screenshot or file joins the list as if it had been chosen.
-function onPaste(event) {
-  if (adding.value) return;
-  const files = pastedFiles(event);
-  if (files.length) draftFiles.value = [...draftFiles.value, ...files];
-}
-
-watch(showForm, (open) =>
-  open ? document.addEventListener("paste", onPaste) : document.removeEventListener("paste", onPaste),
-);
-
-/**
- * Attach files to a duty that has just been created. Returns a line per file that failed.
- *
- * EVERY ROW IS RESERVED BEFORE ANY BYTES MOVE. The duty is claimable the moment it exists,
- * and an agent reads `attachment_count` to decide whether to look — so the count has to be
- * right as early as possible, not after the slowest upload. Reserving is one small call per
- * file; a video can take a minute. An agent that claims in that minute sees the file listed
- * as uploading rather than a duty that appears to have none.
- */
-async function attachAll(dutyId, files) {
-  const failed = [];
-  const reserved = [];
-  for (const file of files) {
-    try {
-      const minted = await api("/duty/attach", {
-        duty_id: dutyId,
-        name: file.name,
-        size: file.size,
-        content_type: file.type || "application/octet-stream",
-      });
-      reserved.push({ file, minted });
-    } catch (err) {
-      failed.push(`${file.name}: ${err.message}`);
-    }
-  }
-  for (const { file, minted } of reserved) {
-    const entry = reactive({ name: file.name, pct: 0 });
-    uploading.value = [...uploading.value, entry];
-    try {
-      await putSigned(minted.upload_url, minted.required_headers, file, (pct) => (entry.pct = pct));
-    } catch (err) {
-      // The reservation stays behind as a pending row and is swept later, exactly as on the
-      // duty page — reported, not cleaned up by hand.
-      failed.push(`${file.name}: ${err.message}`);
-    } finally {
-      uploading.value = uploading.value.filter((u) => u !== entry);
-    }
-  }
-  return failed;
-}
-
-async function addDuty() {
-  if (draft.value.agent_options?.length === 0) { error.value = "Add a model combination, or use board defaults."; return; }
-  adding.value = true;
-  error.value = "";
-  attachFailed.value = null;
-  try {
-    const created = await api("/duty/enqueue", {
-      project_id: props.projectId,
-      title: draft.value.title,
-      brief: draft.value.brief,
-      priority: draft.value.priority,
-      agent_options: draft.value.agent_options,
-      expire_after_days: draft.value.expire_after_days,
-      // The files go up once it exists; a runner that claims it first waits for this many.
-      expect_files: draftFiles.value.length,
-    });
-    // From here the duty EXISTS. A file that fails does not un-create it — rolling back work
-    // someone has written because a screenshot timed out would lose the part that mattered.
-    const failed = draftFiles.value.length ? await attachAll(created.duty_id, draftFiles.value) : [];
-    if (failed.length) attachFailed.value = { dutyId: created.duty_id, title: draft.value.title, lines: failed };
-    draft.value = blankDraft();
-    draftFiles.value = [];
-    showForm.value = false;
-    await refresh(new Set(["queued"]), { agents: false });
-  } catch (err) {
-    error.value = err.message;
-  } finally {
-    adding.value = false;
-  }
+/** A duty the form filed: say so if some of its files did not make it, and show it in its column. */
+async function onAdded({ duty_id, title, failed }) {
+  attachFailed.value = failed.length ? { dutyId: duty_id, title, lines: failed } : null;
+  showForm.value = false;
+  await refresh(new Set(["queued"]), { agents: false });
 }
 
 const count = (key) => columns.value[key].rows.length;
@@ -585,7 +485,6 @@ watch(
 
 onUnmounted(() => {
   wideQuery.removeEventListener("change", onWidth);
-  document.removeEventListener("paste", onPaste);
   if (socket) socket.close();
   if (refreshTimer) clearTimeout(refreshTimer);
 });
@@ -651,77 +550,16 @@ onUnmounted(() => {
       {{ needsYou }} {{ needsYou === 1 ? "duty needs" : "duties need" }} your answer or approval before work can begin or resume.
     </p>
 
-    <form v-if="showForm" class="panel panel--form stack" @submit.prevent="addDuty">
-      <h2>Add a duty</h2>
-      <div class="field">
-        <label for="d-title">Title</label>
-        <input id="d-title" v-model="draft.title" required maxlength="200" placeholder="A short name for what you want done" />
-      </div>
-      <div class="field">
-        <label for="d-brief">Brief</label>
-        <textarea
-          id="d-brief"
-          v-model="draft.brief"
-          required
-          maxlength="4000"
-          placeholder="What should change, and how you will know it is done."
-        ></textarea>
-        <p class="hint">An agent may pick this up with no other context. Write it for that reader.</p>
-      </div>
-      <DutyAgentPriority v-model="draft.agent_options" :runner="board?.runner" :machines="runners" id-prefix="new-duty-models" :disabled="adding" />
-      <div class="field">
-        <label for="d-priority">Priority</label>
-        <select id="d-priority" v-model="draft.priority">
-          <option v-for="p in PRIORITIES" :key="p.key" :value="p.key">{{ p.label }} — {{ p.hint }}</option>
-        </select>
-      </div>
-      <div class="field">
-        <label for="d-expire">Once it is done</label>
-        <select id="d-expire" v-model.number="draft.expire_after_days">
-          <option v-for="c in expiryChoices(draft.expire_after_days)" :key="c.days" :value="c.days">{{ c.label }}</option>
-        </select>
-        <p class="hint">For one-off work nobody needs the record of — it is removed with its thread and files.</p>
-      </div>
-      <div class="field">
-        <span class="label" id="d-files-label">Files <span class="muted">(optional)</span></span>
-        <div>
-          <input id="d-files" class="sr-only" type="file" multiple :disabled="adding" @change="pickDraftFiles" />
-          <label class="btn" for="d-files" :aria-disabled="adding">Choose files</label>
-        </div>
-        <ul v-if="draftFiles.length" class="draft-files" aria-labelledby="d-files-label">
-          <li v-for="f in draftFiles" :key="f.name + f.size + f.lastModified">
-            <span class="mono small">{{ f.name }}</span>
-            <span class="muted small">{{ human(f.size) }}</span>
-            <button type="button" class="link small" :disabled="adding" :aria-label="`Remove ${f.name}`" @click="dropDraftFile(f)">
-              Remove
-            </button>
-          </li>
-        </ul>
-        <p class="hint">
-          A screenshot of the bug, a recording, a log — choose them or paste them in. Uploaded with your duty and available to the agent when it reads it.
-        </p>
-        <ul v-if="uploading.length" class="uploads" aria-live="polite">
-          <li v-for="u in uploading" :key="u.name">
-            <span class="mono small">{{ u.name }}</span>
-            <progress :value="u.pct" max="100">{{ u.pct }}%</progress>
-            <span class="muted small">{{ u.pct }}%</span>
-          </li>
-        </ul>
-      </div>
-      <div>
-        <button class="primary" type="submit" :disabled="adding || !draft.title.trim() || !draft.brief.trim()">
-          {{
-            !adding
-              ? draftFiles.length
-                ? `Add to the queue with ${draftFiles.length} file${draftFiles.length === 1 ? "" : "s"}`
-                : "Add to the queue"
-              : uploading.length
-                ? "Uploading…"
-                : "Adding…"
-          }}
-        </button>
-      </div>
-    </form>
+    <DutyForm
+      v-if="showForm"
+      :project-id="projectId"
+      :runner="board ? board.runner || null : undefined"
+      :profile="board ? board.profile || null : undefined"
+      :machines="runners"
+      id-prefix="d"
+      @added="onAdded"
+      @cancel="showForm = false"
+    />
 
     <section v-if="agents.length" aria-labelledby="agents-h">
       <h2 id="agents-h" class="sr-only">Agents on this board</h2>
