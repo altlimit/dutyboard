@@ -161,7 +161,7 @@ watch(
     <form class="stack" @submit.prevent="create">
       <div class="field">
         <label for="b-name">Name</label>
-        <input id="b-name" ref="nameInput" v-model="name" autofocus required maxlength="120" placeholder="Riverside Dental — client website" />
+        <input id="b-name" ref="nameInput" v-model="name" autofocus required maxlength="120" placeholder="Client: Northwind spring launch" />
       </div>
       <div class="field">
         <label for="b-slug">Board id <span class="muted">(optional)</span></label>
