@@ -63,7 +63,7 @@ func reviewForbiddenTool(name string) bool {
 		strings.HasPrefix(name, "duty_schedule_") && name != "duty_schedule_list" && name != "duty_schedule_history" ||
 		name == "board_profile_propose" || name == "board_rules_submit" || name == "tools_register" ||
 		name == "duty_attachment_delete" || name == "duty_cancel" ||
-		name == "duty_handoff" || name == "board_roster_submit" || name == "board_memory_write"
+		name == "duty_handoff" || name == "board_roster_submit" || name == "board_memory_write" || name == "note_add"
 }
 
 func reviewReadOperation(name string) bool {

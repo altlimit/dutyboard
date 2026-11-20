@@ -344,9 +344,11 @@ if (role) {
       git("commit", "--quiet", "-m", `fix the tests for ${dutyId}`);
       record({ ...seen, event: "team-red", dirtyRefused: dirty.isError && /not committed/.test(dirty.text), redRefused: red.isError && /tests .* fail/.test(red.text), redText: red.text });
     }
+    // Something seen on the way that is not this duty: a note, not a duty in the queue.
+    const noted = fixing ? null : await tool("note_add", { title: `Seen while building ${dutyId}`, brief: "The README has no section on running the tests." });
     const memory = await tool("board_memory");
     const wrote = await tool("board_memory_write", { body: `${memory.data?.body ? memory.data.body + "\n" : "## Notes\n"}- ${role} worked ${dutyId}.`, based_on: memory.data?.version ?? 0 });
-    record({ ...seen, event: "team-build", refused: { integrate: landed.isError && /duty_handoff/.test(landed.text), complete: completed.isError && /duty_handoff/.test(completed.text) }, memoryError: wrote.isError ? wrote.text : null });
+    record({ ...seen, event: "team-build", refused: { integrate: landed.isError && /duty_handoff/.test(landed.text), complete: completed.isError && /duty_handoff/.test(completed.text) }, memoryError: wrote.isError ? wrote.text : null, noteError: noted && noted.isError ? noted.text : null, noteId: noted?.data?.duty_id || null });
     await handOn("qa", fixing ? "Fixed every finding; see the fix file." : "Built it and committed. Tests pass.");
   }
 

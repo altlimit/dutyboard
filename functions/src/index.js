@@ -29,7 +29,7 @@ import { setWebhook, testWebhook, withWebhooks } from "./webhooks.js";
 import { openBoard, createProject, listProjects, listRunners, listUpcoming, listRosters, liveBoards, renameProject, deleteProject } from "./projects.js";
 import { attachToDuty, listAttachments, deleteAttachment } from "./attachments.js";
 import {
-  listDuties, listNotes, moveNote, createNote, processNote, clearNoteSuggestions, suggestDuty,
+  listDuties, listNotes, moveNote, createNote, addAgentNote, processNote, clearNoteSuggestions, suggestDuty,
   pollDuties,
   claimDuty,
   enqueueDuty,
@@ -130,6 +130,7 @@ const ROUTES = {
   "/note/list": listNotes,
   "/note/move": moveNote,
   "/note/create": createNote,
+  "/note/add": addAgentNote,
   "/note/process": processNote,
   "/note/clear": clearNoteSuggestions,
   "/duty/suggest": suggestDuty,

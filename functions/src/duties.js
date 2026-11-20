@@ -819,6 +819,53 @@ export async function createNote(ctx, body) {
   return enqueueDuty(ctx, { project_id: body.project_id, title: body.title, brief: brief || "See attached files.", expect_files: body.expect_files }, { note: true });
 }
 
+/** Notes one duty's sessions may leave: enough for what they noticed, too few to flood the board. */
+export const MAX_NOTES_PER_DUTY = 5;
+
+/**
+ * `POST /note/add` — an agent leaves a note on the board's Notes: something it noticed that is not
+ * the duty in hand and need not happen now. A test that is missing next door, a dependency out of
+ * date, a reviewer's finding that should not hold this work up.
+ *
+ * A note runs nothing. It waits beside the people's notes until someone asks for duties to be
+ * suggested from them, and then a person approves each one — so what an agent thinks is worth doing
+ * costs nothing until a person agrees. Only while holding real work on this board, and a few per
+ * duty; the same title from the same duty answers the note already left.
+ */
+export async function addAgentNote(ctx, body) {
+  requireAgent(ctx.caller);
+  if (ctx.caller.scope === "submit" || ctx.caller.crossBoard) throw forbidden("notes are left by agents working on this board");
+  const project = await resolveProject(ctx.caller, body.project_id, ctx.store);
+  const agentId = agentIdFrom(ctx, body, { required: true });
+  const agent = await ctx.store.get("agents", agentKey(project.key, agentId));
+  const held = agent && agent.active_duty_id ? await ctx.store.get("duties", agent.active_duty_id) : null;
+  if (!held || held.status !== "active" || held.project_id !== project.key) {
+    throw conflict("a note is left from work in hand — hold an active duty on this board first");
+  }
+  if (held.kind === "note_review") throw forbidden("a note review reads notes and suggests duties from them; it does not add notes");
+  const title = str(body.title, "title", { required: true, max: 200 });
+  const brief = str(body.brief, "brief", { required: true, max: 4000 });
+
+  const { rows } = await ctx.store.query("duties", {
+    where: [{ field: "project_id", op: "=", value: project.key }, { field: "from_duty_id", op: "=", value: held.key }],
+    limit: MAX_NOTES_PER_DUTY + 1,
+  });
+  const same = rows.find((n) => n.title === title);
+  if (same) return { duty_id: same.key, status: "note", kind: "note", existing: true };
+  if (rows.length >= MAX_NOTES_PER_DUTY) {
+    throw conflict(
+      `this duty has already left ${MAX_NOTES_PER_DUTY} notes, which is the limit. Put what matters most in your outcome instead, ` +
+        "or merge it into a note you left — notes are for what someone should look at later, not a log.",
+    );
+  }
+  const roster = held.role ? await rosterInForce(ctx, project.key) : null;
+  const role = roleFor(roster, held);
+  return enqueueDuty(ctx, { project_id: project.key, title, brief, agent_id: agentId }, {
+    note: true,
+    from: { from_duty_id: held.key, from_role: role ? role.id : null, created_by_name: role ? role.name : agentId },
+  });
+}
+
 export async function processNote(ctx, body) {
   requireHuman(ctx.caller);
   const project = await notesProject(ctx, body);
@@ -972,6 +1019,8 @@ export async function enqueueDuty(ctx, body, internal = {}) {
     ...(review ? { source_note_rounds: Object.fromEntries(sources.map(n => [n.key, n.suggestion_round || "initial"])) } : {}),
     approval_required: !!review,
     agent_options: dutyAgentOptions(body.agent_options),
+    // A note an agent left from the duty it was working, and as which role (see addAgentNote).
+    ...(internal.from ? { from_duty_id: internal.from.from_duty_id, from_role: internal.from.from_role } : {}),
     // Who on the board's team has it. Null on a board with none.
     role,
     // A piece an agent split out of the duty it held, naming who works it. When every piece of one
@@ -987,7 +1036,7 @@ export async function enqueueDuty(ctx, body, internal = {}) {
     // everyone who opens the board is wrong for all but one of them. From outside, the token's
     // name is the nearest thing to a who.
     created_by: ctx.caller.kind === "human" ? ctx.caller.uid : null,
-    created_by_name: ctx.caller.kind === "human" ? ctx.caller.name : submit ? ctx.caller.tokenName || null : null,
+    created_by_name: ctx.caller.kind === "human" ? ctx.caller.name : submit ? ctx.caller.tokenName || null : internal.from ? internal.from.created_by_name : null,
     // The token that filed it, by its hash: who a submit token may see, and whose webhook hears
     // about every move it makes.
     filed_by_token: ctx.caller.tokenKey || null,
@@ -2363,6 +2412,8 @@ function briefOf(duty, { full = false } = {}) {
   if (duty.review_scope) out.review_scope = duty.review_scope;
   if (duty.note_position) out.note_position = duty.note_position;
   if (duty.kind === "note") out.review_duty_id = duty.review_duty_id || null;
+  // A note an agent left: from which duty, and by whom, so a person can see why it was written.
+  if (duty.from_duty_id) out.from = { duty_id: duty.from_duty_id, role: duty.from_role || null, name: duty.created_by_name || null };
   if (duty.approval_required) out.approval_required = true;
   if (duty.reserved_for) out.reserved_for = duty.reserved_for;
   // Who on the board's team has it, and what the last role said when handing it on.

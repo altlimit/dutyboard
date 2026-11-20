@@ -4,7 +4,7 @@ import "testing"
 
 func TestNoteReviewCannotLandOrScheduleWork(t *testing.T) {
 	s := &session{board: "board", agent: "agent", run: &Run{DutyID: "review", Kind: "note_review"}}
-	for _, name := range []string{"duty_integrate", "altengine_deploy_static", "altengine_deploy_function", "duty_schedule_create", "duty_schedule_update", "duty_schedule_delete", "board_profile_propose", "board_rules_submit", "tools_register"} {
+	for _, name := range []string{"duty_integrate", "altengine_deploy_static", "altengine_deploy_function", "duty_schedule_create", "duty_schedule_update", "duty_schedule_delete", "board_profile_propose", "board_rules_submit", "tools_register", "note_add"} {
 		if got := guard(s, name, map[string]any{"duty_id": "review"}); got == "" {
 			t.Errorf("review allowed %s", name)
 		}

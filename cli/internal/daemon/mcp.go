@@ -30,7 +30,7 @@ var dutyScoped = map[string]bool{
 var takesAgent = map[string]bool{
 	"board_call": true, "duty_poll": true, "duty_claim": true, "duty_enqueue": true, "duty_suggest": true, "duty_checkpoint": true, "duty_complete": true,
 	"duty_fail": true, "duty_attach": true, "board_profile_propose": true, "board_rules_submit": true,
-	"duty_handoff": true, "board_roster_submit": true, "board_memory_write": true,
+	"duty_handoff": true, "board_roster_submit": true, "board_memory_write": true, "note_add": true,
 }
 
 var localTools = []map[string]any{

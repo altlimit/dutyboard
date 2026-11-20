@@ -878,6 +878,15 @@ Open **Notes** from a board to collect ideas, context and files on a separate st
 
 Open any note to see its suggestion history and duty statuses. **Clear link**, on a sticky card or inside the note, makes just that note eligible again without deleting duties or historical source links. Finish or cancel the running review before clearing links. A finished review does not block the next **Suggest duties** request: it snapshots all currently unlinked notes, including newly added notes and notes that produced no proposals. Deleting a suggested duty also removes it from eligibility tracking. The Notes page shows only a running review and hides suggestion controls when empty. Agents still read prior suggestions to avoid duplicating work.
 
+**Agents leave notes too.** Something an agent notices that is not the duty in hand and need not
+happen now — a missing test elsewhere, an outdated dependency, a reviewer's finding that should not
+hold the work up — goes on the Notes with `note_add`, not into the queue as work nobody asked for. A
+note runs nothing: it costs nothing until you press **Suggest duties** and approve what is worth doing.
+Each says which role left it and links to the duty it came from. An agent can leave one only while
+holding a duty on the board, at most five per duty, and a note review cannot add any. Reviewers on the
+shipped teams are told to pass work that only has non-blocking findings and leave those as notes,
+rather than send it back over them.
+
 Signed-in board members use `/note/create`, `/note/list`, `/note/move` (`note_id`, `x`, `y`), `/note/process` (`project_id`) and `/note/clear` (`note_id`). Clearing a note resets only its suggestion eligibility. The legacy project-only clear resets a finished review pointer without clearing any note links. `note_id` remains accepted by process to identify the board. Agents read notes through `note_list` and, during a held review, use `duty_suggest` with `source_note_ids` naming 1–50 supporting notes per proposal. All must belong to the review. One source can be inferred for single-note reviews. The review itself can include up to the board limit of 500 notes. `note_list` and `duty_get` expose `has_suggestions` for notes (current eligibility links); `duty_get.suggestions` remains the complete history. Proposals expose `source_note_ids` where applicable; `source_note_id` remains as a legacy alias for the first source.
 
 `duty_get` on a note includes paginated `suggestions` and `suggestions_cursor`; follow every page to include all sources and earlier reviews. A human approves with `/duty/resolve`, `approve: true` and `resolution_text`. Notes retain internal status/kind `note` for compatibility, but have no lane in the console. Their review is a separate `note_review` duty. Owner-only deletion removes a note's files and tracking links; existing proposed duties retain their source IDs. The runner instructions and MCP schemas explain combined reviews and approval boundaries.

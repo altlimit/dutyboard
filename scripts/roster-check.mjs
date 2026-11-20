@@ -3,7 +3,7 @@
 // duty first, how it is handed on, that nothing a builder made is finished without a reviewer, what
 // a machine's levels pick, what the team's memory accepts, and what the console may send a machine.
 import assert from "node:assert/strict";
-import { enqueueDuty, claimDuty, getDuty, completeDuty, failDuty, handoffDuty, reopenDuty, resolveDuty, pollDuties, checkpointDuty, reportUsage, UNFINISHED } from "../functions/src/duties.js";
+import { enqueueDuty, claimDuty, getDuty, completeDuty, failDuty, handoffDuty, reopenDuty, resolveDuty, pollDuties, checkpointDuty, reportUsage, addAgentNote, listNotes, MAX_NOTES_PER_DUTY, UNFINISHED } from "../functions/src/duties.js";
 import { getRoster, setRoster, acceptRoster, submitRoster, draftRoster, retroRoster, rolesFrom, levelOf, levelFor, optionsForLevel, LEVELS, MAX_CHARTER_CHARS, ROSTER_MIN_RELEASE, RETRO_EVERY, SENT_BACKS_KEPT } from "../functions/src/roster.js";
 import { submitRules } from "../functions/src/profile.js";
 import { createSchedule, updateSchedule, runDueSchedules } from "../functions/src/schedules.js";
@@ -742,8 +742,43 @@ assert.equal(seenByOwner.sent_backs.length, kept);
 assert.equal(seenByOwner.retro_every, RETRO_EVERY);
 await clearTeam();
 
+// --- what an agent notices and need not happen now goes on the Notes, not the queue ---------------
+await rejects(() => addAgentNote(ctx(token("a1")), { title: "x", brief: "y" }), /hold an active duty/);
+await rejects(() => addAgentNote(ctx(), { project_id: "team", title: "x", brief: "y" }), /agent/);
+await rejects(() => addAgentNote(ctx({ ...token("a1"), scope: "submit" }), { title: "x", brief: "y" }), /working on this board/);
+const noticing = await file("Fix the order total");
+await turn(noticing.duty_id, "a1", "engineer");
+await claimDuty(ctx(token("b1")), { duty_id: noticing.duty_id, agent_id: "b1" });
+await rejects(() => addAgentNote(ctx(token("b1")), { title: "No brief" }), /brief/);
+const queuedBefore = (await pollDuties(ctx(token("zz")), {})).runnable_duties.length;
+const left = await addAgentNote(ctx(token("b1")), { title: "invoices.js has no tests", brief: "`src/invoices.js` has no tests at all; found while fixing the order total." });
+assert.equal(left.status, "note");
+const noteRow = table("duties").get(left.duty_id);
+assert.deepEqual([noteRow.kind, noteRow.status, noteRow.origin, noteRow.from_duty_id, noteRow.from_role, noteRow.created_by_name, noteRow.role], ["note", "note", "agent", noticing.duty_id, "engineer", "Engineer", null]);
+assert.equal((await pollDuties(ctx(token("zz")), {})).runnable_duties.length, queuedBefore, "a note runs nothing: nobody reads it first, nobody is woken");
+const leftNote = (await listNotes(ctx(), { project_id: "team" })).notes.find((n) => n.id === left.duty_id);
+assert.deepEqual(leftNote.from, { duty_id: noticing.duty_id, role: "engineer", name: "Engineer" }, "the Notes board says who left it, and from what");
+assert.equal((await getDuty(ctx(), { duty_id: left.duty_id })).duty.from.duty_id, noticing.duty_id);
+assert.equal((await addAgentNote(ctx(token("b1")), { title: "invoices.js has no tests", brief: "again" })).existing, true, "the same note twice is one note");
+for (let i = 2; i <= MAX_NOTES_PER_DUTY; i++) await addAgentNote(ctx(token("b1")), { title: `Thing ${i}`, brief: "b" });
+await rejects(() => addAgentNote(ctx(token("b1")), { title: "One too many", brief: "b" }), /already left 5 notes/);
+await handoffDuty(ctx(token("b1")), { duty_id: noticing.duty_id, to_role: "qa", note: "Fixed; left notes on what else I saw." });
+await claimDuty(ctx(token("q1")), { duty_id: noticing.duty_id, agent_id: "q1" });
+await rejects(() => addAgentNote(ctx(token("q1")), { title: "Another", brief: "b" }), /already left 5 notes/, "the limit is the duty's, whichever role is working it");
+await completeDuty(ctx(token("q1")), { duty_id: noticing.duty_id, outcome_summary: "Fixed." });
+await store.putOne("duties", "review2", { project_id: "team", owner_uid: "owner", kind: "note_review", status: "active", assigned_agent_id: "r2", title: "Review", brief: "b" });
+await store.putOne("agents", "team:r2", { project_id: "team", agent_id: "r2", active_duty_id: "review2" });
+await rejects(() => addAgentNote(ctx(token("r2")), { title: "From a review", brief: "b" }), /does not add notes/);
+await store.delete("duties", ["review2"]);
+const noteTools = Object.fromEntries((await mcp("tools/list", {})).tools.map((t) => [t.name, t]));
+assert.ok(noteTools.note_add && /costs nothing until a person/.test(noteTools.note_add.description));
+assert.ok(!(await mcp("tools/list", {}, { ...token(), scope: "submit" })).tools.some((t) => t.name === "note_add"), "not a submit token's");
+assert.match((await mcp("initialize", {})).instructions, /does not block it .*note_add/s);
+for (const r of rolesFrom(PRESETS.software.roles).filter((r) => r.reviews)) assert.match(r.charter, /note_add/, "a reviewer leaves what need not block the work as a note");
+await clearTeam();
+
 // --- every new route is in the table the cross-tenant suite is derived from ----------------------
-for (const path of ["/projects/rosters", "/live/boards", "/duty/handoff", "/board/roster", "/board/roster/set", "/board/roster/accept", "/board/roster/submit", "/board/roster/draft", "/board/memory", "/board/memory/write", "/board/memory/history", "/board/roster/retro", "/duty/usage"]) {
+for (const path of ["/projects/rosters", "/live/boards", "/duty/handoff", "/board/roster", "/board/roster/set", "/board/roster/accept", "/board/roster/submit", "/board/roster/draft", "/board/memory", "/board/memory/write", "/board/memory/history", "/board/roster/retro", "/duty/usage", "/note/add"]) {
   assert.ok(ROUTE_PATHS.includes(path), path);
 }
 

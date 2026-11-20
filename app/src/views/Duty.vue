@@ -27,6 +27,7 @@ const router = useRouter();
 const PAGE = 25;
 
 const duty = ref(null);
+const usage = ref(null); // the duty_usage row: agent session time on this duty
 const boardRunner = ref(null);
 /** Whether the board has a team, and who reads new duties first — from its profile. */
 const boardRoster = ref(null);
@@ -90,7 +91,7 @@ const options = computed(() => {
 async function load() {
   error.value = "";
   try {
-    const [dutyRes, threadRes, boardRes] = await Promise.all([
+    const [dutyRes, threadRes, boardRes, usageRes] = await Promise.all([
       getDocs("duties", [props.dutyId]),
       query("threads", {
         where: [{ field: "duty_id", op: "=", value: props.dutyId }],
@@ -98,7 +99,11 @@ async function load() {
         limit: PAGE,
       }),
       api("/board/profile", { project_id: props.projectId }),
+      // How long agents' sessions have run on it, kept apart from the duty (see reportUsage). A
+      // DutyBoard too old to keep it simply has none.
+      getDocs("duty_usage", [props.dutyId]).catch(() => null),
     ]);
+    usage.value = ((usageRes && usageRes.documents) || []).map(flat)[0] || null;
     boardRunner.value = boardRes.runner || null;
     boardRoster.value = boardRes.roster || null;
     duty.value = (dutyRes.documents || []).map(flat)[0] || null;
@@ -483,6 +488,10 @@ onUnmounted(() => {
         </div>
       </form>
 
+      <p v-if="duty.from_duty_id" class="small muted rel">
+        A note {{ duty.created_by_name || "an agent" }} left while working
+        <router-link :to="{ name: 'duty', params: { projectId, dutyId: duty.from_duty_id } }">another duty</router-link>. It runs nothing until duties are suggested from the notes and you approve one.
+      </p>
       <p v-if="duty.split_from" class="small muted rel">
         A piece of
         <router-link :to="{ name: 'duty', params: { projectId, dutyId: duty.split_from } }">a larger duty</router-link>; when every piece is finished, they are checked together.
@@ -495,8 +504,8 @@ onUnmounted(() => {
         Its pieces are
         <router-link :to="{ name: 'duty', params: { projectId, dutyId: duty.acceptance_duty_id } }">checked together</router-link>.
       </p>
-      <p v-if="duty.usage && duty.usage.ms >= 60000" class="small muted rel" :title="`${duty.usage.sessions} session${duty.usage.sessions === 1 ? '' : 's'}, as the machines that ran them reported`">
-        Agents have spent {{ duration(duty.usage.ms) }} on it, over {{ duty.usage.sessions }} session{{ duty.usage.sessions === 1 ? "" : "s" }}.
+      <p v-if="usage && usage.ms >= 60000" class="small muted rel" :title="`${usage.sessions} session${usage.sessions === 1 ? '' : 's'}, as the machines that ran them reported`">
+        Agents have spent {{ duration(usage.ms) }} on it, over {{ usage.sessions }} session{{ usage.sessions === 1 ? "" : "s" }}.
       </p>
       <p v-if="duty.schedule_id" class="small muted rel">
         Filed by a recurring duty on this board — it comes round again on its own.

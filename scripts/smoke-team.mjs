@@ -260,6 +260,13 @@ async function main() {
     check("and a normal-risk duty gets a normal review", !review.riskHigh);
     const timed = await get(greeting.duty_id);
     check("the machine reported how long its sessions ran", timed.usage && timed.usage.sessions >= 3 && timed.usage.ms > 0, timed.usage);
+    const usageRow = await ds("duty_usage", "documents/get", { keys: [greeting.duty_id] }, human);
+    const usageTheirs = await ds("duty_usage", "documents/get", { keys: [greeting.duty_id] }, stranger);
+    check(
+      "the console reads it directly, and nobody else can",
+      usageRow.json.documents?.[0]?.data?.ms === timed.usage.ms && !(usageTheirs.json.documents || []).some((d) => d && d.data),
+      { mine: usageRow, theirs: usageTheirs },
+    );
     const handed = (await call("/duty/thread", { duty_id: greeting.duty_id }, human)).entries.find((t) => t.metadata?.handoff?.to === "qa");
     check("the handoff to review records the tests and the model, as the machine saw them", handed?.metadata.handoff.checks?.command === "test ! -e broken.txt" && handed.metadata.handoff.worked_with?.model === "backup-model", handed?.metadata);
     check("and only then was it on the main branch", onMain(`built-${greeting.duty_id}.txt`));
@@ -270,6 +277,13 @@ async function main() {
     check("and the handoffs are on its record", handoffs.join() === "Duty Officer>Engineer,Engineer>QA", handoffs);
     check("its worktree is gone once it is done", done && !existsSync(build.cwd), build.cwd);
 
+    const notes = (await call("/note/list", { project_id: boardId }, human)).notes;
+    const left = notes.find((n) => n.id === build.noteId);
+    check(
+      "what the builder noticed on the way is a note, said to be from it, not a duty in the queue",
+      !build.noteError && left && left.from?.duty_id === greeting.duty_id && left.from?.name === "Engineer" && left.kind === "note",
+      { noteError: build.noteError, left },
+    );
     const memory = await call("/board/memory", { project_id: boardId }, human);
     check("what the builder wrote down is the team's memory", memory.body.includes(`Engineer worked ${greeting.duty_id}`) && memory.version === 1, memory);
 

@@ -104,6 +104,7 @@ const QA = `Nothing lands until you have seen it work. You are the last check be
 **Decide**
 - **Pass:** land it (\`duty_integrate\`), then complete the duty with an outcome that names what changed, the commit, and how you verified it.
 - **Send back:** \`duty_handoff\` to the builder with every finding in one pass, numbered: the file and line, what is wrong, what you expect instead, and how serious it is. Do not drip-feed.
+- **Not a reason to send it back:** a finding that does not stop this work counting — a small improvement, a problem outside this change — goes in a note with \`note_add\`, for a person to decide on later. Pass the work and say so in your outcome.
 - Fix only the truly trivial yourself (a typo, a lint error). Anything else goes back, so the builder's work is the builder's and is reviewed again.
 - Do not send work back over taste. Block on defects, security, missing tests, performance problems and breaches of this charter or the board's rules.`;
 
@@ -139,7 +140,8 @@ const EDITOR = `Nothing is published until you have read it as its audience woul
 
 **Decide**
 - **Pass:** complete the duty with an outcome that says what is ready, where it is, and what you checked. Fix small mechanical slips yourself.
-- **Send back:** \`duty_handoff\` to the writer with every finding in one pass, numbered: where, what is wrong, and what you expect. Block on inaccuracy, risk, missing the brief or unclear writing — not on taste.`;
+- **Send back:** \`duty_handoff\` to the writer with every finding in one pass, numbered: where, what is wrong, and what you expect. Block on inaccuracy, risk, missing the brief or unclear writing — not on taste.
+- **Not a reason to send it back:** a finding that does not stop this work counting — a small improvement, a problem outside this change — goes in a note with \`note_add\`, for a person to decide on later. Pass the work and say so in your outcome.`;
 
 const ANALYST = `You do the research and the numbers, and write up what they show, to the standard a reviewer accepts first time.
 
@@ -174,7 +176,8 @@ const BUSINESS_REVIEWER = `Nothing goes to a decision-maker until you have check
 
 **Decide**
 - **Pass:** complete the duty with an outcome that says what is ready, where it is, and what you verified.
-- **Send back:** \`duty_handoff\` to whoever did the work with every finding in one pass, numbered: where, what is wrong, what you expect. Block on errors, unsupported claims and missing analysis — not on style.`;
+- **Send back:** \`duty_handoff\` to whoever did the work with every finding in one pass, numbered: where, what is wrong, what you expect. Block on errors, unsupported claims and missing analysis — not on style.
+- **Not a reason to send it back:** a finding that does not stop this work counting — a small improvement, a problem outside this change — goes in a note with \`note_add\`, for a person to decide on later. Pass the work and say so in your outcome.`;
 
 const OPERATOR = `You make the change in the account, carefully, and leave it in a state you have checked.
 
@@ -199,7 +202,8 @@ const OPERATIONS_REVIEWER = `No change is called done until you have seen it in 
 
 **Decide**
 - **Pass:** complete the duty with an outcome naming what changed (with its id or link) and how you checked it.
-- **Send back:** \`duty_handoff\` to the operator with every finding in one pass, numbered: what is wrong, where, and what you expect. If something harmful is live, say so first and put it on the board for a person.`;
+- **Send back:** \`duty_handoff\` to the operator with every finding in one pass, numbered: what is wrong, where, and what you expect. If something harmful is live, say so first and put it on the board for a person.
+- **Not a reason to send it back:** a finding that does not stop this work counting — a small improvement, a problem outside this change — goes in a note with \`note_add\`, for a person to decide on later. Pass the work and say so in your outcome.`;
 
 const SPECIALIST = `You do the task and produce the finished files, to the standard a checker accepts first time.
 
@@ -222,7 +226,8 @@ const CHECKER = `No file goes back to a person until you have opened it. You ver
 
 **Decide**
 - **Pass:** complete the duty with an outcome saying what was produced and how you checked it.
-- **Send back:** \`duty_handoff\` to whoever did the work with every finding in one pass, numbered: which file, what is wrong, what you expect.`;
+- **Send back:** \`duty_handoff\` to whoever did the work with every finding in one pass, numbered: which file, what is wrong, what you expect.
+- **Not a reason to send it back:** a finding that does not stop this work counting — a small improvement, a problem outside this change — goes in a note with \`note_add\`, for a person to decide on later. Pass the work and say so in your outcome.`;
 
 const officer = (routes) => ({
   id: "duty-officer",

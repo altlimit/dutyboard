@@ -17,7 +17,7 @@
 // look to most clients like the server broke.
 
 import { HttpError, badRequest, json, readBoundedText } from "./http.js";
-import { listNotes, listDuties, suggestDuty, pollDuties, claimDuty, enqueueDuty, checkpointDuty, completeDuty, failDuty, listThread, getDuty, cancelDuty, listChanges, handoffDuty, PRIORITIES, THREAD_KINDS } from "./duties.js";
+import { listNotes, listDuties, suggestDuty, pollDuties, claimDuty, enqueueDuty, checkpointDuty, completeDuty, failDuty, listThread, getDuty, cancelDuty, listChanges, handoffDuty, addAgentNote, PRIORITIES, THREAD_KINDS, MAX_NOTES_PER_DUTY } from "./duties.js";
 import { getRoster, submitRoster, LEVELS, RISKS, MAX_CHARTER_CHARS, MAX_ROLES } from "./roster.js";
 import { getMemory, writeMemory, MAX_MEMORY_CHARS } from "./memory.js";
 import { deleteAttachment, attachToDuty, listAttachments, MAX_BYTES, MAX_INLINE_BYTES } from "./attachments.js";
@@ -65,7 +65,7 @@ THE TEAM'S MEMORY
 The board keeps one short memory for its agents — what the next session must know about this project that it cannot work out from the code, the rules or the profile: decisions and why, how things are really run, traps, where things live. It comes with the duty you claim ('memory'), and board_memory reads it. Anything worth remembering goes there, with board_memory_write, before you finish: if it is not written there, the next session does not know it. It is small and it is replaced whole, so read it, edit it — cut what is stale, merge what repeats — and write back the full text with the version you read. Never put a secret, a credential or anyone's personal data in it.
 
 WHAT YOU FIND ALONG THE WAY
-Do not widen the duty you are on. A discovery that blocks it: duty_enqueue with priority 'immediate_blocker' and spawned_by set to the duty you are holding — yours parks behind it, you claim the new one, and finishing it returns the parent to the front of the queue on its own. A discovery that does not block it: duty_enqueue with 'next' or 'backlog', then carry on with what you were doing.
+Do not widen the duty you are on. A discovery that blocks it: duty_enqueue with priority 'immediate_blocker' and spawned_by set to the duty you are holding — yours parks behind it, you claim the new one, and finishing it returns the parent to the front of the queue on its own. A discovery that does not block it — a missing test elsewhere, an outdated dependency, a finding of a review that should not hold this work up: note_add, then carry on. A note runs nothing: it waits on the board's Notes until a person asks for duties to be suggested from them and approves the ones worth doing. Use duty_enqueue with 'next' or 'backlog' only when the duty you hold asks you to file work, or a person told you to.
 
 WHEN YOU DO NOT KNOW
 An ambiguity in the brief, a choice with consequences you cannot take back, a credential you do not have: duty_checkpoint with set_status 'needs_decision', the actual question in message, and suggested_options whenever the answer is a choice between things you can name. THEN POLL AND CLAIM SOMETHING ELSE. Do not wait for the answer, do not guess and continue, and do not ask in your own output and hope someone reads it — a question that is not on the board does not exist. You cannot answer your own question; only a person can.
@@ -137,6 +137,15 @@ const TOOLS = [
     inputSchema: { type: "object", properties: { attachment_id: s("Attachment to remove.") }, required: ["attachment_id"] }, handler: deleteAttachment,
   },
   {
+    name: "note_add", title: "Leave a note for later",
+    description: `While holding a duty: leave a note on the board's Notes about something you noticed that is not this duty and need not happen now — a missing test next door, a dependency out of date, a reviewer's finding that should not hold this work up, a pattern worth a person's look. A note runs nothing and costs nothing until a person asks for duties to be suggested from the notes and approves one, so prefer it to filing work nobody asked for. Write it for someone reading it weeks later with none of your context: what you saw, where (files, lines, links), and why it matters. At most ${MAX_NOTES_PER_DUTY} per duty; the same title again answers the note you already left. Not for anything that blocks your duty (duty_enqueue with immediate_blocker), nor for what belongs in your outcome or the team's memory.`,
+    inputSchema: { type: "object", properties: {
+      title: s("What it is about, in a few words."),
+      brief: s("What you saw, where, and why it matters, as markdown."),
+      agent_id: s("Which agent you are. Defaults to the id configured on this connection."),
+    }, required: ["title", "brief"] }, handler: addAgentNote,
+  },
+  {
     name: "note_list", title: "Read the board's notes",
     description: "Read a page of notes from the separate Notes board, with saved card positions, has_suggestions (whether a current suggestion link exists), and the running board-wide review. Follow cursor until null. Notes are context, never runnable work. A review's source_note_ids records the unlinked notes included when the human requested it; notes added later belong to the next review.",
     inputSchema: { type: "object", properties: { cursor: s("Cursor returned by the previous page.") } }, handler: listNotes,
@@ -186,7 +195,7 @@ const TOOLS = [
     name: "duty_enqueue",
     title: "Add work you discovered",
     description:
-      "Put newly discovered work on the board. Use priority 'immediate_blocker' when you cannot continue without it: the duty you are holding moves to blocked behind the new one, you are freed to claim it, and finishing it puts the parent back at the front of the queue automatically. Use 'next' or 'backlog' for work that does not interrupt what you are doing. While holding a note_review, this creates an approval-required suggestion instead; prefer duty_suggest, which also accepts a question.",
+      "Put newly discovered work on the board. Use priority 'immediate_blocker' when you cannot continue without it: the duty you are holding moves to blocked behind the new one, you are freed to claim it, and finishing it puts the parent back at the front of the queue automatically. Use 'next' or 'backlog' only when the duty you hold asks you to file work or a person told you to; something you merely noticed goes in note_add instead, where it costs nothing until a person wants it. While holding a note_review, this creates an approval-required suggestion instead; prefer duty_suggest, which also accepts a question.",
     inputSchema: {
       type: "object",
       properties: {

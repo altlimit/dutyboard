@@ -158,6 +158,10 @@ function nudge(event, n, i) {
         <div class="notes-canvas" :style="canvasSize">
           <article v-for="(n, i) in notes" :key="n.id" class="sticky" :class="[`sticky--${i % 4}`, { 'sticky--moving': dragging?.id === n.id }]" :style="cardStyle(n, i)">
             <button class="sticky__handle" :aria-disabled="moving.has(n.id) || undefined" :aria-label="`Move ${n.title}. Use arrow keys to arrange.`" @pointerdown="startDrag($event, n, i)" @pointermove="drag($event, n)" @pointerup="drop($event, n)" @pointercancel="drop($event, n, true)" @keydown="nudge($event, n, i)"><span aria-hidden="true">⠿</span></button>
+            <p v-if="n.from" class="sticky__from">
+              Left by {{ n.from.name || "an agent" }} while working
+              <router-link :to="{ name: 'duty', params: { projectId, dutyId: n.from.duty_id } }">a duty</router-link>
+            </p>
             <h2><router-link :to="{ name: 'duty', params: { projectId, dutyId: n.id } }">{{ n.title }}</router-link></h2>
             <p class="sticky__body">{{ plain(n.brief) }}</p>
             <div class="sticky__footer"><span v-if="n.attachment_count">{{ n.attachment_count }} {{ n.attachment_count === 1 ? 'file' : 'files' }} · </span><router-link :to="{ name: 'duty', params: { projectId, dutyId: n.id } }">Open note &amp; suggestions →</router-link>
@@ -188,6 +192,7 @@ function nudge(event, n, i) {
 .sticky__clear { color: inherit; background: transparent; border: 0; padding: 2px 0; font-size: inherit; text-decoration: underline; min-height: 28px; }
 .sticky__clear:hover:not(:disabled) { color: #30291d; background: #30291d14; }
 .sticky__footer { margin-top: auto; padding-top: 12px; font-size: .8rem; }
+.sticky__from { margin: 0; font-size: .78rem; color: #514a3b; }
 @media (max-width: 700px) {
   .drag-hint, .sticky__handle { display: none; }
   .notes-scroll { overflow: visible; max-height: none; background: none; border: 0; }

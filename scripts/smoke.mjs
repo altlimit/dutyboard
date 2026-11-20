@@ -1978,6 +1978,7 @@ async function main() {
     "/board/roster/draft": () => ({ project_id: projectId }),
     "/board/roster/retro": () => ({ project_id: projectId }),
     "/duty/usage": (d) => ({ duty_id: d, ms: 1000 }),
+    "/note/add": () => ({ project_id: projectId, title: "no", brief: "no" }),
     "/board/memory": () => ({ project_id: projectId }),
     "/board/memory/write": () => ({ project_id: projectId, body: "no", based_on: 0 }),
     "/board/memory/history": () => ({ project_id: projectId }),

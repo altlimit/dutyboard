@@ -160,7 +160,9 @@ the owner accepts it before it takes effect. A duty's `risk` (low, normal, high)
 it is reviewed: the Duty Officer sets it with `duty_handoff`, anyone may raise it, and a change to
 one of the board's sensitive paths makes it high. Before a reviewer is woken, the machine checks the
 work is committed and runs the test command. A `retro` duty reads what reviewers keep sending back
-and proposes charter or rule changes, as drafts for the owner.
+and proposes charter or rule changes, as drafts for the owner. Something you notice that is not your
+duty and need not happen now goes on the board's Notes with `note_add` — it runs nothing until a
+person asks for duties to be suggested from the notes and approves one.
 
 **The team's memory** is one short note the board keeps for its agents: what the next session must
 know and cannot work out from the code, the rules or the profile. It comes with a claim and

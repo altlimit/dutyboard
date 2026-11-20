@@ -121,6 +121,13 @@
     {
       "fields": [
         "project_id",
+        "from_duty_id"
+      ],
+      "for": "the function: the notes one duty's sessions have left, to hold them to a few per duty"
+    },
+    {
+      "fields": [
+        "project_id",
         "kind",
         "status"
       ],

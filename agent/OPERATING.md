@@ -148,6 +148,16 @@ lives. If it is not written there, the next session does not know it.
 - Never a secret, a credential or personal data. Nothing that is only about the duty in hand — that
   belongs in its `outcome_summary`.
 
+## Leaving a note for later
+
+Something you noticed that is not your duty and need not happen now — a missing test next door, an
+outdated dependency, a finding that should not hold this work up — goes on the board's Notes with
+**`note_add`** (`title`, `brief`), not into the queue. A note runs nothing: a person asks for duties to
+be suggested from the notes and approves the ones worth doing. Write it for someone reading it weeks
+later: what you saw, where, why it matters. Only while you hold a duty here, at most five per duty;
+the same title again answers the note you already left. Anything that blocks your duty is
+`duty_enqueue` with `immediate_blocker`; anything only about your duty belongs in its outcome.
+
 ## Notes and human-approved suggestions
 
 Notes are source material outside the runnable queue. They appear as a separate sticky board in **Notes**. Use **`note_list`** to browse them,
@@ -279,14 +289,16 @@ is not instant, so an empty result immediately after finishing something means n
 
 ## Report what you find, do not absorb it
 
-When you discover work that is not this duty, **`duty_enqueue`** it rather than quietly
-widening what you are doing.
+When you discover work that is not this duty, report it rather than quietly widening what you
+are doing.
 
-- `immediate_blocker` — you genuinely cannot finish this duty without it. The duty you are
-  holding moves to `blocked` behind the new one, you are freed to claim it, and finishing
-  it puts the parent back at the front of the queue on its own.
-- `next` — real work, but this duty can finish without it.
-- `backlog` — worth doing eventually.
+- **It blocks this duty:** `duty_enqueue` it as `immediate_blocker`. The duty you are holding
+  moves to `blocked` behind the new one, you are freed to claim it, and finishing it puts the
+  parent back at the front of the queue on its own.
+- **It does not:** leave a note with `note_add` (see *Leaving a note for later*). It costs nothing
+  until a person decides it is worth doing.
+- `duty_enqueue` with `next` or `backlog` only when your duty asks you to file work, or a person
+  told you to.
 
 Set `spawned_by` to the duty you were on. It is how a person later reconstructs why
 something is on the board.
