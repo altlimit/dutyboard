@@ -71,7 +71,7 @@ func Main(args []string) int {
 	fs.StringVar(&f.Instance, "instance", "", "with --local: the deployment's functions instance (default dutyboard)")
 	fs.StringVar(&f.Origins, "origins", "", "with --local: extra console origins to allow, comma-separated (default: $DUTYBOARD_ORIGINS)")
 	fs.BoolVar(&f.ShowVersion, "version", false, "print the version")
-	fs.StringVar(&f.Server, "server", "", "the DutyBoard API URL to pair this machine with")
+	fs.StringVar(&f.Server, "server", "", "the DutyBoard to pair this machine with: its console's address, or its API URL")
 	fs.StringVar(&f.Name, "name", "", "this machine's name, when pairing")
 	fs.StringVar(&f.Root, "root", "", "the folder setups requested from the console clone into (default ~/dutyboard)")
 	fs.BoolVar(&f.NoService, "no-service", false, "do not offer to start dutyboard at login; run in this terminal")

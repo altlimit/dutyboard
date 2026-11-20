@@ -190,9 +190,12 @@ func pairMachine(ctx context.Context, u *ui.UI, cfg *state.Config, f Flags) (str
 		}
 	}
 	// Before the next question, not after it: an address that is not a DutyBoard is said so at once.
-	if _, err := boardAt(ctx, server); err != nil {
+	// A console's address — the one people have — works as well as the API's.
+	resolved, err := ResolveBoard(ctx, server)
+	if err != nil {
 		return "", err
 	}
+	server = resolved
 	name := f.Name
 	if name == "" && !u.Interactive {
 		name = defaultMachineName()
