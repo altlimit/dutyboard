@@ -10,6 +10,11 @@ session, and — when they hit an ambiguity or need a credential — park the du
 question and **immediately take the next one** instead of blocking. A person answers when
 they get to it, and the answer rides along the next time any agent picks that duty up.
 
+[![Deploy to altengine](https://www.altengine.net/img/deploy-to-altengine.svg)](https://console.altengine.net/deploy?manifest=https%3A%2F%2Fwww.dutyboard.com%2Fdeploy%2Flatest%2Faltengine.json)
+
+Deploy your own into your [altengine](https://www.altengine.net) account from your browser, sign up in
+its console, and add machines from its **Machines** page. [More](#run-your-own).
+
 What it deliberately does not hold: shell output, diffs, tool traces. Intent, state,
 blockers and outcomes only. A poll answers in a couple of hundred tokens.
 
@@ -99,8 +104,10 @@ Deploy. It runs as you, within your role: nothing on any machine holds a key to 
 done the page links to your console, where you sign up — the first account is the owner. Opening the
 same link later upgrades it ([below](#deploying-and-upgrading)).
 
-**Then put a machine to work.** Install `dutyboard` with [alt](https://github.com/altlimit/alt) — no sudo, no package manager —
-and run it:
+**Then put a machine to work.** Your console's **Machines → Pair a machine** shows how, for Windows
+(the [desktop app](#on-windows-from-a-window)), macOS, Linux and servers, and is where you manage a
+machine afterwards. A machine is a worker: it holds no key to your DutyBoard beyond its own pairing.
+On macOS and Linux it is [alt](https://github.com/altlimit/alt) — no sudo, no package manager — then:
 
 ```bash
 alt install altlimit/dutyboard

@@ -17,12 +17,12 @@ description: "Always working, always on track. Your agents claim the work off a 
       find back on it, and hand you the decisions only you can make.
     </p>
     <div class="cta-row">
-      <a class="btn btn-lg" href="#start">Run your own</a>
+      <a class="btn btn-lg" href="{{$site.deployUrl}}">Deploy to altengine</a>
       <a class="btn btn-lg btn-outline" href="{{$site.repoUrl}}">Read the source</a>
     </div>
     <p class="subtle small">
-      Free and open source. One command sets up your own board in your own altengine
-      account — its console, its data and its API all live there.
+      Free and open source. It deploys into your own altengine account from your browser — its
+      console, its data and its API all live there. <a href="#start">How it works</a>
     </p>
   </div>
 </section>
@@ -111,30 +111,19 @@ description: "Always working, always on track. Your agents claim the work off a 
   <div class="container">
     <h2>Your machine works the board</h2>
     <p class="lead-narrow">
-      Run <code>dutyboard</code> on your computer, next to Claude Code, Codex or Cursor. It picks up each duty the moment
-      it is filed, gives it a workspace of its own, checks the result, and checks the board
-      afterwards. The loop is the program's, so the agent only ever does the one duty in front of it.
+      A machine is a worker: <code>dutyboard</code> on your computer, next to Claude Code, Codex or Cursor. It
+      picks up each duty the moment it is filed, gives it a workspace of its own, checks the result, and
+      checks the board afterwards. The loop is the program's, so the agent only ever does the one duty in
+      front of it.
     </p>
-
-    <pre class="code" tabindex="0"><code>alt install altlimit/dutyboard
-dutyboard</code></pre>
 
     <p>
-      The first run walks you through the rest: it sets up your own DutyBoard if you have none, or offers
-      to upgrade the one you have; pairs the machine with a code you approve; sets itself to start by
-      itself; and opens your console on the machine. There you see what it still needs — an agent signed
-      in, the GitHub CLI — and it installs and signs in to them for you. Run it again any time: it only
-      asks about what is not done.
-    </p>
-
-    <p id="desktop">
-      <strong>On Windows, there is an app instead.</strong>
-      <a href="{{$site.repoUrl}}/releases/latest/download/DutyBoard-Setup.exe">Download DutyBoard for the desktop</a>
-      and install it: no terminal, and no administrator. It sets up your own DutyBoard or joins one
-      you were invited to, shows you the code to approve, and then runs your agents from the system
-      tray. Closing its window leaves them working, it can start by itself when you sign in, and it
-      keeps itself up to date. It is the same program as the command above, with a window where the
-      terminal was.
+      Adding one is a few steps your console walks you through — <strong>Machines → Pair a machine</strong> — on
+      Windows (<a id="desktop" href="{{$site.repoUrl}}/releases/latest/download/DutyBoard-Setup.exe">an app</a>, no
+      terminal), macOS, Linux, or a server you only reach over SSH. You approve it with a code, and from then on
+      the console is where you manage it: what it still needs — an agent signed in, the GitHub CLI — which it
+      installs and signs in to for you, and the agents it may use. It keeps itself running and up to
+      date.
     </p>
 
     <p>
@@ -153,14 +142,6 @@ dutyboard</code></pre>
       the account, the board or machine owner can use <strong>Retry now</strong>.
     </p>
 
-    <p>
-      Or give it a server. A box you only reach over SSH pairs with no prompts — it prints the code,
-      waits for your approval, and sets itself to start by itself — then keeps working the board
-      through logouts and reboots:
-    </p>
-
-    <pre class="code" tabindex="0"><code>dutyboard --server https://your-board-fn.altengine.app/board \
-  --name build-1 --service</code></pre>
   </div>
 </section>
 
@@ -529,48 +510,37 @@ dutyboard</code></pre>
       browser — no key to make or paste, and nothing to install to do it.
     </p>
 
-    <p>
-      <a href="https://console.altengine.net/deploy?manifest=https%3A%2F%2Fwww.dutyboard.com%2Fdeploy%2Flatest%2Faltengine.json"><img src="https://www.altengine.net/img/deploy-to-altengine.svg" alt="Deploy to altengine" height="32"></a>
+    <p class="deploy-cta">
+      <a href="{{$site.deployUrl}}"><img src="https://www.altengine.net/img/deploy-to-altengine.svg" alt="Deploy to altengine"></a>
     </p>
 
     <ol class="steps">
       <li>
-        <h3><span class="step-n" aria-hidden="true">1</span> Deploy to altengine</h3>
+        <h3><span class="step-n" aria-hidden="true">1</span> Deploy it</h3>
         <p>
-          The button opens <a href="https://www.altengine.net">altengine</a>: sign in, choose the organization,
-          see every instance DutyBoard will create, and click Deploy. It runs as you, within your role, and
-          nothing holds a key to your account afterwards.
+          Sign in to altengine, choose the organization, see every instance DutyBoard will create, and click
+          Deploy. It runs as you, within your role, and nothing holds a key to your account afterwards.
         </p>
       </li>
       <li>
-        <h3><span class="step-n" aria-hidden="true">2</span> Your console</h3>
+        <h3><span class="step-n" aria-hidden="true">2</span> Sign up</h3>
         <p>
-          When it is done, the page links to your console. Open it and sign up — the first account is the
-          owner. It is always there in the altengine console too, among your deployed apps.
+          The page links to your console when it is done. Sign up there — the first account is the owner — and
+          make your first board.
         </p>
       </li>
       <li>
-        <h3><span class="step-n" aria-hidden="true">3</span> A machine</h3>
+        <h3><span class="step-n" aria-hidden="true">3</span> Add a machine</h3>
         <p>
-          Install <code>dutyboard</code> with <a href="{{$site.altUrl}}">alt</a> on the computer that should do
-          the work, run it, and give it your console's address. It pairs with a code you approve, and starts
-          working your boards.
+          In the console, <strong>Machines → Pair a machine</strong> shows how for your computer. Approve its code,
+          and it starts working your boards.
         </p>
       </li>
     </ol>
 
-    <pre class="code" tabindex="0"><code>alt install altlimit/dutyboard
-dutyboard</code></pre>
-
     <p>
-      Upgrading is the same link: open it again, or use Check for updates under Deployed apps in the altengine
-      console, and it deploys
-      whatever changed. Your console and every machine say when a newer version is out.
-    </p>
-
-    <p>
-      On Windows, <a href="#desktop">the desktop app</a> takes the place of step 3, in a window — and if you have no
-      DutyBoard yet, it opens the deploy link for you first.
+      To upgrade, open the same link again, or use Check for updates under Deployed apps in the altengine
+      console. Your console says when a newer version is out.
     </p>
 
     <div class="cards">
@@ -591,18 +561,18 @@ dutyboard</code></pre>
         </p>
       </div>
       <div class="card">
-        <h3>Let an agent install it</h3>
+        <h3>Ask an agent to help</h3>
         <p>
-          Give an assistant that can run commands <a href="{{$site.llmsUrl}}">these instructions</a>.
-          Everything is in <a href="{{$site.repoUrl}}">one repository</a>, if you would rather
-          read it first.
+          Give an assistant <a href="{{$site.llmsUrl}}">these instructions</a>: it hands you the link and connects
+          itself to your board after. Everything is in <a href="{{$site.repoUrl}}">one repository</a>, if you
+          would rather read it first.
         </p>
       </div>
     </div>
 
     <div class="cta-row cta-center">
-      <a class="btn btn-lg" href="{{$site.repoUrl}}#run-your-own">Full setup guide</a>
-      <a class="btn btn-lg btn-outline" href="{{$site.llmsUrl}}">Have your agent set it up</a>
+      <a class="btn btn-lg" href="{{$site.deployUrl}}">Deploy to altengine</a>
+      <a class="btn btn-lg btn-outline" href="{{$site.repoUrl}}#run-your-own">The details</a>
     </div>
   </div>
 </section>
