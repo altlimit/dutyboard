@@ -1,4 +1,5 @@
 <script setup>
+import DutyLink from "../components/DutyLink.vue";
 import { computed, nextTick, onMounted, onUnmounted, ref } from "vue";
 import { useRoute } from "vue-router";
 import { api } from "../lib/altengine.js";
@@ -6,6 +7,8 @@ import { config } from "../config.js";
 import { ago } from "../lib/duties.js";
 import MachineAgents from "../components/MachineAgents.vue";
 import MachineSecrets from "../components/MachineSecrets.vue";
+import DutyDrawer from "../components/DutyDrawer.vue";
+import { useDutyPanel } from "../lib/useDutyPanel.js";
 import { AGENTS, runnerLimited, runStateLabel, readinessStatus } from "../lib/runners.js";
 import { CONSOLE_VERSION, differs, serviceVersion } from "../lib/version.js";
 
@@ -37,6 +40,8 @@ const headlessCommand = computed(() => `alt install altlimit/dutyboard\ndutyboar
 
 // `dutyboard` in a terminal ends by opening this page on the machine it just set up: #/machines?setup=<id>.
 const route = useRoute();
+// The duty a machine is running, read over the Machines page.
+const { reading, closeDuty } = useDutyPanel();
 const focus = computed(() => String(route.query.setup || ""));
 
 // What duties need from a machine, as it last said: the items its boards wait on first, then the rest.
@@ -439,7 +444,7 @@ onUnmounted(() => {
                   <span v-if="!l.runs.length" class="muted">idle</span>
                   <ul v-else class="runs">
                     <li v-for="r in l.runs" :key="r.duty_id">
-                      <router-link :to="{ name: 'duty', params: { projectId: l.project_id, dutyId: r.duty_id } }" class="mono small">{{ r.duty_id }}</router-link>
+                      <DutyLink class="mono small" :project-id="l.project_id" :duty-id="r.duty_id">{{ r.duty_id }}</DutyLink>
                       {{ runStateLabel(r.state) }}<span v-if="r.detail" class="muted small"> — {{ r.detail }}</span>
                     </li>
                   </ul>
@@ -491,6 +496,7 @@ onUnmounted(() => {
         </details>
       </li>
     </ul>
+    <DutyDrawer v-if="reading" :key="reading.dutyId" :project-id="reading.projectId" :duty-id="reading.dutyId" @close="closeDuty" />
   </div>
 </template>
 

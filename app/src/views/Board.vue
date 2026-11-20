@@ -1,7 +1,11 @@
 <script setup>
+import DutyLink from "../components/DutyLink.vue";
 import DutyForm from "../components/DutyForm.vue";
 import BoardNav from "../components/BoardNav.vue";
-import { computed, onUnmounted, provide, ref, watch } from "vue";
+import { computed, nextTick, onUnmounted, provide, ref, watch } from "vue";
+import SidePanel from "../components/SidePanel.vue";
+import DutyDrawer from "../components/DutyDrawer.vue";
+import { useDutyPanel } from "../lib/useDutyPanel.js";
 import { roleNames } from "../lib/team.js";
 import { aggregate, api, query, subscribeLive } from "../lib/altengine.js";
 import { STATUS_COLUMNS, ago, columnOrder, sortColumn } from "../lib/duties.js";
@@ -156,6 +160,15 @@ function clearSearch() {
 const error = ref("");
 const liveState = ref("connecting");
 const showForm = ref(false);
+const addForm = ref(null);
+/** The full form, in a panel over the board: the columns stay where they are behind it. */
+async function openAdd() {
+  showForm.value = true;
+  await nextTick();
+  addForm.value?.focus();
+}
+// A duty read over the board, in a panel, kept in the address (see useDutyPanel). Cards open it there.
+const { reading, closeDuty } = useDutyPanel({ projectId: computed(() => props.projectId) });
 // Files that did not make it onto a duty that did. Kept apart from `error` because it needs
 // a link to the duty — the duty exists, and that page is where to try again.
 const attachFailed = ref(null); // { dutyId, title, lines: string[] }
@@ -529,9 +542,7 @@ onUnmounted(() => {
           <button type="submit" :disabled="searching || !searchQuery.trim()">{{ searching ? "…" : "Search" }}</button>
         </form>
         <button type="button" @click="loadAll">Refresh</button>
-        <button class="primary" type="button" @click="showForm = !showForm" :aria-expanded="showForm">
-          {{ showForm ? "Cancel" : "Add duty" }}
-        </button>
+        <button class="primary" type="button" @click="openAdd">Add duty</button>
       </div>
     </div>
 
@@ -543,23 +554,26 @@ onUnmounted(() => {
         <li v-for="line in attachFailed.lines" :key="line">{{ line }}</li>
       </ul>
       Add them from
-      <router-link :to="{ name: 'duty', params: { projectId, dutyId: attachFailed.dutyId } }">the duty's page</router-link>.
+      <DutyLink :project-id="projectId" :duty-id="attachFailed.dutyId">the duty's page</DutyLink>.
     </div>
 
     <p v-if="needsYou" class="notice notice--warn" role="status">
       {{ needsYou }} {{ needsYou === 1 ? "duty needs" : "duties need" }} your answer or approval before work can begin or resume.
     </p>
 
-    <DutyForm
-      v-if="showForm"
-      :project-id="projectId"
-      :runner="board ? board.runner || null : undefined"
-      :profile="board ? board.profile || null : undefined"
-      :machines="runners"
-      id-prefix="d"
-      @added="onAdded"
-      @cancel="showForm = false"
-    />
+    <SidePanel v-if="showForm" label="New duty" @close="showForm = false">
+      <DutyForm
+        ref="addForm"
+        :project-id="projectId"
+        :runner="board ? board.runner || null : undefined"
+        :profile="board ? board.profile || null : undefined"
+        :machines="runners"
+        id-prefix="d"
+        @added="onAdded"
+        @cancel="showForm = false"
+      />
+    </SidePanel>
+    <DutyDrawer v-if="reading" :key="reading.dutyId" :project-id="reading.projectId" :duty-id="reading.dutyId" @close="closeDuty" />
 
     <section v-if="agents.length" aria-labelledby="agents-h">
       <h2 id="agents-h" class="sr-only">Agents on this board</h2>
@@ -599,7 +613,7 @@ onUnmounted(() => {
       </div>
       <ul v-else class="hits">
         <li v-for="h in hits" :key="h.duty_id">
-          <router-link class="boardcard" :to="{ name: 'duty', params: { projectId, dutyId: h.duty_id } }">
+          <DutyLink class="boardcard" :project-id="projectId" :duty-id="h.duty_id">
             <strong>{{ h.title }}</strong>
             <span class="chips">
               <span class="badge" :class="h.status === 'failed' ? 'badge--immediate_blocker' : ''">{{ h.status }}</span>
@@ -609,7 +623,7 @@ onUnmounted(() => {
             <span v-if="h.outcome_summary" class="duty__ask" style="border-left-color: var(--ok)">
               {{ plain(h.outcome_summary) }}
             </span>
-          </router-link>
+          </DutyLink>
         </li>
       </ul>
     </section>

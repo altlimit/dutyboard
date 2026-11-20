@@ -6,6 +6,7 @@ import { ago, originLabel, priorityLabel } from "../lib/duties.js";
 import { activityLine } from "../lib/runners.js";
 import { plain } from "../lib/markdown.js";
 import { user } from "../lib/session.js";
+import { useOpenDuty } from "../lib/useDutyPanel.js";
 
 defineEmits(["changed"]);
 const props = defineProps({
@@ -23,6 +24,8 @@ const showPriority = computed(() => d.value.priority === "immediate_blocker");
 // On a board with a team: which role has this duty. The board page provides the team; a card shown
 // anywhere else simply has no role to name.
 const team = inject("team", null);
+// On a page that reads duties in a panel, a plain click opens it there.
+const openDuty = useOpenDuty();
 const role = computed(() => {
   if (!team || d.value.status === "done" || d.value.status === "failed") return "";
   const id = dutyRoleId(d.value, team.pointer.value);
@@ -32,7 +35,8 @@ const role = computed(() => {
 
 <template>
   <article class="duty">
-    <router-link style="display: block; color: inherit; text-decoration: none" :to="{ name: 'duty', params: { projectId, dutyId: d.key } }">
+    <router-link v-slot="{ href, navigate }" custom :to="{ name: 'duty', params: { projectId, dutyId: d.key } }">
+    <a :href="href" style="display: block; color: inherit; text-decoration: none" @click="openDuty($event, projectId, d.key, navigate)">
       <span class="duty__title">{{ d.title }}</span>
 
       <span class="duty__meta">
@@ -65,6 +69,7 @@ const role = computed(() => {
       <span v-else-if="d.status === 'done' && d.outcome_summary" class="duty__ask" style="border-left-color: var(--ok)">
         {{ plain(d.outcome_summary) }}
       </span>
+    </a>
     </router-link>
     <QuotaRetry v-if="d.status === 'active'" :activity="activity" :project-id="projectId" :owner-uid="d.owner_uid" />
   </article>

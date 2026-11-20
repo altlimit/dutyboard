@@ -1,4 +1,5 @@
 <script setup>
+import DutyLink from "./DutyLink.vue";
 import { ref, watch } from "vue";
 import { api } from "../lib/altengine.js";
 import { statusLabel } from "../lib/duties.js";
@@ -42,7 +43,7 @@ watch(() => props.note, () => load(), { immediate: true });
       <p v-if="!suggestions.length" class="muted small">{{ loading ? "Loading suggestions…" : "No duties suggested from this note yet." }}</p>
       <ul v-else class="stack">
         <li v-for="d in suggestions" :key="d.id">
-          <router-link :to="{ name: 'duty', params: { projectId, dutyId: d.id } }">{{ d.title }}</router-link>
+          <DutyLink :project-id="projectId" :duty-id="d.id">{{ d.title }}</DutyLink>
           <span class="badge" style="margin-left: 0.4rem">{{ d.approval_required && d.status === 'needs_decision' ? 'Awaiting approval' : statusLabel(d.status) }}</span>
 
         </li>

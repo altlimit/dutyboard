@@ -13,7 +13,8 @@ import WaitingOnYou from "../components/WaitingOnYou.vue";
 import QuickDuty from "../components/QuickDuty.vue";
 import DutyDrawer from "../components/DutyDrawer.vue";
 import ScheduleDrawer from "../components/ScheduleDrawer.vue";
-import { useRoute, useRouter } from "vue-router";
+import { useRouter } from "vue-router";
+import { useDutyPanel } from "../lib/useDutyPanel.js";
 import { plainClick } from "../lib/clicks.js";
 import { api, query, subscribeLive } from "../lib/altengine.js";
 import { ago } from "../lib/duties.js";
@@ -165,25 +166,13 @@ onUnmounted(() => {
 const waiting = ref(null);
 const quick = ref(null);
 
-// The duty read over the office, kept in the address so Back closes it and a reload opens it again.
-const route = useRoute();
+// The duty read over the office — or the recurring duty the on-call desk is waiting for — kept in the
+// address so Back closes it and a reload opens it again (see useDutyPanel).
 const router = useRouter();
-const reading = computed(() => (route.query.duty ? String(route.query.duty) : ""));
-const openDuty = (dutyId) => {
-  const { schedule, ...rest } = route.query;
-  router.push({ query: { ...rest, duty: dutyId } });
-};
-function closeDuty() {
-  const { duty, ...rest } = route.query;
-  router.replace({ query: rest });
-}
-/** The recurring duty the on-call desk is waiting for, read over the office the same way. */
-const readingSchedule = computed(() => (route.query.schedule ? String(route.query.schedule) : ""));
-const openSchedule = ({ scheduleId }) => router.push({ query: { ...route.query, schedule: scheduleId } });
-function closeSchedule() {
-  const { schedule, ...rest } = route.query;
-  router.replace({ query: rest });
-}
+const panel = useDutyPanel({ projectId: computed(() => props.projectId) });
+const { reading, readingSchedule, closeDuty, closeSchedule } = panel;
+const openDuty = (dutyId) => panel.openDuty({ projectId: props.projectId, dutyId });
+const openSchedule = ({ scheduleId }) => panel.openSchedule({ projectId: props.projectId, scheduleId });
 /** A duty's own address, so its link still opens in a new tab when asked to. */
 const hrefOf = (dutyId) => router.resolve({ name: "duty", params: { projectId: props.projectId, dutyId } }).href;
 /** A link to a duty in the side lists: a plain click reads it here, anything else is the browser's. */
@@ -264,8 +253,8 @@ function readHere(event, dutyId) {
         </aside>
       </div>
     </template>
-    <DutyDrawer v-if="reading" :key="reading" :project-id="projectId" :duty-id="reading" @close="closeDuty" />
-    <ScheduleDrawer v-else-if="readingSchedule" :key="readingSchedule" :project-id="projectId" :schedule-id="readingSchedule" @close="closeSchedule" @open="({ dutyId }) => openDuty(dutyId)" />
+    <DutyDrawer v-if="reading" :key="reading.dutyId" :project-id="projectId" :duty-id="reading.dutyId" @close="closeDuty" />
+    <ScheduleDrawer v-else-if="readingSchedule" :key="readingSchedule.scheduleId" :project-id="projectId" :schedule-id="readingSchedule.scheduleId" @close="closeSchedule" @open="({ dutyId }) => openDuty(dutyId)" />
   </div>
 </template>
 

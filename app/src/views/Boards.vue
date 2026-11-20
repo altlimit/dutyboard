@@ -16,6 +16,8 @@ import WaitingOnYou from "../components/WaitingOnYou.vue";
 import QuickDuty from "../components/QuickDuty.vue";
 import DutyDrawer from "../components/DutyDrawer.vue";
 import ScheduleDrawer from "../components/ScheduleDrawer.vue";
+import SidePanel from "../components/SidePanel.vue";
+import { useDutyPanel } from "../lib/useDutyPanel.js";
 
 const router = useRouter();
 const route = useRoute();
@@ -90,30 +92,13 @@ const boardsById = computed(() => Object.fromEntries(officeBoards.value.map((b) 
 const waiting = ref(null);
 const quick = ref(null);
 
-/**
- * The duty read over the office, kept in the address — `duty` and the board it is `on` — so Back
- * closes it and a reload or a shared link opens it again.
- */
-const reading = computed(() => (office.value && route.query.duty && route.query.on ? { projectId: String(route.query.on), dutyId: String(route.query.duty) } : null));
-const openDuty = ({ projectId, dutyId }) => {
-  const { schedule, ...rest } = route.query;
-  router.push({ query: { ...rest, duty: dutyId, on: projectId } });
-};
-/** A recurring duty read over the office — from the desk on call for it — kept in the address too. */
-const readingSchedule = computed(() => (office.value && route.query.schedule && route.query.on ? { projectId: String(route.query.on), scheduleId: String(route.query.schedule) } : null));
-const openSchedule = ({ projectId, scheduleId }) => router.push({ query: { ...route.query, schedule: scheduleId, on: projectId } });
-function closeSchedule() {
-  const { schedule, on, ...rest } = route.query;
-  router.replace({ query: rest });
-}
+// A duty, or a recurring duty from the desk on call for it, read over the office — kept in the
+// address with the board it is `on` (see useDutyPanel).
+const { reading, readingSchedule, openDuty, openSchedule, closeDuty, closeSchedule } = useDutyPanel({ enabled: () => office.value });
 /** A "?" desk: its duty, open over the office, where it can be answered. */
 function openAsking(key) {
   const d = asking.value.find((x) => x.key === key);
   if (d) openDuty({ projectId: d.project_id, dutyId: d.key });
-}
-function closeDuty() {
-  const { duty, on, ...rest } = route.query;
-  router.replace({ query: rest });
 }
 
 const rowsOf = (res) => (res.documents || []).map((d) => ({ ...d.data, key: String(d.key) }));
@@ -299,26 +284,20 @@ watch(
           <button type="button" class="seg__btn" :aria-pressed="!office" @click="showView('list')">List</button>
           <button type="button" class="seg__btn" :aria-pressed="office" @click="showView('office')">Office</button>
         </div>
-        <button
-          class="primary"
-          type="button"
-          :aria-expanded="showForm"
-          @click="showForm ? (showForm = false) : openForm()"
-        >
-          {{ showForm ? "Cancel" : "New board" }}
-        </button>
+        <button class="primary" type="button" @click="openForm">New board</button>
       </div>
     </div>
 
     <p v-if="error" class="notice notice--error" role="alert">{{ error }}</p>
 
-    <!-- Behind a button, like "Add duty" on the board. Someone who already has boards came
-         here to open one, and a permanent form pushes what they came for down the page. -->
-    <form v-if="showForm" class="panel panel--form stack" @submit.prevent="create">
-      <h2 style="margin: 0">New board</h2>
+    <!-- In a panel over the page, like "Add duty": someone who already has boards came here to open
+         one, and a form that opens in the page pushes what they came for down. -->
+    <SidePanel v-if="showForm" label="New board" @close="showForm = false">
+    <p v-if="error" class="notice notice--error" role="alert">{{ error }}</p>
+    <form class="stack" @submit.prevent="create">
       <div class="field">
         <label for="b-name">Name</label>
-        <input id="b-name" ref="nameInput" v-model="name" required maxlength="120" placeholder="Backend rewrite" />
+        <input id="b-name" ref="nameInput" v-model="name" autofocus required maxlength="120" placeholder="Backend rewrite" />
       </div>
       <div class="field">
         <label for="b-slug">Board id <span class="muted">(optional)</span></label>
@@ -353,8 +332,10 @@ watch(
         <button class="primary" type="submit" :disabled="creating || !name || (forRunner && creatingRepo && !noRepo(profile.workspace) && !(newRepo.machine_id && newRepo.name))">
           {{ creating ? "Creating…" : "Create board" }}
         </button>
+        <button type="button" :disabled="creating" @click="showForm = false">Cancel</button>
       </div>
     </form>
+    </SidePanel>
 
     <p v-if="loading" class="muted" role="status">Loading…</p>
 

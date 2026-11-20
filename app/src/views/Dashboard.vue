@@ -1,4 +1,5 @@
 <script setup>
+import DutyLink from "../components/DutyLink.vue";
 // The dashboard: everything across your boards in a few numbers, what is waiting on you, what is
 // being worked, which roles' work holds up best, and what the schedules file next. The boards
 // themselves — the table, and the office — are on the Boards page.
@@ -10,6 +11,10 @@ import { plain } from "../lib/markdown.js";
 import { MIN_JUDGED, RECORD_DAYS, duration, percent, roleRecord, roleRecordRequest, topRoles } from "../lib/team.js";
 import { useBoards } from "../lib/useBoards.js";
 import TrendBars from "../components/TrendBars.vue";
+import DutyDrawer from "../components/DutyDrawer.vue";
+import ScheduleDrawer from "../components/ScheduleDrawer.vue";
+import { plainClick } from "../lib/clicks.js";
+import { useDutyPanel } from "../lib/useDutyPanel.js";
 
 /** Questions agents have asked, across every board, longest-waiting first. */
 const waiting = ref([]);
@@ -51,6 +56,14 @@ async function loadDashboard() {
 }
 
 const { all, nameOf, loading, error, counts, runners, upcoming } = useBoards({ onStatus: loadDashboard });
+// A duty, or what is next on a schedule, read over the dashboard in a panel (see useDutyPanel).
+const { reading, readingSchedule, openDuty, openSchedule, closeDuty, closeSchedule } = useDutyPanel();
+/** "Up next": a plain click reads the recurring duty over the dashboard; a modified one opens its settings. */
+function scheduleClick(event, s, navigate) {
+  if (!plainClick(event)) return navigate(event);
+  event.preventDefault();
+  openSchedule({ projectId: s.project_id, scheduleId: s.schedule_id });
+}
 
 const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 const waitingTotal = computed(() =>
@@ -146,7 +159,7 @@ function runNote(d) {
           </div>
           <ul v-if="waiting.length" class="feed feed--asks">
             <li v-for="d in waiting" :key="d.key">
-              <router-link class="feed__item" :to="{ name: 'duty', params: { projectId: d.project_id, dutyId: d.key } }">
+              <DutyLink class="feed__item" :project-id="d.project_id" :duty-id="d.key">
                 <span class="duty__title">{{ d.title }}</span>
                 <span class="duty__meta">
                   <span class="badge">{{ nameOf[d.project_id] || d.project_id }}</span>
@@ -154,7 +167,7 @@ function runNote(d) {
                   <span class="nowrap">waiting since {{ ago(d.updated_at) }}</span>
                 </span>
                 <span v-if="d.last_question" class="duty__ask">{{ plain(d.last_question) }}</span>
-              </router-link>
+              </DutyLink>
             </li>
           </ul>
           <p v-else class="feed__empty">Nothing is waiting on you. Agents' questions and suggested duties land here.</p>
@@ -170,7 +183,7 @@ function runNote(d) {
             </div>
             <ul v-if="running.length" class="feed">
               <li v-for="d in running" :key="d.key">
-                <router-link class="feed__item" :to="{ name: 'duty', params: { projectId: d.project_id, dutyId: d.key } }">
+                <DutyLink class="feed__item" :project-id="d.project_id" :duty-id="d.key">
                   <span class="duty__title">{{ d.title }}</span>
                   <span class="duty__meta">
                     <span class="badge">{{ nameOf[d.project_id] || d.project_id }}</span>
@@ -178,7 +191,7 @@ function runNote(d) {
                     <span class="nowrap">{{ d.claimed_at ? `started ${ago(d.claimed_at)}` : `updated ${ago(d.updated_at)}` }}</span>
                   </span>
                   <span v-if="runNote(d)" class="livedot feed__note" :class="`livedot--${runNote(d).tone}`">{{ runNote(d).text }}</span>
-                </router-link>
+                </DutyLink>
               </li>
             </ul>
             <p v-else class="feed__empty">Nothing is being worked right now.</p>
@@ -217,7 +230,8 @@ function runNote(d) {
             </div>
             <ul v-if="upcoming.schedules.length" class="feed">
               <li v-for="s in upcoming.schedules.slice(0, UPCOMING_SHOWN)" :key="s.schedule_id">
-                <router-link class="feed__item feed__item--row" :to="{ name: 'settings', params: { projectId: s.project_id }, query: { tab: 'recurring' } }">
+                <router-link v-slot="{ href, navigate }" custom :to="{ name: 'settings', params: { projectId: s.project_id }, query: { tab: 'recurring' } }">
+                <a class="feed__item feed__item--row" :href="href" @click="scheduleClick($event, s, navigate)">
                   <span class="feed__when">
                     <span class="feed__in">{{ until(s.next_due_at) }}</span>
                     <span class="feed__at">{{ localWhen(s.next_due_at) }}</span>
@@ -229,6 +243,7 @@ function runNote(d) {
                       <span v-if="s.checked" class="nowrap">checks first, files only if there is work</span>
                     </span>
                   </span>
+                </a>
                 </router-link>
               </li>
             </ul>
@@ -238,5 +253,7 @@ function runNote(d) {
       </div>
 
     </template>
+    <DutyDrawer v-if="reading" :key="reading.dutyId" :project-id="reading.projectId" :duty-id="reading.dutyId" @close="closeDuty" />
+    <ScheduleDrawer v-else-if="readingSchedule" :key="readingSchedule.scheduleId" :project-id="readingSchedule.projectId" :schedule-id="readingSchedule.scheduleId" @close="closeSchedule" @open="openDuty" />
   </div>
 </template>

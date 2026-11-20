@@ -16,6 +16,8 @@ import { api } from "../lib/altengine.js";
 import { ago } from "../lib/duties.js";
 import { markdown } from "../lib/markdown.js";
 import { LEVELS, levelLabel, roleTraits } from "../lib/team.js";
+import DutyLink from "./DutyLink.vue";
+import SidePanel from "./SidePanel.vue";
 
 const props = defineProps({
   projectId: { type: String, required: true },
@@ -195,7 +197,7 @@ const saveMemory = async () => {
     <p v-if="error" class="notice notice--error" role="alert">{{ error }}</p>
     <p v-if="notice" class="notice" role="status">
       {{ notice }}
-      <router-link v-if="draftDutyId || retroDutyId" :to="{ name: 'duty', params: { projectId, dutyId: retroDutyId || draftDutyId } }">See the duty</router-link>
+      <DutyLink v-if="draftDutyId || retroDutyId" :project-id="projectId" :duty-id="retroDutyId || draftDutyId">See the duty</DutyLink>
     </p>
 
     <p v-if="unsupported" class="notice">
@@ -241,48 +243,19 @@ const saveMemory = async () => {
         <template v-if="inForce">
           <ul class="team">
             <li v-for="(r, i) in roles" :key="r.id" class="team__role">
-              <template v-if="!editing || editing.at !== i">
-                <div class="row row--between">
-                  <div class="row">
-                    <strong>{{ r.name }}</strong>
-                    <span class="badge" :title="`Runs on a ${levelLabel(r.level).toLowerCase()} model: each machine picks from the combinations it has enabled at that level`">{{ levelLabel(r.level) }}</span>
-                    <span v-for="t in roleTraits(r)" :key="t.key" class="badge badge--active" :title="t.hint">{{ t.label }}</span>
-                  </div>
-                  <button v-if="isOwner" type="button" class="link small" :disabled="busy" @click="startEdit(r, i)">Edit<span class="sr-only"> {{ r.name }}</span></button>
-                </div>
-                <p class="small" style="margin: 0.2rem 0 0">{{ r.summary }}</p>
-                <details>
-                  <summary class="small">Charter</summary>
-                  <div class="md team__charter" v-html="markdown(r.charter)"></div>
-                </details>
-              </template>
-              <form v-else class="stack" @submit.prevent="saveRole">
-                <div class="field">
-                  <label :for="`role-name-${i}`">Name</label>
-                  <input :id="`role-name-${i}`" v-model="editing.name" required maxlength="40" />
-                </div>
-                <div class="field">
-                  <label :for="`role-summary-${i}`">What it is for</label>
-                  <input :id="`role-summary-${i}`" v-model="editing.summary" required maxlength="240" />
-                  <p class="hint">One sentence. Other roles decide whether to hand a duty here by reading it.</p>
-                </div>
-                <div class="field">
-                  <label :for="`role-level-${i}`">Level</label>
-                  <select :id="`role-level-${i}`" v-model="editing.level">
-                    <option v-for="l in LEVELS" :key="l.key" :value="l.key">{{ l.label }} — {{ l.hint }}</option>
-                  </select>
-                  <p class="hint">How capable a model it runs on. Each machine maps levels to its own enabled combinations, on the Machines page.</p>
-                </div>
-                <div class="field">
-                  <label :for="`role-charter-${i}`">Charter, in markdown</label>
-                  <textarea :id="`role-charter-${i}`" v-model="editing.charter" rows="14" :maxlength="MAX_CHARTER" required class="mono" />
-                  <p class="hint">{{ editing.charter.length }} of {{ MAX_CHARTER }} characters. Given to every session that works as this role.</p>
-                </div>
+              <div class="row row--between">
                 <div class="row">
-                  <button class="primary" type="submit" :disabled="busy">Save role</button>
-                  <button type="button" @click="editing = null">Cancel</button>
+                  <strong>{{ r.name }}</strong>
+                  <span class="badge" :title="`Runs on a ${levelLabel(r.level).toLowerCase()} model: each machine picks from the combinations it has enabled at that level`">{{ levelLabel(r.level) }}</span>
+                  <span v-for="t in roleTraits(r)" :key="t.key" class="badge badge--active" :title="t.hint">{{ t.label }}</span>
                 </div>
-              </form>
+                <button v-if="isOwner" type="button" class="link small" :disabled="busy" @click="startEdit(r, i)">Edit<span class="sr-only"> {{ r.name }}</span></button>
+              </div>
+              <p class="small" style="margin: 0.2rem 0 0">{{ r.summary }}</p>
+              <details>
+                <summary class="small">Charter</summary>
+                <div class="md team__charter" v-html="markdown(r.charter)"></div>
+              </details>
             </li>
           </ul>
 
@@ -355,7 +328,7 @@ const saveMemory = async () => {
             <ul class="feed small">
               <li v-for="b in sentBacks" :key="`${b.duty_id}-${b.at}`" class="stack" style="gap: 0.15rem">
                 <span>
-                  <router-link :to="{ name: 'duty', params: { projectId, dutyId: b.duty_id } }">{{ b.title }}</router-link>
+                  <DutyLink :project-id="projectId" :duty-id="b.duty_id">{{ b.title }}</DutyLink>
                   <span class="muted"> — {{ b.from }} to {{ b.to }}, {{ ago(b.at) }}</span>
                 </span>
                 <span class="muted">{{ b.note }}</span>
@@ -388,7 +361,7 @@ const saveMemory = async () => {
           traps. It is theirs: every session reads it and is told to keep it current. It is separate from the board's
           description, which is yours, and from the rules, which you accept.
         </p>
-        <template v-if="memoryEdit === null">
+        <template v-if="memory">
           <div v-if="memory.body" class="md team__memory" v-html="markdown(memory.body)"></div>
           <p v-else class="muted small" style="margin: 0">Nothing yet. Agents add to it as they work.</p>
           <p class="hint" style="margin: 0">
@@ -413,20 +386,55 @@ const saveMemory = async () => {
             </ul>
           </details>
         </template>
-        <form v-else class="stack" @submit.prevent="saveMemory">
-          <div class="field">
-            <label for="memory-edit">Memory, in markdown</label>
-            <textarea id="memory-edit" v-model="memoryEdit" rows="14" :maxlength="memory.max_chars" class="mono" />
-            <p class="hint">{{ memoryEdit.length }} of {{ memory.max_chars }} characters. Saving it empty clears it. Never put a secret here: every member and every session reads it.</p>
-          </div>
-          <div class="row">
-            <button class="primary" type="submit" :disabled="busy">Save memory</button>
-            <button type="button" @click="memoryEdit = null">Cancel</button>
-          </div>
-        </form>
+
       </section>
     </template>
     <p v-else-if="!error" class="muted" role="status">Loading…</p>
+
+    <SidePanel v-if="editing" :label="`Edit ${editing.name || 'role'}`" @close="editing = null">
+      <p v-if="error" class="notice notice--error" role="alert">{{ error }}</p>
+    <form class="stack" @submit.prevent="saveRole">
+      <div class="field">
+        <label for="role-name">Name</label>
+        <input id="role-name" autofocus v-model="editing.name" required maxlength="40" />
+      </div>
+      <div class="field">
+        <label for="role-summary">What it is for</label>
+        <input id="role-summary" v-model="editing.summary" required maxlength="240" />
+        <p class="hint">One sentence. Other roles decide whether to hand a duty here by reading it.</p>
+      </div>
+      <div class="field">
+        <label for="role-level">Level</label>
+        <select id="role-level" v-model="editing.level">
+          <option v-for="l in LEVELS" :key="l.key" :value="l.key">{{ l.label }} — {{ l.hint }}</option>
+        </select>
+        <p class="hint">How capable a model it runs on. Each machine maps levels to its own enabled combinations, on the Machines page.</p>
+      </div>
+      <div class="field">
+        <label for="role-charter">Charter, in markdown</label>
+        <textarea id="role-charter" v-model="editing.charter" rows="14" :maxlength="MAX_CHARTER" required class="mono" />
+        <p class="hint">{{ editing.charter.length }} of {{ MAX_CHARTER }} characters. Given to every session that works as this role.</p>
+      </div>
+      <div class="row">
+        <button class="primary" type="submit" :disabled="busy">Save role</button>
+        <button type="button" @click="editing = null">Cancel</button>
+      </div>
+    </form>
+    </SidePanel>
+    <SidePanel v-if="memoryEdit !== null" label="Edit the team's memory" @close="memoryEdit = null">
+      <p v-if="error" class="notice notice--error" role="alert">{{ error }}</p>
+    <form class="stack" @submit.prevent="saveMemory">
+      <div class="field">
+        <label for="memory-edit">Memory, in markdown</label>
+        <textarea id="memory-edit" v-model="memoryEdit" autofocus rows="14" :maxlength="memory.max_chars" class="mono" />
+        <p class="hint">{{ memoryEdit.length }} of {{ memory.max_chars }} characters. Saving it empty clears it. Never put a secret here: every member and every session reads it.</p>
+      </div>
+      <div class="row">
+        <button class="primary" type="submit" :disabled="busy">Save memory</button>
+        <button type="button" @click="memoryEdit = null">Cancel</button>
+      </div>
+    </form>
+    </SidePanel>
   </div>
 </template>
 

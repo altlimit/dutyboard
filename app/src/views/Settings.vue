@@ -1,4 +1,5 @@
 <script setup>
+import DutyLink from "../components/DutyLink.vue";
 import DutyAgentPriority from "../components/DutyAgentPriority.vue";
 import BoardNav from "../components/BoardNav.vue";
 import { computed, onUnmounted, ref, watch } from "vue";
@@ -13,11 +14,16 @@ import ProfileForm from "../components/ProfileForm.vue";
 import DeployConnect from "../components/DeployConnect.vue";
 import NewRepoFields from "../components/NewRepoFields.vue";
 import TeamSettings from "../components/TeamSettings.vue";
+import DutyDrawer from "../components/DutyDrawer.vue";
+import SidePanel from "../components/SidePanel.vue";
+import { useDutyPanel } from "../lib/useDutyPanel.js";
 import { DAYS, REPEATS, allZones, browserZone, knownZone, repeatText, runText, scheduleDraft, schedulePayload, zoneOffsets } from "../lib/schedules.js";
 
 const props = defineProps({ projectId: { type: String, required: true } });
 const router = useRouter();
 const route = useRoute();
+// A duty named here — a machine's run, a recent duty, one a retro filed — read over the settings.
+const { reading, closeDuty } = useDutyPanel({ projectId: computed(() => props.projectId) });
 /** Just made from the boards page: say what comes next, once. */
 const created = computed(() => route.query.created || "");
 
@@ -807,7 +813,7 @@ function tabKey(event) {
               <template v-else>
                 <span v-for="(x, i) in r.runs" :key="x.duty_id">
                   <template v-if="i">, </template>
-                  <router-link :to="{ name: 'duty', params: { projectId, dutyId: x.duty_id } }">{{ x.detail || runStateLabel(x.state) }}</router-link>
+                  <DutyLink :project-id="projectId" :duty-id="x.duty_id">{{ x.detail || runStateLabel(x.state) }}</DutyLink>
                 </span>
               </template>
             </span>
@@ -922,7 +928,7 @@ function tabKey(event) {
             <ul v-if="history[s.schedule_id] && history[s.schedule_id].duties.length" class="members">
               <li v-for="d in history[s.schedule_id].duties" :key="d.duty_id">
                 <span>
-                  <router-link :to="{ name: 'duty', params: { projectId, dutyId: d.duty_id } }">{{ d.title }}</router-link>
+                  <DutyLink :project-id="projectId" :duty-id="d.duty_id">{{ d.title }}</DutyLink>
                   <span class="muted small members__id">{{ statusLabel(d.status) }}, {{ ago(d.created_at) }}</span>
                 </span>
               </li>
@@ -952,10 +958,12 @@ function tabKey(event) {
         </ul>
         <p v-else class="muted small" style="margin: 0">Nothing repeats on this board yet.</p>
 
-        <form v-if="scheduleForm" class="stack" @submit.prevent="saveSchedule">
+        <SidePanel v-if="scheduleForm" :label="scheduleForm.schedule_id ? 'Recurring duty' : 'New recurring duty'" @close="scheduleForm = null">
+        <p v-if="error" class="notice notice--error" role="alert">{{ error }}</p>
+        <form class="stack" @submit.prevent="saveSchedule">
           <div class="field">
             <label for="sch-title">Title</label>
-            <input id="sch-title" v-model="scheduleForm.title" required maxlength="200" placeholder="This week's post" />
+            <input id="sch-title" v-model="scheduleForm.title" autofocus required maxlength="200" placeholder="This week's post" />
           </div>
           <div class="field">
             <label for="sch-brief">What needs doing, every time</label>
@@ -1039,7 +1047,8 @@ function tabKey(event) {
             <button type="button" :disabled="busy" @click="scheduleForm = null">Cancel</button>
           </div>
         </form>
-        <div v-else-if="isOwner">
+        </SidePanel>
+        <div v-if="isOwner">
           <button type="button" :disabled="busy || schedules.length >= scheduleLimit" @click="newSchedule">Add a recurring duty</button>
           <p v-if="scheduleLimit && schedules.length >= scheduleLimit" class="hint" style="margin: 0.4rem 0 0">
             A board holds {{ scheduleLimit }}. Stop one you no longer want first.
@@ -1270,15 +1279,16 @@ function tabKey(event) {
         </p>
       </section>
 
-      <form v-if="isOwner && hookEdit" class="panel stack" aria-labelledby="hook-h" @submit.prevent="saveHook">
-        <h2 id="hook-h">Webhook for {{ hookEdit.name }}</h2>
+      <SidePanel v-if="isOwner && hookEdit" :label="`Webhook for ${hookEdit.name}`" @close="hookEdit = null">
+      <p v-if="error" class="notice notice--error" role="alert">{{ error }}</p>
+      <form class="stack" @submit.prevent="saveHook">
         <p class="small muted" style="margin: 0">
           Every time a duty this token filed changes status, including when it is deleted, a signed
           POST is sent here. Failed deliveries are retried for up to a day.
         </p>
         <div class="field">
           <label for="hook-url">URL</label>
-          <input id="hook-url" v-model="hookEdit.url" type="url" required maxlength="2000" placeholder="https://hooks.example.com/dutyboard" />
+          <input id="hook-url" v-model="hookEdit.url" type="url" autofocus required maxlength="2000" placeholder="https://hooks.example.com/dutyboard" />
           <p class="hint">
             Deliveries are signed with this deployment's tasks secret. Find it in the altengine
             console, on the <span class="mono">dutyboard-tasks</span> instance. Check that
@@ -1297,6 +1307,7 @@ function tabKey(event) {
           <button type="button" :disabled="busy" @click="hookEdit = null">Close</button>
         </div>
       </form>
+      </SidePanel>
     </div>
     <div
       v-show="tab === 'advanced'"
@@ -1349,5 +1360,6 @@ function tabKey(event) {
       <BoardAccess :project-id="projectId" :owner="isOwner" />
     </section>
     </div>
+    <DutyDrawer v-if="reading" :key="reading.dutyId" :project-id="reading.projectId" :duty-id="reading.dutyId" @close="closeDuty" />
   </div>
 </template>

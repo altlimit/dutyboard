@@ -1,4 +1,5 @@
 <script setup>
+import DutyLink from "./DutyLink.vue";
 // Filing a duty from the office, with everything the Duties page's form has — models, priority,
 // files and all — in a panel that slides in over the office, and a choice of board when the office
 // shows several. "+ Duty" on a room opens it on that room's board. The duty lands in that board's
@@ -48,7 +49,7 @@ function added(e) {
       <li v-for="line in failed.lines" :key="line">{{ line }}</li>
     </ul>
     Add them from
-    <router-link :to="{ name: 'duty', params: { projectId: failed.projectId, dutyId: failed.dutyId } }">the duty's page</router-link>.
+    <DutyLink :project-id="failed.projectId" :duty-id="failed.dutyId">the duty's page</DutyLink>.
   </div>
   <SidePanel v-if="isOpen" label="New duty" @close="isOpen = false">
     <DutyForm

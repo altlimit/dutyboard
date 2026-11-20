@@ -1,4 +1,5 @@
 <script setup>
+import DutyLink from "../components/DutyLink.vue";
 import DutyAgentPriority from "../components/DutyAgentPriority.vue";
 import BoardNav from "../components/BoardNav.vue";
 import { computed, onUnmounted, ref, watch } from "vue";
@@ -374,7 +375,7 @@ onUnmounted(() => {
 
       <div v-if="sourceNotes.length" class="notice">
         <p style="margin-top: 0">{{ duty.kind === "note_review" ? "Reviewing" : "Created from" }} {{ sourceNotes.length }} {{ sourceNotes.length === 1 ? 'note' : 'notes' }}:</p>
-        <ul><li v-for="source in sourceNotes" :key="source.id"><router-link v-if="source.exists" :to="{ name: 'duty', params: { projectId, dutyId: source.id } }">{{ source.title }}</router-link><span v-else>{{ source.title }}</span></li></ul>
+        <ul><li v-for="source in sourceNotes" :key="source.id"><DutyLink v-if="source.exists" :project-id="projectId" :duty-id="source.id">{{ source.title }}</DutyLink><span v-else>{{ source.title }}</span></li></ul>
         <p v-if="duty.approval_required && needsAnswer">This suggestion will not be worked until you approve it.</p>
       </div>
       <section v-if="duty.kind === 'note'" class="panel">
@@ -490,19 +491,19 @@ onUnmounted(() => {
 
       <p v-if="duty.from_duty_id" class="small muted rel">
         A note {{ duty.created_by_name || "an agent" }} left while working
-        <router-link :to="{ name: 'duty', params: { projectId, dutyId: duty.from_duty_id } }">another duty</router-link>. It runs nothing until duties are suggested from the notes and you approve one.
+        <DutyLink :project-id="projectId" :duty-id="duty.from_duty_id">another duty</DutyLink>. It runs nothing until duties are suggested from the notes and you approve one.
       </p>
       <p v-if="duty.split_from" class="small muted rel">
         A piece of
-        <router-link :to="{ name: 'duty', params: { projectId, dutyId: duty.split_from } }">a larger duty</router-link>; when every piece is finished, they are checked together.
+        <DutyLink :project-id="projectId" :duty-id="duty.split_from">a larger duty</DutyLink>; when every piece is finished, they are checked together.
       </p>
       <p v-if="duty.acceptance_of" class="small muted rel">
         Checks that the pieces of
-        <router-link :to="{ name: 'duty', params: { projectId, dutyId: duty.acceptance_of } }">a split duty</router-link> work together.
+        <DutyLink :project-id="projectId" :duty-id="duty.acceptance_of">a split duty</DutyLink> work together.
       </p>
       <p v-if="duty.acceptance_duty_id" class="small muted rel">
         Its pieces are
-        <router-link :to="{ name: 'duty', params: { projectId, dutyId: duty.acceptance_duty_id } }">checked together</router-link>.
+        <DutyLink :project-id="projectId" :duty-id="duty.acceptance_duty_id">checked together</DutyLink>.
       </p>
       <p v-if="usage && usage.ms >= 60000" class="small muted rel" :title="`${usage.sessions} session${usage.sessions === 1 ? '' : 's'}, as the machines that ran them reported`">
         Agents have spent {{ duration(usage.ms) }} on it, over {{ usage.sessions }} session{{ usage.sessions === 1 ? "" : "s" }}.
@@ -513,11 +514,11 @@ onUnmounted(() => {
       </p>
       <p v-if="duty.parent_id" class="small muted rel">
         Spawned from
-        <router-link :to="{ name: 'duty', params: { projectId, dutyId: duty.parent_id } }">the parent duty</router-link>.
+        <DutyLink :project-id="projectId" :duty-id="duty.parent_id">the parent duty</DutyLink>.
       </p>
       <p v-if="duty.blocked_by" class="small muted rel">
         Blocked behind
-        <router-link :to="{ name: 'duty', params: { projectId, dutyId: duty.blocked_by } }">a child duty</router-link>.
+        <DutyLink :project-id="projectId" :duty-id="duty.blocked_by">a child duty</DutyLink>.
         Finishing that one puts this back in the queue automatically.
       </p>
 

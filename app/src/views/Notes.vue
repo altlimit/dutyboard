@@ -1,6 +1,10 @@
 <script setup>
 import BoardNav from "../components/BoardNav.vue";
-import { computed, onUnmounted, ref, watch } from "vue";
+import SidePanel from "../components/SidePanel.vue";
+import DutyDrawer from "../components/DutyDrawer.vue";
+import DutyLink from "../components/DutyLink.vue";
+import { computed, nextTick, onUnmounted, ref, watch } from "vue";
+import { useDutyPanel } from "../lib/useDutyPanel.js";
 import { api, putSigned, subscribeLive } from "../lib/altengine.js";
 import { plain } from "../lib/markdown.js";
 import { pastedFiles } from "../lib/paste.js";
@@ -12,6 +16,14 @@ const loading = ref(true), error = ref(""), notice = ref(""), busy = ref(false),
 const showForm = ref(false), title = ref(""), brief = ref(""), files = ref([]), upload = ref("");
 const dragging = ref(null), moving = ref(new Set()), clearing = ref(new Set());
 let socket, timer, generation = 0;
+// A note, or the duty an agent left it from, read and edited in a panel over the board (useDutyPanel).
+const { reading, closeDuty } = useDutyPanel({ projectId: computed(() => props.projectId) });
+/** Adding a note opens a panel over the board, focused on its title; the stickies stay put. */
+async function openForm() {
+  showForm.value = true;
+  await nextTick();
+  document.getElementById("note-title")?.focus();
+}
 const eligible = computed(() => notes.value.filter(n => !n.has_suggestions));
 const position = (n, i) => n.note_position || { x: 24 + (i % 3) * 300, y: 24 + Math.floor(i / 3) * 300 };
 const canvasSize = computed(() => ({
@@ -132,24 +144,27 @@ function nudge(event, n, i) {
       <div><h1>Notes</h1><p class="muted">Ideas, references and files for {{ board?.name || 'this board' }}.</p></div>
       <div class="row">
         <button @click="load" :disabled="loading">Refresh</button>
-        <button class="primary" @click="showForm = !showForm" :aria-expanded="showForm" :disabled="saving">{{ showForm ? 'Cancel' : 'Add note' }}</button>
+        <button class="primary" @click="openForm" :disabled="saving">Add note</button>
         <button v-if="eligible.length" @click="suggest()" :disabled="busy || saving || !!review || !!clearing.size">{{ busy ? 'Requesting…' : 'Suggest duties' }}</button>
       </div>
     </div>
     <p v-if="notes.length" class="hint">Suggest duties reviews notes without a linked suggestion. Related notes can become one duty, which waits for your approval in Needs you. Clear a note’s link to include it again; existing duties and source history stay.</p>
     <p v-if="notes.length && !review" class="hint">{{ eligible.length ? `${eligible.length} ${eligible.length === 1 ? 'note ready' : 'notes ready'} for suggestions.` : 'All notes have linked suggestions. Add a note or clear a link to suggest again.' }}</p>
-    <p v-if="notes.length && review" class="notice"><router-link :to="{ name: 'duty', params: { projectId, dutyId: review.id } }">{{ review.title }}</router-link> · {{ statusLabel(review.status) }}. Notes added now will be included in the next review.</p>
+    <p v-if="notes.length && review" class="notice"><DutyLink :project-id="projectId" :duty-id="review.id">{{ review.title }}</DutyLink> · {{ statusLabel(review.status) }}. Notes added now will be included in the next review.</p>
     <p v-if="error" class="notice notice--error" role="alert">{{ error }}</p>
     <p v-if="notes.length && notice && review" class="notice" role="status">{{ notice }}</p>
-    <form v-if="showForm" class="panel stack note-form" @submit.prevent="add" @paste="paste">
-      <div class="field"><label for="note-title">Title</label><input id="note-title" v-model="title" required maxlength="200" :disabled="saving" /></div>
+    <SidePanel v-if="showForm" label="New note" @close="showForm = false">
+    <form class="stack" @submit.prevent="add" @paste="paste">
+      <div class="field"><label for="note-title">Title</label><input id="note-title" v-model="title" autofocus required maxlength="200" :disabled="saving" /></div>
       <div class="field"><label for="note-body">Note</label><textarea id="note-body" v-model="brief" maxlength="4000" :required="!files.length" :disabled="saving" placeholder="An idea, a question, or something the board should know…"></textarea></div>
       <div class="field"><label for="note-files">Files (optional)</label><input id="note-files" type="file" multiple @change="pick" :disabled="saving" /></div>
       <ul v-if="files.length"><li v-for="(file, i) in files" :key="i">{{ file.name }} <button type="button" class="link" @click="files.splice(i, 1)" :disabled="saving">Remove</button></li></ul>
       <p class="hint">You can also paste files here. Saving a note does not start work.</p>
       <p v-if="upload" role="status">Uploading {{ upload }}…</p>
-      <div><button class="primary" :disabled="saving || !title.trim() || (!brief.trim() && !files.length)">{{ saving ? 'Saving…' : 'Save note' }}</button></div>
+      <div class="row"><button class="primary" :disabled="saving || !title.trim() || (!brief.trim() && !files.length)">{{ saving ? 'Saving…' : 'Save note' }}</button><button type="button" :disabled="saving" @click="showForm = false">Cancel</button></div>
     </form>
+    </SidePanel>
+    <DutyDrawer v-if="reading" :key="reading.dutyId" :project-id="reading.projectId" :duty-id="reading.dutyId" @close="closeDuty" />
     <p v-if="loading" role="status">Loading notes…</p>
     <div v-else-if="!notes.length" class="panel empty">Your notes board is empty. Add an idea, reference or file to get started.</div>
     <template v-else>
@@ -160,11 +175,11 @@ function nudge(event, n, i) {
             <button class="sticky__handle" :aria-disabled="moving.has(n.id) || undefined" :aria-label="`Move ${n.title}. Use arrow keys to arrange.`" @pointerdown="startDrag($event, n, i)" @pointermove="drag($event, n)" @pointerup="drop($event, n)" @pointercancel="drop($event, n, true)" @keydown="nudge($event, n, i)"><span aria-hidden="true">⠿</span></button>
             <p v-if="n.from" class="sticky__from">
               Left by {{ n.from.name || "an agent" }} while working
-              <router-link :to="{ name: 'duty', params: { projectId, dutyId: n.from.duty_id } }">a duty</router-link>
+              <DutyLink :project-id="projectId" :duty-id="n.from.duty_id">a duty</DutyLink>
             </p>
-            <h2><router-link :to="{ name: 'duty', params: { projectId, dutyId: n.id } }">{{ n.title }}</router-link></h2>
+            <h2><DutyLink :project-id="projectId" :duty-id="n.id">{{ n.title }}</DutyLink></h2>
             <p class="sticky__body">{{ plain(n.brief) }}</p>
-            <div class="sticky__footer"><span v-if="n.attachment_count">{{ n.attachment_count }} {{ n.attachment_count === 1 ? 'file' : 'files' }} · </span><router-link :to="{ name: 'duty', params: { projectId, dutyId: n.id } }">Open note &amp; suggestions →</router-link>
+            <div class="sticky__footer"><span v-if="n.attachment_count">{{ n.attachment_count }} {{ n.attachment_count === 1 ? 'file' : 'files' }} · </span><DutyLink :project-id="projectId" :duty-id="n.id">Open note &amp; suggestions →</DutyLink>
               <div v-if="n.has_suggestions" class="sticky__links"><span>Linked</span><button class="sticky__clear" :aria-label="`Clear suggestion link for ${n.title}`" :disabled="!!review || clearing.has(n.id)" @click="clearLink(n)">Clear link</button></div>
             </div>
           </article>
@@ -175,7 +190,6 @@ function nudge(event, n, i) {
 </template>
 
 <style scoped>
-.note-form { max-width: 700px; }
 .notes-scroll { overflow: auto; max-height: 78vh; border: 1px solid var(--border); border-radius: 12px; background-color: var(--bg); background-image: radial-gradient(var(--border) 1px, transparent 1px); background-size: 20px 20px; }
 .notes-canvas { position: relative; }
 .sticky { position: absolute; width: 274px; height: 274px; padding: 14px 18px 18px; box-sizing: border-box; border-radius: 3px 3px 20px 3px; background: #f5e8a6; color: #30291d; box-shadow: 2px 5px 12px #0003; display: flex; flex-direction: column; overflow: hidden; }
