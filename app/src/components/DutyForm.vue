@@ -59,6 +59,18 @@ watch(profile, () => {
 });
 const adding = ref(false);
 const error = ref("");
+
+/** "More options": models, priority, how long it stays. Folded unless one of them was set. */
+const moreOpen = ref(false);
+const changed = computed(() => {
+  const out = [];
+  if (draft.value.agent_options) out.push("models chosen for this duty");
+  if (draft.value.priority !== "next") out.push((PRIORITIES.find((p) => p.key === draft.value.priority) || {}).label || draft.value.priority);
+  if (draft.value.expire_after_days !== defaultExpiry()) {
+    out.push(draft.value.expire_after_days ? `removed ${draft.value.expire_after_days === 1 ? "a day" : `${draft.value.expire_after_days} days`} after done` : "kept on the board");
+  }
+  return out;
+});
 const titleInput = ref(null);
 
 // Files chosen while writing the duty, uploaded once it exists. A screenshot of the bug is often the
@@ -190,20 +202,6 @@ const submitLabel = computed(() => {
       <textarea :id="`${idPrefix}-brief`" v-model="draft.brief" required maxlength="4000" placeholder="What should change, and how you will know it is done."></textarea>
       <p class="hint">An agent may pick this up with no other context. Write it for that reader.</p>
     </div>
-    <DutyAgentPriority v-model="draft.agent_options" :runner="runner" :machines="machines" :id-prefix="`${idPrefix}-models`" :disabled="adding" />
-    <div class="field">
-      <label :for="`${idPrefix}-priority`">Priority</label>
-      <select :id="`${idPrefix}-priority`" v-model="draft.priority">
-        <option v-for="p in PRIORITIES" :key="p.key" :value="p.key">{{ p.label }} — {{ p.hint }}</option>
-      </select>
-    </div>
-    <div class="field">
-      <label :for="`${idPrefix}-expire`">Once it is done</label>
-      <select :id="`${idPrefix}-expire`" v-model.number="draft.expire_after_days">
-        <option v-for="c in expiryChoices(draft.expire_after_days)" :key="c.days" :value="c.days">{{ c.label }}</option>
-      </select>
-      <p class="hint">For one-off work nobody needs the record of — it is removed with its thread and files.</p>
-    </div>
     <div class="field">
       <span :id="`${idPrefix}-files-label`" class="label">Files <span class="muted">(optional)</span></span>
       <div>
@@ -226,6 +224,26 @@ const submitLabel = computed(() => {
         </li>
       </ul>
     </div>
+    <!-- Rarely changed, so out of the way — but a choice that is not the default says so while folded. -->
+    <details class="more" :open="moreOpen" @toggle="moreOpen = $event.target.open">
+      <summary>More options<span v-if="changed.length" class="more__set"> · {{ changed.join(" · ") }}</span></summary>
+      <div class="stack more__body">
+        <DutyAgentPriority v-model="draft.agent_options" :runner="runner" :machines="machines" :id-prefix="`${idPrefix}-models`" :disabled="adding" />
+        <div class="field">
+          <label :for="`${idPrefix}-priority`">Priority</label>
+          <select :id="`${idPrefix}-priority`" v-model="draft.priority">
+            <option v-for="p in PRIORITIES" :key="p.key" :value="p.key">{{ p.label }} — {{ p.hint }}</option>
+          </select>
+        </div>
+        <div class="field">
+          <label :for="`${idPrefix}-expire`">Once it is done</label>
+          <select :id="`${idPrefix}-expire`" v-model.number="draft.expire_after_days">
+            <option v-for="c in expiryChoices(draft.expire_after_days)" :key="c.days" :value="c.days">{{ c.label }}</option>
+          </select>
+          <p class="hint">For one-off work nobody needs the record of — it is removed with its thread and files.</p>
+        </div>
+      </div>
+    </details>
     <p v-if="error" class="notice notice--error" role="alert" style="margin: 0">{{ error }}</p>
     <div class="row">
       <button class="primary" type="submit" :disabled="adding || !board || !draft.title.trim() || !draft.brief.trim()">{{ submitLabel }}</button>
@@ -233,3 +251,9 @@ const submitLabel = computed(() => {
     </div>
   </form>
 </template>
+
+<style scoped>
+.more > summary { cursor: pointer; font-weight: 550; padding: 0.2rem 0; }
+.more__set { font-weight: 450; color: var(--text-dim); }
+.more__body { margin-top: 0.6rem; padding-left: 0.9rem; border-left: 2px solid var(--border); }
+</style>
