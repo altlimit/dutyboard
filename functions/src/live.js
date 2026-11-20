@@ -87,6 +87,18 @@ export async function mintMachineLive(ctx, machineId, projectIds) {
 }
 
 /**
+ * A subscribe-only token for a person watching several boards at once — the boards page's office,
+ * which draws every board and moves with each of them. Board channels only, never a duty's: what is
+ * published there is an id and a status, and the page re-reads through its own access rules. The
+ * caller has already checked the person may see every one of them.
+ */
+export async function mintBoardsLive(ctx, projectIds, presenceId) {
+  const channels = projectIds.map(boardChannel);
+  const minted = await ctx.env.channel.token({ instance: ctx.cfg.channelInstance }, { channels, ttlSeconds: TOKEN_TTL_SECONDS, presenceId });
+  return { ...minted, channels };
+}
+
+/**
  * A publisher bound to one request. Failures are swallowed: live updates are an
  * enhancement, and a channel instance that is missing or briefly unreachable must never
  * turn a successful state transition into an error the agent has to retry.

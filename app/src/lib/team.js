@@ -130,39 +130,87 @@ export function duration(ms) {
 
 // --- the office ----------------------------------------------------------------------------
 
-/** How many duties a desk or a room names before it says "and N more". */
-export const DESK_SHOWN = 3;
+/** Duties one cubicle's tooltip names from its tray before it says "and N more". */
+export const TRAY_SHOWN = 3;
+/** People drawn at one cubicle: a role can work several duties at once. */
+export const SEATS = 2;
+
+const ROOM_COLORS = ["#4f7fd9", "#3fa37a", "#d0783a", "#9467cf", "#cf4f7f", "#3a9fb0", "#b39337", "#6a8f3a"];
+
+/** A board's colour in the office — its room's trim, and the tag its people wear in the breakroom. */
+export function boardColor(projectId) {
+  let h = 2166136261;
+  for (const ch of String(projectId || "")) h = Math.imul(h ^ ch.charCodeAt(0), 16777619) >>> 0;
+  return ROOM_COLORS[h % ROOM_COLORS.length];
+}
+
+/** The one cubicle of a board with no team: whoever claims a duty works it start to finish. */
+const SOLO = { id: "", name: "Agent", summary: "Whoever claims a duty works it start to finish.", level: "" };
 
 /**
- * The office, from the board's rows: a desk per role with what it is working on and what is waiting
- * for it, and the rooms for work that is with a person, stuck behind other work, or finished.
+ * The office building, from rows the pages already have: a room per board with a cubicle per role,
+ * and one breakroom every board shares.
  *
- * On a board with no team there is one desk, for whichever agents are working.
+ * `boards` is `[{ project_id, name, roster }]`, where `roster` is `{ intake, roles }` or null for a
+ * board with no team. `duties` are the unfinished duties of all of them. A role working a duty sits
+ * at its cubicle; one with nothing in hand is in the breakroom, with whatever is waiting for it
+ * stacked in its tray. Duties that want a person are on the room's meeting table.
  */
-export function officeFloor({ roles, pointer, duties, done = [], activity = {} }) {
-  const teamed = !!(pointer && pointer.intake && roles && roles.length);
-  const desks = (teamed ? roles : [{ id: "", name: "Agents", summary: "Whoever claims a duty works it start to finish.", level: "" }]).map((r) => ({
-    role: r,
-    working: [],
-    waiting: [],
-  }));
-  const byId = new Map(desks.map((d) => [d.role.id, d]));
-  const deskFor = (duty) => (teamed ? byId.get(dutyRoleId(duty, pointer)) || desks.find((d) => d.role.intake) || desks[0] : desks[0]);
-  const needsYou = [];
-  const blocked = [];
-  for (const duty of duties || []) {
-    if (duty.kind === "note" || duty.status === "note") continue;
-    const housekeeping = (duty.kind || "work") !== "work";
-    const desk = housekeeping && teamed ? null : deskFor(duty);
-    if (duty.status === "needs_decision") needsYou.push(duty);
-    else if (duty.status === "blocked") blocked.push(duty);
-    else if (duty.status === "active") (desk || desks[0]).working.push({ duty, activity: activity[duty.key] || null });
-    else if (duty.status === "queued") (desk || desks[0]).waiting.push(duty);
+export function buildingFloor({ boards, duties, activity = {} }) {
+  const byBoard = new Map();
+  for (const d of duties || []) {
+    if (d.kind === "note" || d.status === "note") continue;
+    if (!byBoard.has(d.project_id)) byBoard.set(d.project_id, []);
+    byBoard.get(d.project_id).push(d);
   }
   const queueOrder = (a, b) => (a.prio_rank ?? 1) - (b.prio_rank ?? 1) || (a.created_at || 0) - (b.created_at || 0);
-  for (const d of desks) d.waiting.sort(queueOrder);
-  needsYou.sort((a, b) => (a.updated_at || 0) - (b.updated_at || 0));
-  return { teamed, desks, needsYou, blocked, done: [...done].sort((a, b) => (b.finished_at || b.updated_at || 0) - (a.finished_at || a.updated_at || 0)) };
+
+  const rooms = (boards || []).map((b) => {
+    const pointer = b.roster && b.roster.intake ? b.roster : null;
+    const teamed = !!(pointer && pointer.roles && pointer.roles.length);
+    const roles = teamed ? pointer.roles : [SOLO];
+    const desks = roles.map((role) => ({ key: `${b.project_id}:${role.id}`, role, working: [], tray: [] }));
+    const deskOf = new Map(desks.map((d) => [d.role.id, d]));
+    const front = (teamed && deskOf.get(pointer.intake)) || desks[0];
+    const room = { board: b, color: boardColor(b.project_id), teamed, desks, needsYou: [], blocked: 0 };
+    for (const duty of byBoard.get(b.project_id) || []) {
+      // The board's own housekeeping (rules, setup, drafting the team) is done at the front desk.
+      const desk = teamed && (duty.kind || "work") === "work" ? deskOf.get(dutyRoleId(duty, pointer)) || front : front;
+      if (duty.status === "active") desk.working.push({ duty, activity: activity[duty.key] || null });
+      else if (duty.status === "queued") desk.tray.push(duty);
+      else if (duty.status === "needs_decision") room.needsYou.push(duty);
+      else if (duty.status === "blocked") room.blocked++;
+    }
+    for (const d of desks) d.tray.sort(queueOrder);
+    room.needsYou.sort((a, c) => (a.updated_at || 0) - (c.updated_at || 0));
+    return room;
+  });
+
+  const breakroom = rooms.flatMap((room) =>
+    room.desks.filter((d) => !d.working.length).map((d) => ({ key: d.key, role: d.role, board: room.board, color: room.color, waiting: d.tray.length })),
+  );
+  return { rooms, breakroom, working: rooms.reduce((n, r) => n + r.desks.filter((d) => d.working.length).length, 0) };
+}
+
+/**
+ * What changed between two floors that is worth showing as movement: a role that got up from the
+ * breakroom to its desk or went back, and a duty that moved from one role's desk to another's.
+ */
+export function floorMoves(before, after) {
+  if (!before || !after) return { walks: [], handoffs: [] };
+  const working = (floor) => new Set(floor.rooms.flatMap((r) => r.desks.filter((d) => d.working.length).map((d) => d.key)));
+  const deskOfDuty = (floor) => {
+    const out = new Map();
+    for (const r of floor.rooms) for (const d of r.desks) for (const x of [...d.working.map((w) => w.duty), ...d.tray]) out.set(x.key, d.key);
+    return out;
+  };
+  const [was, now] = [working(before), working(after)];
+  const keys = new Set(after.rooms.flatMap((r) => r.desks.map((d) => d.key)));
+  const walks = [...keys].filter((k) => was.has(k) !== now.has(k)).map((key) => ({ key, to: now.has(key) ? "desk" : "break" }));
+  const [from, to] = [deskOfDuty(before), deskOfDuty(after)];
+  const handoffs = [];
+  for (const [duty, desk] of to) if (from.has(duty) && from.get(duty) !== desk) handoffs.push({ duty, from: from.get(duty), to: desk });
+  return { walks, handoffs };
 }
 
 /**

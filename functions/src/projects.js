@@ -7,7 +7,7 @@ import { badRequest, conflict, forbidden, notFound, str, intIn } from "./http.js
 import { putOp } from "./store.js";
 import { slugify } from "./ids.js";
 import { isMember, requireHuman, resolveProject } from "./identity.js";
-import { liveConfigured, mintLive } from "./live.js";
+import { liveConfigured, mintLive, mintBoardsLive } from "./live.js";
 import { sweepBoardAccess } from "./board-access.js";
 import { sweepAttachments } from "./attachments.js";
 import { searchConfigured, unindexDuties } from "./searching.js";
@@ -15,7 +15,7 @@ import { sharedBoards, sweepMembers, syncAccess } from "./members.js";
 import { isFolderBoard, mergeProfile, mergeRunner } from "./profile.js";
 import { rulesDuty, runnersOf, runnersOfBoards, sweepBoardMachines } from "./machines.js";
 import { upcomingSchedules } from "./schedules.js";
-import { presetOps, startingPreset } from "./roster.js";
+import { presetOps, startingPreset, hasRoster, intakeOf, roleCard } from "./roster.js";
 
 const SWEEP_PAGE = 200;
 
@@ -147,6 +147,43 @@ export async function listRunners(ctx, body) {
 export async function listUpcoming(ctx, body) {
   const projects = await boardsAsked(ctx, body);
   return upcomingSchedules(ctx, projects.map((p) => p.key));
+}
+
+/**
+ * `POST /projects/rosters` — `{ project_ids }`. Each board's team as cards, keyed by board: who reads
+ * new duties first and every role's name, level and what it does — no charters. Null for a board
+ * with no team. What the boards page's office draws a cubicle per role from, in one request rather
+ * than one per board, with the same all-or-nothing check as `/projects/runners`.
+ */
+export async function listRosters(ctx, body) {
+  const projects = await boardsAsked(ctx, body);
+  const teamed = projects.filter(hasRoster).map((p) => p.key);
+  const rows = teamed.length ? await ctx.store.getMany("rosters", teamed) : new Map();
+  return {
+    rosters: Object.fromEntries(
+      projects.map((p) => {
+        const r = rows.get(p.key);
+        return [p.key, r && Array.isArray(r.roles) && r.roles.length ? { version: r.version || 0, intake: intakeOf(r).id, roles: r.roles.map(roleCard) } : null];
+      }),
+    ),
+  };
+}
+
+/** Boards one live token watches. A person with more than this sees the busiest of them move. */
+const MAX_LIVE_BOARDS = 40;
+
+/**
+ * `POST /live/boards` — `{ project_ids }`. One subscribe-only token for the board channels of several
+ * boards, so a page that shows them all opens one socket rather than one per board.
+ */
+export async function liveBoards(ctx, body) {
+  if (!liveConfigured(ctx)) throw badRequest("live updates are not configured for this deployment");
+  if (Array.isArray(body.project_ids) && body.project_ids.length > MAX_LIVE_BOARDS) {
+    throw badRequest(`at most ${MAX_LIVE_BOARDS} boards on one live token`);
+  }
+  const projects = await boardsAsked(ctx, body);
+  if (!projects.length) throw badRequest("name at least one board");
+  return mintBoardsLive(ctx, projects.map((p) => p.key), ctx.caller.uid);
 }
 
 /** The boards a `{ project_ids }` request names, each one the caller owns or is on — or a refusal. */

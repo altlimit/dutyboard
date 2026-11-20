@@ -24,7 +24,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { sealSecrets } from "../app/src/lib/seal.js";
-import { roleRecord, roleRecordRequest, topRoles, officeFloor, officeFeed } from "../app/src/lib/team.js";
+import { roleRecord, roleRecordRequest, topRoles, buildingFloor, officeFeed } from "../app/src/lib/team.js";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const BASE = (process.env.ALTENGINE_URL || "http://127.0.0.1:9191").replace(/\/+$/, "");
@@ -301,10 +301,11 @@ async function main() {
     const liveRows = ((await ds("duties", "query", { where: [{ field: "project_id", op: "=", value: boardId }, { field: "status", op: "in", value: ["queued", "active", "needs_decision", "blocked"] }], limit: 50 }, human)).json.documents || []).map((d) => ({ ...d.data, key: String(d.key) }));
     const doneRows = ((await ds("duties", "query", { where: [{ field: "project_id", op: "=", value: boardId }, { field: "status", op: "=", value: "done" }], limit: 10 }, human)).json.documents || []).map((d) => ({ ...d.data, key: String(d.key) }));
     const board = (await call("/board/open", { project_id: boardId }, human)).project;
-    const floor = officeFloor({ roles: team.roles, pointer: board.roster, duties: liveRows, done: doneRows });
+    const rosters = (await call("/projects/rosters", { project_ids: [boardId] }, human)).rosters;
+    const floor = buildingFloor({ boards: [{ project_id: boardId, name: board.name, roster: rosters[boardId] }], duties: liveRows });
     // It is at one desk or another for the few seconds three roles take: being worked, or in a tray.
-    const atDesk = floor.desks.find((d) => d.working.some((w) => w.duty.key === waiting.duty_id) || d.waiting.some((w) => w.key === waiting.duty_id));
-    check("the office puts a duty in flight at the desk of the role that has it", !!busy && floor.teamed && floor.desks.length === 5 && !!atDesk, floor.desks.map((d) => [d.role.id, d.working.length, d.waiting.length]));
+    const atDesk = floor.rooms[0].desks.find((d) => d.working.some((w) => w.duty.key === waiting.duty_id) || d.tray.some((w) => w.key === waiting.duty_id));
+    check("the office puts a duty in flight at the cubicle of the role that has it", !!busy && floor.rooms[0].teamed && floor.rooms[0].desks.length === 5 && !!atDesk, floor.rooms[0].desks.map((d) => [d.role.id, d.working.length, d.tray.length]));
     check("and names the latest handoffs", officeFeed(doneRows, {}).some((e) => e.duty_id === footer.duty_id), officeFeed(doneRows, {}));
     await until("the duty in flight finished", async () => (await get(waiting.duty_id)).status === "done", 60_000);
 

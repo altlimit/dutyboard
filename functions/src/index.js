@@ -26,7 +26,7 @@ import { identify } from "./identity.js";
 import { makePublisher, liveToken } from "./live.js";
 import { noteTokenUse, createToken, listTokens, revokeToken, updateToken } from "./tokens.js";
 import { setWebhook, testWebhook, withWebhooks } from "./webhooks.js";
-import { openBoard, createProject, listProjects, listRunners, listUpcoming, renameProject, deleteProject } from "./projects.js";
+import { openBoard, createProject, listProjects, listRunners, listUpcoming, listRosters, liveBoards, renameProject, deleteProject } from "./projects.js";
 import { attachToDuty, listAttachments, deleteAttachment } from "./attachments.js";
 import {
   listDuties, listNotes, moveNote, createNote, processNote, clearNoteSuggestions, suggestDuty,
@@ -183,6 +183,7 @@ const ROUTES = {
   "/projects/list": listProjects,
   "/projects/runners": listRunners,
   "/projects/upcoming": listUpcoming,
+  "/projects/rosters": listRosters,
   "/projects/rename": renameProject,
   "/projects/delete": deleteProject,
   "/projects/profile": updateProfile,
@@ -194,6 +195,7 @@ const ROUTES = {
   "/tokens/webhook/test": testWebhook,
   "/live/token": liveToken,
   "/live/me": liveMe,
+  "/live/boards": liveBoards,
   "/push/key": pushKey,
   "/push/subscribe": pushSubscribe,
   "/push/unsubscribe": pushUnsubscribe,

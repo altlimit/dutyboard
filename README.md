@@ -817,12 +817,17 @@ rules are what you accept — but its owner can read, edit or clear it under **S
 held to 6,000 characters and replaced whole rather than appended to, so it stays curated; a write
 based on a stale copy is refused with the current text to merge.
 
-**Watching it.** A board's **Office** tab draws the same rows as its Duties tab as an office: a desk
-per role, with who is working on what and what is waiting in each tray; a meeting room for what
-needs you; and each handoff crossing the floor from one desk to the next as it happens. The
-dashboard's **Top roles** ranks roles across your boards by how their work held up — the share of a
-builder's duties that passed review first time and were not reopened, the share of a reviewer's that
-stayed done — never by how much of it there was.
+**Watching it.** **Boards → Office** draws all your boards as one office building: a room per board
+with a cubicle per role, and a breakroom they share. A role working a duty sits at its cubicle
+typing, with whatever waits for it stacked in its tray; a role with nothing in hand is in the
+breakroom, wearing its board's colour. When a role is handed work it walks to its desk, and the duty
+crosses the room from one cubicle to the next as it is handed on — live, over one channel for every
+board on the page. Point at or focus a cubicle for what it is working on; select it to open the duty.
+A board's own **Office** tab is the same building with just its room, beside who is waiting on you,
+the latest handoffs and what has just been finished. The **Dashboard**'s **Top roles** ranks roles
+across your boards by how their work held up — the share of a builder's duties that passed review
+first time and were not reopened, the share of a reviewer's that stayed done — never by how much of
+it there was.
 
 A team needs `dutyboard` 2.36.0 or later on the machines working the board; an older one is told to
 update rather than given the board. Teams are built for boards worked by machines: an agent
@@ -1136,6 +1141,8 @@ only when you first try it hosted.
 | `/board/roster` · `/board/roster/*` | both · owner · agent | The team in force (people also see a draft and the shipped teams). `set` puts a preset or an edited team in force, changes the handoff settings, or turns it off; `accept` puts a draft in force; `draft` files a roster duty; `submit` is that duty handing its team in. |
 | `/board/memory` · `/board/memory/write` | both | The team's memory, and replacing it: an agent holding an active duty, with the version it read, or the board's owner. |
 | `/projects/*` | human | `create` (optionally with a `profile` and `runner`, and `roster: "auto"` or a team's id to start with one), `list` (owned and shared), `rename`, `profile` and `delete` (owner only). |
+| `/projects/runners` · `/projects/upcoming` · `/projects/rosters` | human | For `{ project_ids }`: each board's machines, what its schedules file next, or its team as cards (no charters). |
+| `/live/boards` | human | One subscribe-only token for the board channels of up to 40 boards, for a page that shows them all. |
 | `/tokens/*` | owner | `mint` (with a `scope`: `agent`, or `submit` for an integration, and an optional runner to pin it to), `list`, `update` (its name and runner), `revoke`. |
 | `/tokens/webhook` · `/tokens/webhook/test` | owner | Set or remove a token's webhook; queue a `ping` to it. |
 | `/live/token` · `/live/me` | human | A subscribe-only channel token for one board; or for the person's own channel, where "needs you" events arrive. |

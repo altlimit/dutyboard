@@ -3,7 +3,7 @@
 // how a role's record is judged and ranked, and what the office draws from a board's rows.
 import assert from "node:assert/strict";
 import {
-  LEVELS, MIN_JUDGED, characterLook, dutyRoleId, duration, levelLabel, officeFeed, officeFloor, percent, roleNameFromId, roleNames, roleRecord,
+  LEVELS, MIN_JUDGED, boardColor, buildingFloor, characterLook, dutyRoleId, duration, floorMoves, levelLabel, officeFeed, percent, roleNameFromId, roleNames, roleRecord,
   roleRecordRequest, roleTraits, topRoles,
 } from "../app/src/lib/team.js";
 import { LEVELS as SERVER_LEVELS } from "../functions/src/roster.js";
@@ -89,26 +89,57 @@ const done = [
   { key: "f1", title: "Earlier", status: "done", finished_at: 100, handoff: { from: "engineer", from_name: "Engineer", to: "qa", at: 90 } },
   { key: "f2", title: "Later", status: "done", finished_at: 200, handoff: { from: "engineer", from_name: "Engineer", to: "qa", at: 190 } },
 ];
-const floor = officeFloor({ roles: software, pointer, duties, done, activity: { d3: { machine: "laptop", state: "working", detail: "running tests" } } });
-const desk = (id) => floor.desks.find((d) => d.role.id === id);
-assert.equal(floor.teamed, true);
-assert.deepEqual(floor.desks.map((d) => d.role.id), software.map((r) => r.id), "a desk per role, in the team's order");
-assert.deepEqual(desk("duty-officer").waiting.map((d) => d.key), ["d2", "d1", "d8"], "the tray in the order it will be taken; a duty with no role, or one the team no longer has, is here");
+const shop = { project_id: "shop", name: "Shop", roster: { intake: "duty-officer", roles: software } };
+const blog = { project_id: "blog", name: "Blog", roster: null };
+const inShop = duties.map((d) => ({ ...d, project_id: "shop" }));
+const inBlog = [
+  { key: "b1", project_id: "blog", title: "Post", kind: "work", status: "active" },
+  { key: "b2", project_id: "blog", title: "Draft", kind: "work", status: "queued" },
+];
+const building = buildingFloor({ boards: [shop, blog], duties: [...inShop, ...inBlog], activity: { d3: { machine: "laptop", state: "working", detail: "running tests" } } });
+const [shopRoom, blogRoom] = building.rooms;
+const desk = (id) => shopRoom.desks.find((d) => d.role.id === id);
+assert.equal(shopRoom.teamed, true);
+assert.deepEqual(shopRoom.desks.map((d) => d.role.id), software.map((r) => r.id), "a cubicle per role, in the team's order");
+assert.equal(desk("engineer").key, "shop:engineer");
+assert.deepEqual(desk("duty-officer").tray.map((d) => d.key), ["d2", "d1", "d8"], "the tray in the order it will be taken; a duty with no role, or one the team no longer has, goes to the front desk");
 assert.deepEqual(desk("engineer").working.map((w) => [w.duty.key, w.activity.detail]), [["d3", "running tests"]]);
-assert.deepEqual(desk("engineer").waiting.map((d) => d.key), ["d4"]);
-assert.deepEqual(floor.needsYou.map((d) => d.key), ["d6", "d5"], "longest waiting first");
-assert.deepEqual(floor.blocked.map((d) => d.key), ["d7"]);
-assert.deepEqual(floor.done.map((d) => d.key), ["f2", "f1"]);
-assert.ok(!floor.desks.some((d) => [...d.waiting, ...d.working.map((w) => w.duty)].some((x) => x.key === "n1")), "notes are not work");
-assert.ok(desk("duty-officer").working.some((w) => w.duty.key === "d9"), "the board's own housekeeping is drawn at the front desk rather than hidden");
+assert.deepEqual(desk("engineer").tray.map((d) => d.key), ["d4"]);
+assert.ok(desk("duty-officer").working.some((w) => w.duty.key === "d9"), "the board's own housekeeping is done at the front desk");
+assert.deepEqual(shopRoom.needsYou.map((d) => d.key), ["d6", "d5"], "longest waiting first");
+assert.equal(shopRoom.blocked, 1);
+assert.ok(!shopRoom.desks.some((d) => [...d.tray, ...d.working.map((w) => w.duty)].some((x) => x.key === "n1")), "notes are not work");
+assert.equal(blogRoom.teamed, false, "a board with no team");
+assert.deepEqual(blogRoom.desks.map((d) => [d.key, d.role.name, d.working.length, d.tray.length]), [["blog:", "Agent", 1, 1]], "one agent's cubicle");
+assert.equal(shopRoom.color, boardColor("shop"));
+assert.match(boardColor("anything"), /^#[0-9a-f]{6}$/);
+assert.deepEqual(
+  building.breakroom.map((p) => p.key),
+  ["shop:architect", "shop:senior-engineer", "shop:qa"],
+  "whoever has nothing in hand is in the one breakroom, whatever board they are from",
+);
+assert.equal(building.breakroom.find((p) => p.key === "shop:qa").board.name, "Shop");
+assert.equal(building.working, 3);
+const offTeam = buildingFloor({ boards: [{ ...shop, roster: { intake: null, roles: software } }], duties: [] });
+assert.equal(offTeam.rooms[0].teamed, false, "a team that was turned off draws as none");
+assert.deepEqual(buildingFloor({ boards: [], duties: inShop }), { rooms: [], breakroom: [], working: 0 });
 
-const alone = officeFloor({ roles: [], pointer: null, duties, done });
-assert.equal(alone.teamed, false);
-assert.equal(alone.desks.length, 1);
-assert.equal(alone.desks[0].role.name, "Agents");
-assert.equal(alone.desks[0].working.length, 2);
-assert.equal(alone.desks[0].waiting.length, 4);
-assert.equal(officeFloor({ roles: software, pointer: { version: 2, intake: null }, duties: [] }).teamed, false, "a team that was turned off draws as none");
+// What moves between two readings of the floor.
+const later = buildingFloor({
+  boards: [shop, blog],
+  duties: [
+    ...inShop.filter((d) => d.key !== "d3").map((d) => (d.key === "d4" ? { ...d, status: "active" } : d)),
+    { ...inShop.find((d) => d.key === "d3"), status: "queued", role: "qa" },
+    ...inBlog,
+  ],
+});
+const moves = floorMoves(building, later);
+assert.deepEqual(moves.handoffs, [{ duty: "d3", from: "shop:engineer", to: "shop:qa" }], "the Engineer's duty crossed to QA");
+assert.deepEqual(moves.walks, [], "the Engineer is still at its desk, now on the sent-back duty; nobody got up");
+const quiet = buildingFloor({ boards: [shop, blog], duties: inShop.filter((d) => d.key !== "d3").concat(inBlog) });
+assert.deepEqual(floorMoves(building, quiet).walks, [{ key: "shop:engineer", to: "break" }], "with nothing in hand it goes on a break");
+assert.deepEqual(floorMoves(quiet, building).walks, [{ key: "shop:engineer", to: "desk" }], "and back to its desk when work arrives");
+assert.deepEqual(floorMoves(null, building), { walks: [], handoffs: [] }, "nothing moves on the first reading");
 
 const feed = officeFeed([...duties, ...done], roleNames(software), 2);
 assert.deepEqual(feed.map((e) => e.duty_id), ["d4", "f2"], "newest first, and only as many as asked for");

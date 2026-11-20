@@ -41,7 +41,7 @@ async function leave() {
 <template>
   <header class="topbar">
     <div class="topbar__inner">
-      <router-link class="brand" :to="{ name: 'boards' }">
+      <router-link class="brand" :to="{ name: 'dashboard' }">
         <svg class="brand__mark" viewBox="0 0 64 64" aria-hidden="true" focusable="false">
           <rect width="64" height="64" rx="14" fill="var(--accent)"/>
           <g fill="var(--accent-text)">
@@ -64,6 +64,7 @@ async function leave() {
       </router-link>
 
       <nav v-if="signedIn" class="topbar__nav" aria-label="Main">
+        <router-link class="navlink" :to="{ name: 'dashboard' }">Dashboard</router-link>
         <router-link class="navlink" :class="{ 'navlink--active': projectId }" :to="{ name: 'boards' }">Boards</router-link>
         <router-link class="navlink" :to="{ name: 'runners' }">Machines</router-link>
         <router-link class="navlink" :to="{ name: 'notifications' }">Notifications</router-link>

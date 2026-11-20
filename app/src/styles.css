@@ -37,6 +37,18 @@
      to know it: guess low and the head hides under the bar, guess high and cards scroll
      through the gap. The bar is held to this with a min-height so the number stays true. */
   --topbar-h: 3.6rem;
+
+  /* The office: walls, floors and furniture that follow the theme. */
+  --office-wall: #8d96a3;
+  --office-floor: #ecdcbc;
+  --office-floor-line: #dfcca7;
+  --office-tile: #eef1f4;
+  --office-tile-2: #e1e6ec;
+  --office-partition: #b9c1cc;
+  --office-desk: #c9a27a;
+  --office-desk-edge: #9c7a55;
+  --office-screen: #2b3340;
+  --office-chair: #5b6472;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -61,6 +73,16 @@
     --ok-soft: #14291f;
     --focus: #7ea6ff;
     --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 4px 14px rgba(0, 0, 0, 0.3);
+    --office-wall: #434b57;
+    --office-floor: #2e2a24;
+    --office-floor-line: #28241f;
+    --office-tile: #20252c;
+    --office-tile-2: #1b2026;
+    --office-partition: #4a5361;
+    --office-desk: #6e5640;
+    --office-desk-edge: #4d3c2c;
+    --office-screen: #0d1116;
+    --office-chair: #2a3039;
   }
 }
 
@@ -85,6 +107,17 @@
   --ok-soft: #14291f;
   --focus: #7ea6ff;
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 4px 14px rgba(0, 0, 0, 0.3);
+
+  --office-wall: #434b57;
+  --office-floor: #2e2a24;
+  --office-floor-line: #28241f;
+  --office-tile: #20252c;
+  --office-tile-2: #1b2026;
+  --office-partition: #4a5361;
+  --office-desk: #6e5640;
+  --office-desk-edge: #4d3c2c;
+  --office-screen: #0d1116;
+  --office-chair: #2a3039;
 }
 
 * { box-sizing: border-box; }
@@ -903,3 +936,9 @@ details > summary { cursor: pointer; font-weight: 550; }
 
 /* One MCP server in the board form: its fields grouped, so a list of them reads as separate servers. */
 .mcp-server { border: 1px solid var(--border); border-radius: 10px; padding: 0.9rem; }
+
+/* A choice of two or three views, side by side: List or Office. */
+.seg { display: inline-flex; border: 1px solid var(--border-strong); border-radius: 8px; overflow: hidden; }
+.seg__btn { border: 0; border-radius: 0; background: var(--surface); color: var(--text-dim); padding: 0.45rem 0.8rem; }
+.seg__btn + .seg__btn { border-left: 1px solid var(--border-strong); }
+.seg__btn[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); font-weight: 600; }

@@ -87,7 +87,7 @@ onMounted(async () => {
   }
 });
 
-const go = () => router.push(route.query.next || { name: "boards" });
+const go = () => router.push(route.query.next || { name: "dashboard" });
 
 async function run(fn) {
   busy.value = true;

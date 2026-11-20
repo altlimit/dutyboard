@@ -7,7 +7,7 @@ import { enqueueDuty, claimDuty, getDuty, completeDuty, failDuty, handoffDuty, r
 import { getRoster, setRoster, acceptRoster, submitRoster, draftRoster, rolesFrom, levelOf, optionsForLevel, LEVELS, MAX_CHARTER_CHARS, ROSTER_MIN_RELEASE } from "../functions/src/roster.js";
 import { PRESETS, presetFor } from "../functions/src/charters.js";
 import { getMemory, writeMemory, MAX_MEMORY_CHARS } from "../functions/src/memory.js";
-import { createProject, deleteProject, openBoard } from "../functions/src/projects.js";
+import { createProject, deleteProject, openBoard, listRosters, liveBoards } from "../functions/src/projects.js";
 import { pollMachine, updateMachine, listMachines, reportReadiness, requestSetup, machineMe, reportRequest } from "../functions/src/machines.js";
 import { handleMcp } from "../functions/src/mcp.js";
 import { ROUTE_PATHS } from "../functions/src/index.js";
@@ -448,8 +448,26 @@ for (const [who, caller] of outsiders.slice(0, 2)) {
 }
 assert.equal(table("projects").get("team").roster.intake, "duty-officer", "and none of them changed anything");
 
+// --- every board's team at once, for the boards page's office ------------------------------------
+const rosters = (await listRosters(ctx(), { project_ids: ["team", "plain"] })).rosters;
+assert.equal(rosters.plain, null, "a board with no team");
+assert.equal(rosters.team.intake, "duty-officer");
+assert.equal(rosters.team.roles.length, 5);
+assert.equal(rosters.team.roles[0].charter, undefined, "cards, not charters");
+await rejects(() => listRosters(ctx({ kind: "human", uid: "stranger" }), { project_ids: ["team"] }), /do not own/);
+await rejects(() => listRosters(ctx(), { project_ids: ["team", "nope"] }), /not found/);
+assert.deepEqual((await listRosters(ctx(member), { project_ids: ["team"] })).rosters.team.intake, "duty-officer", "a member sees it too");
+const minted = [];
+const liveCtx = (caller) => ({ ...ctx(caller), cfg: { channelInstance: "live" }, env: { channel: { token: async (_i, opts) => (minted.push(opts), { token: "t" }) } } });
+assert.deepEqual((await liveBoards(liveCtx(owner), { project_ids: ["team", "plain"] })).channels, ["board.team", "board.plain"]);
+assert.equal(minted[0].presenceId, "owner");
+await rejects(() => liveBoards(liveCtx({ kind: "human", uid: "stranger" }), { project_ids: ["team"] }), /do not own/);
+await rejects(() => liveBoards(liveCtx(owner), { project_ids: [] }), /at least one/);
+await rejects(() => liveBoards(liveCtx(owner), { project_ids: Array.from({ length: 41 }, (_, i) => `b${i}`) }), /at most 40/);
+await rejects(() => liveBoards(ctx(owner), { project_ids: ["team"] }), /not configured/);
+
 // --- every new route is in the table the cross-tenant suite is derived from ----------------------
-for (const path of ["/duty/handoff", "/board/roster", "/board/roster/set", "/board/roster/accept", "/board/roster/submit", "/board/roster/draft", "/board/memory", "/board/memory/write"]) {
+for (const path of ["/projects/rosters", "/live/boards", "/duty/handoff", "/board/roster", "/board/roster/set", "/board/roster/accept", "/board/roster/submit", "/board/roster/draft", "/board/memory", "/board/memory/write"]) {
   assert.ok(ROUTE_PATHS.includes(path), path);
 }
 

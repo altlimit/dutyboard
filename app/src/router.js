@@ -2,7 +2,8 @@ import { createRouter, createWebHashHistory } from "vue-router";
 import { ensureAccess, isSignedIn, onSessionChange } from "./lib/altengine.js";
 
 const routes = [
-  { path: "/", name: "boards", component: () => import("./views/Boards.vue"), meta: { title: "Dashboard" } },
+  { path: "/", name: "dashboard", component: () => import("./views/Dashboard.vue"), meta: { title: "Dashboard" } },
+  { path: "/boards", name: "boards", component: () => import("./views/Boards.vue"), meta: { title: "Boards" } },
   { path: "/signin", name: "signin", component: () => import("./views/SignIn.vue"), meta: { title: "Sign in", public: true } },
   // Public, and it has to be: it configures the auth instance that signing in would use.
   { path: "/connect", name: "connect", component: () => import("./views/Connect.vue"), meta: { title: "Connect your altengine", public: true } },
@@ -26,7 +27,7 @@ export const router = createRouter({
 
 router.beforeEach(async (to) => {
   if (!to.meta.public && !isSignedIn()) return { name: "signin", query: { next: to.fullPath } };
-  if (to.name === "signin" && isSignedIn()) return { name: "boards" };
+  if (to.name === "signin" && isSignedIn()) return { name: "dashboard" };
   // Before any page that reads the datastore: the token must carry the claim the rules check.
   // Memoised, so this is one request a page load however many navigations follow.
   if (!to.meta.public) await ensureAccess();

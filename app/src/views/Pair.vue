@@ -105,7 +105,7 @@ onMounted(() => {
       <div class="row">
         <button class="primary" type="button" :disabled="busy" @click="decide(true)">Approve</button>
         <button type="button" class="danger" :disabled="busy" @click="decide(false)">Refuse</button>
-        <button type="button" class="link" @click="router.push({ name: 'boards' })">Not now</button>
+        <button type="button" class="link" @click="router.push({ name: 'dashboard' })">Not now</button>
       </div>
     </section>
   </div>
