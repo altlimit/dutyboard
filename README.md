@@ -495,8 +495,8 @@ duty tells you which. Tools a setup duty installs — an engine, an SDK, a brows
 `<root>/_tools/` and are registered, so every later session on the machine finds them on its PATH
 and nothing is downloaded twice.
 
-A board can also **start from nothing**: choose *A new one on GitHub* when you make it (or on its
-settings, while it has no repository). One of your machines makes the repository with its GitHub
+A board can also **start from nothing**: choose *A new project* as what it works on when you make
+it (or *Create the repository* on its settings, while it has no repository). One of your machines makes the repository with its GitHub
 CLI (`gh auth login` on it first — DutyBoard holds no GitHub credential), pushes a first commit, and
 works the board. Its setup duty sees a repository with nothing in it but a README, and builds the
 project's first version from the board's description and stack before setting the machine up. An
@@ -854,7 +854,7 @@ mostly reads a duty and passes it on, gets a shorter prompt still (the rules by 
 full) and a worktree made without running the board's prep command; prep runs when someone builds,
 and before anything lands.
 
-**Watching it.** **Boards → Office** draws all your boards as one office building: a room per board
+**Watching it.** **Office**, in the top bar, draws all your boards as one office building: a room per board
 with a cubicle per role, and a breakroom they share. A role working a duty sits at its cubicle
 typing, with whatever waits for it stacked in its tray; a role with nothing in hand is in the
 breakroom, wearing its board's colour. When a role is handed work it walks to its desk, and the duty

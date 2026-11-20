@@ -66,6 +66,7 @@ async function leave() {
       <nav v-if="signedIn" class="topbar__nav" aria-label="Main">
         <router-link class="navlink" :to="{ name: 'dashboard' }">Dashboard</router-link>
         <router-link class="navlink" :class="{ 'navlink--active': projectId }" :to="{ name: 'boards' }">Boards</router-link>
+        <router-link class="navlink" :to="{ name: 'offices' }">Office</router-link>
         <router-link class="navlink" :to="{ name: 'runners' }">Machines</router-link>
         <router-link class="navlink" :to="{ name: 'notifications' }">Notifications</router-link>
       </nav>

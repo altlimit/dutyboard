@@ -23,6 +23,15 @@ const modes = computed(() => {
 // `files`: no repository — one-off tasks, or an account run through its MCP servers (`service`).
 const files = computed(() => noRepo(draft.value.workspace));
 const service = computed(() => draft.value.workspace === "service");
+// On a board being made, the first question also says whether its repository exists yet: a new
+// project gets one made on GitHub, which is the same workspace with `creating` on.
+const start = computed({
+  get: () => (draft.value.workspace === "repo" && props.offerNewRepo && creating.value ? "new" : draft.value.workspace),
+  set: (v) => {
+    creating.value = v === "new";
+    draft.value.workspace = v === "new" ? "repo" : v;
+  },
+});
 
 const addRepo = () => {
   draft.value.repos = [...(draft.value.repos || []), { name: "", repo_url: "", default_branch: "", test_command: "" }];
@@ -49,15 +58,25 @@ const removeServer = (i) => {
 <template>
   <fieldset class="stack" :disabled="disabled">
     <legend class="label">What does it work on?</legend>
-    <label class="choice choice--block">
-      <input v-model="draft.workspace" type="radio" :name="`${idPrefix}-workspace`" value="repo" />
+    <label v-if="offerNewRepo" class="choice choice--block">
+      <input v-model="start" type="radio" :name="`${idPrefix}-workspace`" value="new" />
       <span>
-        A project in a repository
+        A new project
+        <span class="hint" style="display: block; margin: 0">
+          One of your machines makes its repository on GitHub, and the first duty builds its first version from what you
+          say it is below.
+        </span>
+      </span>
+    </label>
+    <label class="choice choice--block">
+      <input v-model="start" type="radio" :name="`${idPrefix}-workspace`" value="repo" />
+      <span>
+        {{ offerNewRepo ? "A project in a repository it already has" : "A project in a repository" }}
         <span class="hint" style="display: block; margin: 0">Each duty is a change to the code, landed with git.</span>
       </span>
     </label>
     <label class="choice choice--block">
-      <input v-model="draft.workspace" type="radio" :name="`${idPrefix}-workspace`" value="files" />
+      <input v-model="start" type="radio" :name="`${idPrefix}-workspace`" value="files" />
       <span>
         One-off tasks — files in, files out
         <span class="hint" style="display: block; margin: 0">
@@ -67,7 +86,7 @@ const removeServer = (i) => {
       </span>
     </label>
     <label class="choice choice--block">
-      <input v-model="draft.workspace" type="radio" :name="`${idPrefix}-workspace`" value="service" />
+      <input v-model="start" type="radio" :name="`${idPrefix}-workspace`" value="service" />
       <span>
         An account run through its MCP servers
         <span class="hint" style="display: block; margin: 0">
@@ -112,17 +131,7 @@ const removeServer = (i) => {
   </fieldset>
 
   <fieldset v-if="!files" class="stack" :disabled="disabled">
-    <legend class="label">Where the code is</legend>
-    <div v-if="offerNewRepo" class="choices" role="radiogroup" aria-label="Where its repository comes from">
-      <label class="choice">
-        <input v-model="creating" type="radio" :name="`${idPrefix}-origin`" :value="false" />
-        A repository it already has
-      </label>
-      <label class="choice">
-        <input v-model="creating" type="radio" :name="`${idPrefix}-origin`" :value="true" />
-        A new one on GitHub
-      </label>
-    </div>
+    <legend class="label">{{ offerNewRepo && creating ? "Its new repository" : "Where the code is" }}</legend>
     <slot v-if="offerNewRepo && creating" name="new-repo" />
     <div v-else class="field">
       <label :for="`${idPrefix}-repo`">Repository URL</label>

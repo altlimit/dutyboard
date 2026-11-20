@@ -936,9 +936,3 @@ details > summary { cursor: pointer; font-weight: 550; }
 
 /* One MCP server in the board form: its fields grouped, so a list of them reads as separate servers. */
 .mcp-server { border: 1px solid var(--border); border-radius: 10px; padding: 0.9rem; }
-
-/* A choice of two or three views, side by side: List or Office. */
-.seg { display: inline-flex; border: 1px solid var(--border-strong); border-radius: 8px; overflow: hidden; }
-.seg__btn { border: 0; border-radius: 0; background: var(--surface); color: var(--text-dim); padding: 0.45rem 0.8rem; }
-.seg__btn + .seg__btn { border-left: 1px solid var(--border-strong); }
-.seg__btn[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); font-weight: 600; }

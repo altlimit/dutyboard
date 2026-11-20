@@ -4,6 +4,7 @@ import { ensureAccess, isSignedIn, onSessionChange } from "./lib/altengine.js";
 const routes = [
   { path: "/", name: "dashboard", component: () => import("./views/Dashboard.vue"), meta: { title: "Dashboard" } },
   { path: "/boards", name: "boards", component: () => import("./views/Boards.vue"), meta: { title: "Boards" } },
+  { path: "/office", name: "offices", component: () => import("./views/OfficeAll.vue"), meta: { title: "Office" } },
   { path: "/signin", name: "signin", component: () => import("./views/SignIn.vue"), meta: { title: "Sign in", public: true } },
   // Public, and it has to be: it configures the auth instance that signing in would use.
   { path: "/connect", name: "connect", component: () => import("./views/Connect.vue"), meta: { title: "Connect your altengine", public: true } },
@@ -26,6 +27,13 @@ export const router = createRouter({
 });
 
 router.beforeEach(async (to) => {
+  // The office used to be a view of the Boards page; a link or bookmark to it lands on the Office
+  // now, with whatever duty it had open. Here rather than on the route, which would miss it when
+  // only the query changes on a Boards page already open.
+  if (to.name === "boards" && to.query.view === "office") {
+    const { view, ...query } = to.query;
+    return { name: "offices", query };
+  }
   if (!to.meta.public && !isSignedIn()) return { name: "signin", query: { next: to.fullPath } };
   if (to.name === "signin" && isSignedIn()) return { name: "dashboard" };
   // Before any page that reads the datastore: the token must carry the claim the rules check.

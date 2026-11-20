@@ -1,8 +1,8 @@
 <script setup>
-import DutyLink from "../components/DutyLink.vue";
 // The dashboard: everything across your boards in a few numbers, what is waiting on you, what is
 // being worked, which roles' work holds up best, and what the schedules file next. The boards
-// themselves — the table, and the office — are on the Boards page.
+// themselves are on the Boards page as a table, and on the Office page as a building.
+import DutyLink from "../components/DutyLink.vue";
 import { computed, ref } from "vue";
 import { aggregate, query } from "../lib/altengine.js";
 import { ago, localWhen, until } from "../lib/duties.js";

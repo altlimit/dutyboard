@@ -1,30 +1,22 @@
 <script setup>
-// Your boards: every one in a table, or all of them at once as an office building — a room of
-// cubicles per board, and one breakroom they share. Making a board starts here too.
-import { computed, nextTick, onUnmounted, ref, watch } from "vue";
+// Your boards, every one in a table, the ones that need you first. Making a board starts here too.
+// All of them at once, as an office building, is the Office page.
+import { computed, nextTick, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { api, query, subscribeLive } from "../lib/altengine.js";
+import { api } from "../lib/altengine.js";
 import { ago } from "../lib/duties.js";
-import { isQuiet, runsByDuty, sortBoards } from "../lib/boards.js";
+import { isQuiet, sortBoards } from "../lib/boards.js";
 import { newRepoDraft, noRepo, profileDraft, profilePayload, requestNewRepo, runnerSummary } from "../lib/runners.js";
 import { useBoards } from "../lib/useBoards.js";
 import ProfileForm from "../components/ProfileForm.vue";
 import NewRepoFields from "../components/NewRepoFields.vue";
 import BoardTable from "../components/BoardTable.vue";
-import OfficeBuilding from "../components/OfficeBuilding.vue";
-import WaitingOnYou from "../components/WaitingOnYou.vue";
-import QuickDuty from "../components/QuickDuty.vue";
-import DutyDrawer from "../components/DutyDrawer.vue";
-import ScheduleDrawer from "../components/ScheduleDrawer.vue";
 import SidePanel from "../components/SidePanel.vue";
-import { useDutyPanel } from "../lib/useDutyPanel.js";
 
 const router = useRouter();
 const route = useRoute();
 
-const { boards, shared, all, loading, error, counts, runners, upcoming, loadRunners } = useBoards({
-  onRefresh: () => office.value && loadOffice(),
-});
+const { boards, shared, all, loading, error, counts, runners, upcoming } = useBoards();
 
 // --- the table ---------------------------------------------------------------------------------
 
@@ -53,126 +45,6 @@ function rowInfo(b) {
   };
 }
 const info = computed(() => Object.fromEntries(all.value.map((b) => [b.project_id, rowInfo(b)])));
-
-// --- the office --------------------------------------------------------------------------------
-
-/** Which view, kept in the address so a reload or a link lands on the same one. */
-const office = computed(() => route.query.view === "office");
-const showView = (view) => router.replace({ query: { ...route.query, view: view === "office" ? "office" : undefined } });
-
-/** Rooms the building draws. Past this a person has a campus, and the busiest boards get the rooms. */
-const MAX_ROOMS = 24;
-/** Boards one live token watches; the server holds it to the same. */
-const MAX_LIVE = 40;
-/** Unfinished duties read per status, across every board. */
-const PER_STATUS = 200;
-
-const showQuiet = ref(false);
-const rosters = ref({});
-const officeDuties = ref([]);
-/** Duties finished lately: one that leaves a desk is shown as done, not just gone. */
-const officeDone = ref([]);
-const officeLoaded = ref(false);
-const liveState = ref("");
-
-/**
- * Yours then shared, in the order the list of boards comes in — not by activity, which would move
- * the rooms around while you watch. Quiet ones only when asked for.
- */
-const officeBoards = computed(() => {
-  const ordered = all.value;
-  const shown = counts.value && !showQuiet.value ? ordered.filter((b) => !isQuiet(b, counts.value)) : ordered;
-  return shown.slice(0, MAX_ROOMS).map((b) => ({ ...b, roster: rosters.value[b.project_id] || null }));
-});
-const hiddenQuiet = computed(() => (counts.value && !showQuiet.value ? all.value.filter((b) => isQuiet(b, counts.value)).length : 0));
-const activity = computed(() => runsByDuty(runners.value));
-/** Questions waiting on you, answered under the building; a "?" in it brings one here. */
-const asking = computed(() => officeDuties.value.filter((d) => d.status === "needs_decision").sort((a, b) => (a.updated_at || 0) - (b.updated_at || 0)));
-const boardsById = computed(() => Object.fromEntries(officeBoards.value.map((b) => [b.project_id, b])));
-const waiting = ref(null);
-const quick = ref(null);
-
-// A duty, or a recurring duty from the desk on call for it, read over the office — kept in the
-// address with the board it is `on` (see useDutyPanel).
-const { reading, readingSchedule, openDuty, openSchedule, closeDuty, closeSchedule } = useDutyPanel({ enabled: () => office.value });
-/** A "?" desk: its duty, open over the office, where it can be answered. */
-function openAsking(key) {
-  const d = asking.value.find((x) => x.key === key);
-  if (d) openDuty({ projectId: d.project_id, dutyId: d.key });
-}
-
-const rowsOf = (res) => (res.documents || []).map((d) => ({ ...d.data, key: String(d.key) }));
-
-/** Every board's unfinished duties, three reads — the same shapes the dashboard already asks for. */
-async function loadOfficeDuties() {
-  const read = (status, dir) =>
-    query("duties", { where: [{ field: "status", op: "=", value: status }], order: [{ field: "updated_at", dir }], limit: PER_STATUS }).then(rowsOf);
-  const [active, queued, asks, done] = await Promise.all([
-    read("active", "desc"),
-    read("queued", "desc"),
-    read("needs_decision", "asc"),
-    query("duties", { where: [{ field: "status", op: "=", value: "done" }], order: [{ field: "updated_at", dir: "desc" }], limit: 30 }).then(rowsOf),
-  ]);
-  // Together, so a duty that left a desk and the record of it being done arrive in the same reading.
-  officeDone.value = done;
-  officeDuties.value = [...active, ...queued, ...asks];
-}
-
-async function loadRosters() {
-  const ids = all.value.map((b) => b.project_id);
-  if (!ids.length) return;
-  try {
-    rosters.value = (await api("/projects/rosters", { project_ids: ids })).rosters || {};
-  } catch {
-    // A DutyBoard from before teams: every board is drawn with one agent's cubicle.
-    rosters.value = {};
-  }
-}
-
-async function loadOffice() {
-  try {
-    await Promise.all([loadOfficeDuties(), officeLoaded.value ? null : loadRosters()]);
-    officeLoaded.value = true;
-  } catch (err) {
-    error.value = err.message;
-  }
-}
-
-// Live, while the office is open: one socket for the boards it draws. A duty that moves re-reads the
-// floor; a machine that reports re-reads the machines; a team that changed re-reads the teams.
-let socket = null;
-let dutyTimer = null;
-let runnerTimer = null;
-function onEvent(frame) {
-  const ev = frame && frame.data;
-  if (!ev) return;
-  if (ev.t === "runner") {
-    if (!runnerTimer) runnerTimer = setTimeout(() => ((runnerTimer = null), loadRunners()), 1500);
-    return;
-  }
-  if (ev.t === "board") {
-    if (ev.what === "roster") loadRosters();
-    return;
-  }
-  if (ev.t === "notes") return;
-  if (!dutyTimer) dutyTimer = setTimeout(() => ((dutyTimer = null), loadOfficeDuties().catch(() => {})), 500);
-}
-function watchLive() {
-  if (socket) socket.close();
-  socket = null;
-  const ids = officeBoards.value.map((b) => b.project_id).slice(0, MAX_LIVE);
-  if (!office.value || !ids.length) return;
-  socket = subscribeLive({ mintWith: () => api("/live/boards", { project_ids: ids }) }, onEvent, (s) => (liveState.value = s));
-}
-
-const liveKey = computed(() => (office.value ? officeBoards.value.map((b) => b.project_id).join(",") : ""));
-watch([office, () => all.value.length], ([open]) => open && all.value.length && loadOffice(), { immediate: true });
-watch(liveKey, watchLive);
-onUnmounted(() => {
-  if (socket) socket.close();
-  clearTimeout(dutyTimer);
-  clearTimeout(runnerTimer);
-});
 
 // --- a new board -------------------------------------------------------------------------------
 
@@ -271,21 +143,13 @@ watch(
 </script>
 
 <template>
-  <div class="wrap stack" :class="{ 'wrap--board': office }">
+  <div class="wrap stack">
     <div class="row row--between">
       <div>
         <h1>Boards</h1>
-        <p class="muted small" style="margin: 0">
-          {{ office ? "Each board is a room of cubicles, one per role. Whoever has nothing in hand is in the breakroom." : "Every board, the ones that need you first." }}
-        </p>
+        <p class="muted small" style="margin: 0">Every board, the ones that need you first.</p>
       </div>
-      <div class="row">
-        <div class="seg" role="group" aria-label="View">
-          <button type="button" class="seg__btn" :aria-pressed="!office" @click="showView('list')">List</button>
-          <button type="button" class="seg__btn" :aria-pressed="office" @click="showView('office')">Office</button>
-        </div>
-        <button class="primary" type="button" @click="openForm">New board</button>
-      </div>
+      <button class="primary" type="button" @click="openForm">New board</button>
     </div>
 
     <p v-if="error" class="notice notice--error" role="alert">{{ error }}</p>
@@ -339,7 +203,7 @@ watch(
 
     <p v-if="loading" class="muted" role="status">Loading…</p>
 
-    <template v-else-if="!office">
+    <template v-else>
       <section aria-labelledby="boards-h" class="stack">
         <h2 v-if="all.length" id="boards-h" :class="shared.length ? 'section-h' : 'sr-only'">Yours</h2>
         <BoardTable v-if="busyOwn.length" :boards="busyOwn" :info="info" caption="Your boards" />
@@ -357,39 +221,6 @@ watch(
         <h2 id="shared-h" class="section-h">Shared with you</h2>
         <BoardTable :boards="sortedShared" :info="info" shared caption="Boards shared with you" />
       </section>
-    </template>
-
-    <template v-else>
-      <p v-if="!all.length" class="empty">No boards yet, so the building is empty. Create one, then put it on a machine.</p>
-      <template v-else>
-        <div class="row row--between">
-          <p class="row small muted" style="margin: 0; gap: 0.6rem">
-            <span v-if="liveState" class="livedot" :class="`livedot--${liveState}`" role="status">{{ liveState === "live" ? "Live" : liveState }}</span>
-            <span>{{ officeBoards.length }} {{ officeBoards.length === 1 ? "room" : "rooms" }}</span>
-            <button v-if="hiddenQuiet" type="button" class="link small" @click="showQuiet = true">Show {{ hiddenQuiet }} quiet {{ hiddenQuiet === 1 ? "board" : "boards" }}</button>
-            <button v-else-if="showQuiet" type="button" class="link small" @click="showQuiet = false">Hide quiet boards</button>
-          </p>
-          <!-- At the top, and opening over the office: no scrolling down to file something. -->
-          <QuickDuty ref="quick" :boards="officeBoards" @added="loadOfficeDuties" />
-        </div>
-        <p v-if="!officeLoaded" class="muted" role="status">Opening the office…</p>
-        <template v-else>
-          <OfficeBuilding
-            :boards="officeBoards"
-            :duties="officeDuties"
-            :recent="officeDone"
-            :next="upcoming ? upcoming.next : {}"
-            :activity="activity"
-            @ask="(key) => openAsking(key)"
-            @add="(id) => quick && quick.open(id)"
-            @open="openDuty"
-            @schedule="openSchedule"
-          />
-          <WaitingOnYou ref="waiting" :duties="asking" :boards="boardsById" @answered="loadOfficeDuties" @open="openDuty" />
-          <DutyDrawer v-if="reading" :key="reading.dutyId" :project-id="reading.projectId" :duty-id="reading.dutyId" @close="closeDuty" />
-          <ScheduleDrawer v-else-if="readingSchedule" :key="readingSchedule.scheduleId" :project-id="readingSchedule.projectId" :schedule-id="readingSchedule.scheduleId" @close="closeSchedule" @open="openDuty" />
-        </template>
-      </template>
     </template>
   </div>
 </template>
