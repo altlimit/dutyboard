@@ -11,7 +11,9 @@ import { ago, expiryChoices, statusLabel } from "../lib/duties.js";
 import { newRepoDraft, noRepo, profileDraft, profilePayload, requestNewRepo, runnerLimited, runStateLabel } from "../lib/runners.js";
 import BoardAccess from "../components/BoardAccess.vue";
 import ProfileForm from "../components/ProfileForm.vue";
+import McpServers from "../components/McpServers.vue";
 import DeployConnect from "../components/DeployConnect.vue";
+import MachineInstall from "../components/MachineInstall.vue";
 import NewRepoFields from "../components/NewRepoFields.vue";
 import TeamSettings from "../components/TeamSettings.vue";
 import DutyDrawer from "../components/DutyDrawer.vue";
@@ -306,7 +308,6 @@ async function setAgents(m, allowed) {
   }
 }
 
-const linkCommand = computed(() => `alt install altlimit/dutyboard\ndutyboard --server ${config.api} --root /path/for/projects --service`);
 
 // Your paired machines, for putting this board on one of them without leaving the page.
 const myMachines = ref([]);
@@ -654,6 +655,8 @@ const tabs = computed(() => [
   ...(hasProfile.value || runners.value.length
     ? [{ key: "machines", label: "Machines", count: runners.value.length, alert: runners.value.some((r) => r.problem) || needsRepo.value }]
     : []),
+  // A board run through its MCP servers needs one; any other may add tools there.
+  { key: "mcp", label: "MCP servers", count: (profile.value.mcp_servers || []).length, alert: profile.value.workspace === "service" && !(profile.value.mcp_servers || []).length },
   { key: "rules", label: "Rules", alert: !!rules.value.draft },
   { key: "team", label: "Team", alert: teamDraft.value },
   { key: "recurring", label: "Recurring", count: schedules.value.length },
@@ -692,7 +695,7 @@ function tabKey(event) {
 </script>
 
 <template>
-  <div class="wrap wrap--settings stack">
+  <div class="wrap stack">
     <BoardNav :project-id="projectId" :name="boardName" active="settings" />
 
     <div>
@@ -743,10 +746,30 @@ function tabKey(event) {
           <template v-if="!isOwner">Only the owner can change it: some of these are commands a machine runs.</template>
         </p>
         <p v-if="profileNotice" class="notice" role="status" style="margin: 0">{{ profileNotice }}</p>
-        <ProfileForm v-model="profile" :machines="runners" id-prefix="set" :disabled="!isOwner || busy" />
+        <ProfileForm v-model="profile" :machines="runners" id-prefix="set" :mcp="false" :disabled="!isOwner || busy" />
         <div v-if="isOwner"><button class="primary" type="submit" :disabled="busy">Save</button></div>
       </form>
       <DeployConnect v-if="role && profile.deploy_method === 'altengine'" :project-id="projectId" />
+    </div>
+    <div
+      v-show="tab === 'mcp'"
+      id="panel-mcp"
+      role="tabpanel"
+      :aria-labelledby="`tab-mcp`"
+      class="stack"
+      tabindex="0"
+    >
+      <form v-if="role" aria-labelledby="mcp-h" class="stack" @submit.prevent="saveProfile">
+        <h2 id="mcp-h" style="margin: 0">MCP servers</h2>
+        <p v-if="profileNotice" class="notice" role="status" style="margin-bottom: 0">{{ profileNotice }}</p>
+        <McpServers v-model="profile" id-prefix="set" titled :disabled="!isOwner || busy" />
+        <p class="notice small" style="margin-bottom: 0">
+          <strong>Where the secrets' values go:</strong> on
+          <router-link :to="{ name: 'runners' }">your Machines page</router-link>, open a machine that works this board — its
+          Checklist shows <em>MCP secrets</em> with a field for each one, once the machine has checked in after you save here.
+        </p>
+        <div v-if="isOwner"><button class="primary" type="submit" :disabled="busy">Save</button></div>
+      </form>
     </div>
     <div
       v-show="tab === 'machines'"
@@ -785,12 +808,8 @@ function tabKey(event) {
           {{ freeMachines.length ? "Or add another computer" : "On the computer that should do the work" }} — with
           the agents you want to enable installed and signed in:
         </p>
-        <pre class="token" style="white-space: pre-wrap">{{ linkCommand }}</pre>
-        <div class="row">
-          <button type="button" @click="copy(linkCommand)">Copy</button>
-        </div>
+        <MachineInstall then="It shows a code: approve it on your Machines page, under Pair a machine, then choose the machine here." />
         <p class="small muted" style="margin: 0">
-          It pairs the machine; then choose it here.
           <template v-if="noRepo(profile.workspace)">It takes the board's tasks as they are filed, each in a folder of its own.</template>
           <template v-else>Its first duties get the machine ready for the project and draft this board's rules for you to accept.</template>
         </p>
@@ -1117,13 +1136,36 @@ function tabKey(event) {
       class="stack"
       tabindex="0"
     >
-      <div v-if="isOwner">
-        <h2 style="margin: 0">Connect an agent or an integration, with a token</h2>
-        <p class="muted">
-          A token names this board and nothing else, so whatever holds it can never reach another
-          one. An <strong>agent</strong> token works the board. An <strong>integration</strong>
-          token is for software outside it, like a CI job or your own backend. It files duties,
-          follows the ones it filed, and can be told when they move.
+      <div v-if="isOwner" class="stack">
+        <div>
+          <h2 style="margin: 0">Tokens</h2>
+          <p class="muted" style="margin: 0.3rem 0 0">
+            A token lets something you run yourself reach this board. Most boards never need one.
+          </p>
+        </div>
+        <p class="notice small" style="margin-bottom: 0">
+          <strong>Not for your machines.</strong> A computer running <code class="mono">dutyboard</code> gets its own key
+          when you pair it, and works every board you put on it. Put this board on one under
+          <button type="button" class="link" @click="selectTab(tabs.some((t) => t.key === 'machines') ? 'machines' : 'project')">Machines</button>.
+        </p>
+        <div class="token-uses">
+          <div class="token-use">
+            <strong>An agent you start by hand</strong>
+            <p class="small muted">
+              Claude Code, or any agent that speaks MCP, run by you in this board's repository. With the token it takes this
+              board's duties itself — poll, claim, work, report — with no <code class="mono">dutyboard</code> program around it.
+            </p>
+          </div>
+          <div class="token-use">
+            <strong>Software that files work</strong>
+            <p class="small muted">
+              A CI job, a support form, your own backend. It adds duties to this board and follows the ones it added, by
+              asking what changed or by a webhook.
+            </p>
+          </div>
+        </div>
+        <p class="small muted" style="margin-bottom: 0">
+          A token reaches this board and no other, is shown once when made, and can be revoked here at any time.
         </p>
       </div>
 
@@ -1177,26 +1219,39 @@ function tabKey(event) {
       </div>
 
       <form v-if="isOwner" class="panel stack" @submit.prevent="mint">
-        <h2>New token</h2>
+        <h2 style="margin: 0">Make a token</h2>
+        <fieldset class="stack">
+          <legend class="label">Who will use it?</legend>
+          <label class="choice choice--block">
+            <input v-model="scope" type="radio" name="t-scope" value="agent" />
+            <span>
+              An agent you start by hand
+              <span class="hint" style="display: block; margin: 0">It works this board's duties. You get the command that connects it.</span>
+            </span>
+          </label>
+          <label class="choice choice--block">
+            <input v-model="scope" type="radio" name="t-scope" value="submit" />
+            <span>
+              Software that files work
+              <span class="hint" style="display: block; margin: 0">It adds duties and follows them, and cannot work them. You get example requests.</span>
+            </span>
+          </label>
+        </fieldset>
         <div class="field">
-          <label for="t-name">What is it for</label>
-          <input id="t-name" v-model="name" required maxlength="80" placeholder="laptop, CI runner, agent alpha" />
+          <label for="t-name">Name it</label>
+          <input id="t-name" v-model="name" required maxlength="80" :placeholder="scope === 'submit' ? 'support form, nightly CI' : 'Claude Code on my laptop'" />
+          <p class="hint">So you can tell it apart in the list below, and revoke the right one.</p>
         </div>
-        <div class="field">
-          <label for="t-scope">What holds it</label>
-          <select id="t-scope" v-model="scope">
-            <option value="agent">An agent: it works the board's duties</option>
-            <option value="submit">An integration: it files duties and follows them</option>
-          </select>
-        </div>
-        <div v-if="scope === 'agent'" class="field">
-          <label for="t-agent">Default agent id <span class="muted">(optional)</span></label>
-          <input id="t-agent" v-model="agentId" maxlength="64" placeholder="alpha" />
-          <p class="hint">
-            Identifies the worker holding a duty. Setting it here means the agent does not have to
-            repeat it on every call — useful when a model is producing the arguments.
-          </p>
-        </div>
+        <details v-if="scope === 'agent'">
+          <summary class="small">More options</summary>
+          <div class="field" style="margin-top: 0.6rem">
+            <label for="t-agent">Agent id <span class="muted">(optional)</span></label>
+            <input id="t-agent" v-model="agentId" maxlength="64" placeholder="alpha" />
+            <p class="hint">
+              The name a duty it is working shows on the board. Set here, the agent need not send it on every call.
+            </p>
+          </div>
+        </details>
         <div v-if="runners.length" class="field">
           <label for="t-route">Duties it files go to</label>
           <select id="t-route" v-model="reserveFor">
@@ -1208,7 +1263,7 @@ function tabKey(event) {
             else picks it up.
           </p>
         </div>
-        <div><button class="primary" type="submit" :disabled="busy || !name">Mint token</button></div>
+        <div><button class="primary" type="submit" :disabled="busy || !name">Make token</button></div>
       </form>
 
       <section v-if="isOwner" aria-labelledby="tokens-h" class="stack">

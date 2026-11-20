@@ -44,7 +44,7 @@ onMounted(() => refreshPushState().catch(() => {}));
 </script>
 
 <template>
-  <div class="container stack">
+  <div class="wrap stack">
     <div>
       <h1>Notifications</h1>
       <p class="muted" style="margin: 0">

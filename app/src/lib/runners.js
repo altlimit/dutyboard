@@ -4,6 +4,26 @@
 // reads. Kept in one place so the board wizard, the settings page and the runners page cannot
 // describe the same thing three ways.
 
+// Putting DutyBoard on a computer. On Windows the desktop app's installer; elsewhere `dutyboard` in a
+// terminal, whose wizard asks which DutyBoard to connect to. A machine with no screen pairs headless.
+export const DESKTOP_DOWNLOAD = "https://github.com/altlimit/dutyboard/releases/latest/download/DutyBoard-Setup.exe";
+export const INSTALL_COMMAND = "alt install altlimit/dutyboard\ndutyboard";
+export const headlessCommand = (server) =>
+  `alt install altlimit/dutyboard\ndutyboard --server ${server} --root /path/for/projects --service`;
+// `alt` itself, which installs `dutyboard` with no sudo and no package manager. Once per computer.
+export const ALT_INSTALL = {
+  unix: "curl -fsSL https://raw.githubusercontent.com/altlimit/alt/main/scripts/install.sh | sh",
+  windows: 'powershell -Command "iwr https://raw.githubusercontent.com/altlimit/alt/main/scripts/install.ps1 -useb | iex"',
+};
+
+/** The system this browser runs on, as the install steps name it: a guess at which to show first. */
+export function guessOS(nav = typeof navigator === "undefined" ? null : navigator) {
+  const s = (nav && ((nav.userAgentData && nav.userAgentData.platform) || nav.platform || nav.userAgent)) || "";
+  if (/mac|darwin|iphone|ipad/i.test(s)) return "mac";
+  if (/win/i.test(s)) return "windows";
+  return /linux|x11|cros|android/i.test(s) ? "linux" : "windows";
+}
+
 export const PROJECT_TYPES = [
   { key: "game", label: "Game" },
   { key: "website", label: "Website" },

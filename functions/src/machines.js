@@ -890,6 +890,8 @@ export async function reportReadiness(ctx, body) {
       models_error: str(it.models_error, `items[${i}].models_error`, { max: 300 }),
       // Which secrets are missing, by name only, so the console can ask for exactly those.
       secrets: missingSecrets(it.secrets, `items[${i}].secrets`),
+      // Which it already has, also by name only, so the console can offer to replace one.
+      stored: missingSecrets(it.stored, `items[${i}].stored`),
     };
   });
   const now = Date.now();

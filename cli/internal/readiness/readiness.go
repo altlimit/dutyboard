@@ -52,6 +52,9 @@ type Item struct {
 	// Secrets are the MCP secrets this machine lacks, by name, so the console can ask for exactly
 	// those. Never a value.
 	Secrets []MissingSecret `json:"secrets,omitempty"`
+	// Stored are the MCP secrets this machine already has, by name, so the console can offer to
+	// replace one. Never a value.
+	Stored []MissingSecret `json:"stored,omitempty"`
 }
 
 // MissingSecret names one secret an MCP server on a board needs and this machine does not have.
@@ -304,9 +307,12 @@ func mcpSecretsItem(linked []board.BoardView) (Item, bool) {
 					seen[b.ProjectID] = true
 					it.Boards = append(it.Boards, b.ProjectID)
 				}
+				one := MissingSecret{Board: b.ProjectID, Server: s.Name, Name: name, Header: s.URL != "", Note: s.Note}
 				if v, _ := state.Credential(state.MCPSecret(b.ProjectID, s.Name, name)); v == "" {
 					missing = append(missing, b.ProjectID+"/"+s.Name+" "+name)
-					it.Secrets = append(it.Secrets, MissingSecret{Board: b.ProjectID, Server: s.Name, Name: name, Header: s.URL != "", Note: s.Note})
+					it.Secrets = append(it.Secrets, one)
+				} else {
+					it.Stored = append(it.Stored, one)
 				}
 			}
 		}

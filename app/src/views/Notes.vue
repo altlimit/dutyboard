@@ -138,7 +138,7 @@ function nudge(event, n, i) {
 </script>
 
 <template>
-  <div class="wrap wrap--board stack notes-page">
+  <div class="wrap wrap--full stack notes-page">
     <BoardNav :project-id="projectId" :name="board?.name" active="notes" />
     <div class="row row--between">
       <div><h1>Notes</h1><p class="muted">Ideas, references and files for {{ board?.name || 'this board' }}.</p></div>

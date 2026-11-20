@@ -504,7 +504,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="wrap wrap--board stack">
+  <div class="wrap wrap--full stack">
     <BoardNav :project-id="projectId" :name="board?.name" active="board" />
     <div class="row row--between">
       <div>

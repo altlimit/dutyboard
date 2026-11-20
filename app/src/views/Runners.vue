@@ -8,6 +8,8 @@ import { ago } from "../lib/duties.js";
 import MachineAgents from "../components/MachineAgents.vue";
 import MachineSecrets from "../components/MachineSecrets.vue";
 import DutyDrawer from "../components/DutyDrawer.vue";
+import PairMachine from "../components/PairMachine.vue";
+import SidePanel from "../components/SidePanel.vue";
 import { useDutyPanel } from "../lib/useDutyPanel.js";
 import { AGENTS, runnerLimited, runStateLabel, readinessStatus } from "../lib/runners.js";
 import { CONSOLE_VERSION, differs, serviceVersion } from "../lib/version.js";
@@ -35,14 +37,59 @@ const behind = computed(() => {
 });
 
 const consoleVersion = CONSOLE_VERSION;
-const installCommand = "alt install altlimit/dutyboard\ndutyboard";
-const headlessCommand = computed(() => `alt install altlimit/dutyboard\ndutyboard --server ${config.api} --root /path/for/projects --service`);
+
+// Pairing opens in a panel over the page; a machine paired there shows up in the list behind it.
+const pairing = ref(false);
+// Approving a code does not make the machine yet: the machine does, a few seconds later, when it next
+// asks whether it was approved. So the list is read again until a new one arrives, which is then opened.
+let waitTimer = null;
+function awaitPaired() {
+  const known = new Set(machines.value.map((m) => m.machine_id));
+  let tries = 0;
+  clearInterval(waitTimer);
+  waitTimer = setInterval(async () => {
+    tries += 1;
+    await load({ quiet: true });
+    const fresh = machines.value.find((m) => !known.has(m.machine_id));
+    if (fresh || tries >= 30) clearInterval(waitTimer);
+    if (fresh) {
+      expanded.value = { ...expanded.value, [fresh.machine_id]: true };
+      chosenTab.value = { ...chosenTab.value, [fresh.machine_id]: "ready" };
+    }
+  }, 2000);
+}
 
 // `dutyboard` in a terminal ends by opening this page on the machine it just set up: #/machines?setup=<id>.
 const route = useRoute();
 // The duty a machine is running, read over the Machines page.
 const { reading, closeDuty } = useDutyPanel();
 const focus = computed(() => String(route.query.setup || ""));
+
+// Each machine is a line until opened, and opened its details are in tabs rather than one long page.
+const expanded = ref(focus.value ? { [focus.value]: true } : {}); // machine_id → open
+const toggle = (m) => (expanded.value = { ...expanded.value, [m.machine_id]: !expanded.value[m.machine_id] });
+const chosenTab = ref({}); // machine_id → tab key
+const machineTabs = (m) => [
+  { key: "ready", label: "Checklist", count: m.readiness ? waitingOn(m).length : 0, alert: !!(m.readiness && waitingOn(m).length) },
+  { key: "boards", label: "Boards", count: m.links.length, alert: m.links.some((l) => l.problem) },
+  { key: "agents", label: "Agents" },
+  { key: "settings", label: "Settings" },
+];
+/** The tab a machine opens on: its checklist while something there is to fix, else its boards. */
+const tabOf = (m) => chosenTab.value[m.machine_id] || (focus.value === m.machine_id || (m.readiness && waitingOn(m).length) ? "ready" : "boards");
+function selectTab(m, key, { focus: move = false } = {}) {
+  chosenTab.value = { ...chosenTab.value, [m.machine_id]: key };
+  if (move) nextTick(() => document.getElementById(`mtab-${m.machine_id}-${key}`)?.focus());
+}
+function tabKey(m, event) {
+  const keys = machineTabs(m).map((t) => t.key);
+  const at = keys.indexOf(tabOf(m));
+  const to = { ArrowRight: at + 1, ArrowLeft: at - 1, Home: 0, End: keys.length - 1 }[event.key];
+  if (to === undefined) return;
+  event.preventDefault();
+  selectTab(m, keys[(to + keys.length) % keys.length], { focus: true });
+}
+const running = (m) => m.links.reduce((n, l) => n + l.runs.length, 0);
 
 // What duties need from a machine, as it last said: the items its boards wait on first, then the rest.
 const readiness = (m) => (m.readiness && m.readiness.items) || [];
@@ -237,42 +284,22 @@ let fast = null;
 onUnmounted(() => {
   clearInterval(timer);
   clearInterval(fast);
+  clearInterval(waitTimer);
 });
 </script>
 
 <template>
   <div class="wrap stack">
-    <div class="row row--between">
-      <div>
+    <div class="row row--between page-head">
+      <div class="page-head__text">
         <h1>Your machines</h1>
         <p class="muted" style="margin: 0">
           Computers running <code class="mono">dutyboard</code> for you. Each one claims duties from the boards
           linked to it and works them with the board's preferred available agents — Claude Code, Codex or Cursor — in a git worktree of its own.
         </p>
-        <p class="small" style="margin: 0.4rem 0 0">
-          API URL, for pairing a machine: <code class="mono">{{ config.api }}</code>
-          <button type="button" class="link small" @click="copy(config.api)">Copy</button>
-        </p>
       </div>
-      <router-link class="btn" :to="{ name: 'pair' }">Pair a machine</router-link>
+      <button type="button" class="primary" @click="pairing = true">Pair a machine</button>
     </div>
-
-    <section aria-labelledby="versions-h" class="panel stack">
-      <h2 id="versions-h" style="margin: 0">Versions</h2>
-      <p class="small muted" style="margin: 0">
-        Console <strong>{{ consoleVersion }}</strong> ·
-        board <strong>{{ boardVersion || "…" }}</strong>
-        <template v-for="m in machines" :key="m.machine_id">
-          · {{ m.name }} <strong>{{ m.cli_version || "?" }}</strong>
-        </template>
-      </p>
-      <p v-if="behind.length" class="hint" style="margin: 0">
-        Not everything is on {{ consoleVersion }}: {{ behind.join(", ") }}. A feature that is missing
-        rather than broken is usually this. Update a machine where it runs; update the board and this
-        console with <code class="mono">dutyboard --provision-only</code>.
-      </p>
-      <p v-else-if="boardVersion" class="hint" style="margin: 0">Everything here is on {{ consoleVersion }}.</p>
-    </section>
 
     <p v-if="error" class="notice notice--error" role="alert">{{ error }}</p>
     <p v-if="notice" class="notice" role="status">{{ notice }}</p>
@@ -280,206 +307,218 @@ onUnmounted(() => {
 
     <section v-else-if="!machines.length" class="panel stack" aria-labelledby="first-h">
       <h2 id="first-h" style="margin: 0">Add your first machine</h2>
-      <p style="margin: 0">On the computer that should do the work:</p>
-      <pre class="token" style="white-space: pre-wrap">{{ installCommand }}</pre>
-      <div><button type="button" @click="copy(installCommand)">Copy</button></div>
-      <p class="small muted" style="margin: 0">
-        It asks which DutyBoard to connect to, prints a code to approve here, sets itself to start by itself and comes
-        back to this page, which then shows what the machine still needs: Claude Code, Codex or Cursor signed in, the
-        GitHub CLI, a commit author.
-      </p>
-      <details>
-        <summary class="small">A machine with no screen — a server, or over SSH</summary>
-        <pre class="token" style="white-space: pre-wrap">{{ headlessCommand }}</pre>
-        <div><button type="button" @click="copy(headlessCommand)">Copy</button></div>
-        <p class="small muted" style="margin: 0">
-          It prints the code and a link, waits for you to approve it here, sets itself to start at boot, and exits. Then
-          choose which boards it works — here, or on a board's settings.
-        </p>
-      </details>
+      <PairMachine @paired="awaitPaired" />
     </section>
 
     <ul v-else class="machines">
-      <li v-for="m in machines" :id="`machine-${m.machine_id}`" :key="m.machine_id" class="panel stack" :class="{ 'machine--focus': focus === m.machine_id }">
-        <div class="row row--between">
-          <div>
-            <h2 style="margin: 0">
-              {{ m.name }}
-              <span class="livedot" :class="m.online ? 'livedot--live' : 'livedot--off'">
-                {{ m.online === null ? "presence unknown" : m.online ? "online" : "offline" }}
-              </span>
-              <span v-if="m.paused" class="badge badge--needs_decision">paused</span>
+      <li v-for="m in machines" :id="`machine-${m.machine_id}`" :key="m.machine_id" class="panel machine" :class="{ 'machine--focus': focus === m.machine_id, 'machine--open': expanded[m.machine_id] }">
+        <div class="machine__head">
+          <div class="machine__title">
+            <h2 class="machine__name">
+              <button type="button" class="machine__toggle" :aria-expanded="!!expanded[m.machine_id]" :aria-controls="`machine-body-${m.machine_id}`" @click="toggle(m)">
+                <svg class="machine__chevron" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M6 3.5 10.5 8 6 12.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" /></svg>
+                {{ m.name }}
+              </button>
             </h2>
-            <p class="small muted" style="margin: 0">
-              {{ m.os }} {{ m.arch }} · dutyboard {{ m.cli_version || "?" }} · agents
-              <span class="mono">{{ m.agent_prefix }}/…</span> · seen {{ m.last_seen_at ? ago(m.last_seen_at) : "never" }}
-            </p>
+            <span class="livedot" :class="m.online ? 'livedot--live' : 'livedot--off'">
+              {{ m.online === null ? "presence unknown" : m.online ? "online" : "offline" }}
+            </span>
+            <span v-if="m.paused" class="badge badge--needs_decision">paused</span>
           </div>
-          <div class="row">
-            <button type="button" :disabled="busy" @click="update(m, { paused: !m.paused }, m.paused ? `${m.name} resumed.` : `${m.name} paused: it starts nothing new until resumed.`)">
-              {{ m.paused ? "Resume" : "Pause" }}
-            </button>
-            <button type="button" class="danger" :disabled="busy" @click="revoke(m)">Revoke</button>
-          </div>
+          <button type="button" :disabled="busy" @click="update(m, { paused: !m.paused }, m.paused ? `${m.name} resumed.` : `${m.name} paused: it starts nothing new until resumed.`)">
+            {{ m.paused ? "Resume" : "Pause" }}<span class="sr-only"> {{ m.name }}</span>
+          </button>
         </div>
-
-        <p v-if="focus === m.machine_id" class="notice" role="status" style="margin: 0">
-          <template v-if="m.online">{{ m.name }} is paired and running.</template>
-          <template v-else>{{ m.name }} is paired; it shows as online once <code class="mono">dutyboard</code> runs there.</template>
-          Below is what duties need from it. Put a board on it under <em>Settings and setup</em>, or from a board's settings.
+        <p class="machine__summary small muted">
+          <span v-if="m.readiness && waitingOn(m).length" class="badge badge--needs_decision">{{ waitingOn(m).length }} to fix</span>
+          <span v-if="m.links.some((l) => l.problem)" class="badge badge--needs_decision">a board has a problem</span>
+          <span>{{ m.links.length ? `Works ${m.links.map((l) => l.project_id).join(", ")}` : "No boards yet" }}</span>
+          <span>·</span>
+          <span>{{ running(m) ? `working on ${running(m)} dut${running(m) === 1 ? "y" : "ies"}` : "idle" }}</span>
+          <span>·</span>
+          <span>{{ m.os }} {{ m.arch }} · dutyboard {{ m.cli_version || "?" }} · seen {{ m.last_seen_at ? ago(m.last_seen_at) : "never" }}</span>
         </p>
 
-        <section class="ready stack" :aria-labelledby="`ready-h-${m.machine_id}`">
-          <div class="row row--between">
-            <h3 :id="`ready-h-${m.machine_id}`" style="margin: 0">
-              What duties need from it
-              <span v-if="m.readiness && waitingOn(m).length" class="badge badge--needs_decision">{{ waitingOn(m).length }} to fix</span>
-            </h3>
-            <span class="small muted">
-              <template v-if="m.readiness">checked {{ ago(m.readiness.checked_at) }} · </template>
-              <button type="button" class="link small" :disabled="busy" @click="checkAgain(m)">Check again</button>
-            </span>
+        <div v-if="expanded[m.machine_id]" :id="`machine-body-${m.machine_id}`" class="machine__body stack">
+          <p v-if="focus === m.machine_id" class="notice" role="status" style="margin: 0">
+            <template v-if="m.online">{{ m.name }} is paired and running.</template>
+            <template v-else>{{ m.name }} is paired; it shows as online once <code class="mono">dutyboard</code> runs there.</template>
+            Below is what duties need from it. Put a board on it under <em>Boards</em>, or from a board's settings.
+          </p>
+
+          <div class="tabs" role="tablist" :aria-label="`${m.name} details`" @keydown="tabKey(m, $event)">
+            <button
+              v-for="t in machineTabs(m)"
+              :id="`mtab-${m.machine_id}-${t.key}`"
+              :key="t.key"
+              type="button"
+              role="tab"
+              class="tabs__tab"
+              :aria-selected="tabOf(m) === t.key"
+              :aria-controls="`mpanel-${m.machine_id}-${t.key}`"
+              :tabindex="tabOf(m) === t.key ? 0 : -1"
+              @click="selectTab(m, t.key)"
+            >
+              {{ t.label }}
+              <span v-if="t.count" class="tabs__count">{{ t.count }}</span>
+              <span v-if="t.alert" class="tabs__alert" aria-hidden="true"></span>
+              <span v-if="t.alert" class="sr-only">(needs attention)</span>
+            </button>
           </div>
-          <p v-if="!m.readiness" class="small muted" style="margin: 0">
-            {{ m.online ? "Not reported yet. A machine checks within a minute of starting; one running an older dutyboard never does — update it." : "Shown once it is online." }}
-          </p>
-          <ul v-else class="ready__list">
-            <li v-for="it in shown(m)" :key="it.key" :class="`ready__item ready__item--${readinessStatus(it).tone}`">
-              <span class="ready__mark" aria-hidden="true">{{ readinessStatus(it).mark }}</span>
-              <div>
-                <strong>{{ it.label }}</strong>
-                <span v-if="readinessStatus(it).tone === 'optional'" class="small muted"> · {{ readinessStatus(it).label }}</span>
-                <span v-else class="sr-only">: {{ readinessStatus(it).label }}</span>
-                <span v-if="it.boards && it.boards.length" class="small muted"> — for {{ it.boards.join(", ") }}</span>
-                <p v-if="it.detail" class="small" style="margin: 0.1rem 0 0">{{ it.detail }}</p>
-                <p v-if="it.fix && it.state !== 'ok' && !toolRequest(m, it.key)" class="small" style="margin: 0.2rem 0 0">
-                  On {{ m.name }}: <code class="mono">{{ it.fix }}</code>
-                  <button type="button" class="link small" @click="copy(it.fix)">Copy</button>
-                </p>
-                <p v-else-if="it.fix && it.state === 'ok'" class="small muted" style="margin: 0.2rem 0 0">Worth doing: <code class="mono">{{ it.fix }}</code></p>
 
-                <div v-if="toolRequest(m, it.key)" class="ready__work stack">
-                  <template v-for="r in [toolRequest(m, it.key)]" :key="r.request_id">
-                    <p class="small" style="margin: 0" role="status">
-                      {{ workLabel(r) }}…
-                      <span class="muted">{{ r.status === "pending" ? `waiting for ${m.name} to start` : "" }}</span>
-                    </p>
-                    <template v-if="r.prompt && r.prompt.url">
-                      <p class="small" style="margin: 0">{{ r.prompt.message }}</p>
-                      <p style="margin: 0">
-                        <a :href="r.prompt.url" target="_blank" rel="noopener noreferrer" class="btn">{{ r.tool === "deploy_key" ? "Open altengine" : "Open the sign-in page" }}</a>
+          <section v-if="tabOf(m) === 'ready'" :id="`mpanel-${m.machine_id}-ready`" role="tabpanel" :aria-labelledby="`mtab-${m.machine_id}-ready`" tabindex="0" class="ready stack">
+            <div class="row row--between">
+              <p class="small" style="margin: 0">What duties need from {{ m.name }}.</p>
+              <span class="small muted">
+                <template v-if="m.readiness">checked {{ ago(m.readiness.checked_at) }} · </template>
+                <button type="button" class="link small" :disabled="busy" @click="checkAgain(m)">Check again</button>
+              </span>
+            </div>
+            <p v-if="!m.readiness" class="small muted" style="margin: 0">
+              {{ m.online ? "Not reported yet. A machine checks within a minute of starting; one running an older dutyboard never does — update it." : "Shown once it is online." }}
+            </p>
+            <ul v-else class="ready__list">
+              <li v-for="it in shown(m)" :key="it.key" :class="`ready__item ready__item--${readinessStatus(it).tone}`">
+                <span class="ready__mark" aria-hidden="true">{{ readinessStatus(it).mark }}</span>
+                <div>
+                  <strong>{{ it.label }}</strong>
+                  <span v-if="readinessStatus(it).tone === 'optional'" class="small muted"> · {{ readinessStatus(it).label }}</span>
+                  <span v-else class="sr-only">: {{ readinessStatus(it).label }}</span>
+                  <span v-if="it.boards && it.boards.length" class="small muted"> — for {{ it.boards.join(", ") }}</span>
+                  <p v-if="it.detail" class="small" style="margin: 0.1rem 0 0">{{ it.detail }}</p>
+                  <p v-if="it.fix && it.state !== 'ok' && !toolRequest(m, it.key)" class="small" style="margin: 0.2rem 0 0">
+                    On {{ m.name }}: <code class="mono">{{ it.fix }}</code>
+                    <button type="button" class="link small" @click="copy(it.fix)">Copy</button>
+                  </p>
+                  <p v-else-if="it.fix && it.state === 'ok'" class="small muted" style="margin: 0.2rem 0 0">Worth doing: <code class="mono">{{ it.fix }}</code></p>
+
+                  <div v-if="toolRequest(m, it.key)" class="ready__work stack">
+                    <template v-for="r in [toolRequest(m, it.key)]" :key="r.request_id">
+                      <p class="small" style="margin: 0" role="status">
+                        {{ workLabel(r) }}…
+                        <span class="muted">{{ r.status === "pending" ? `waiting for ${m.name} to start` : "" }}</span>
                       </p>
-                      <p v-if="r.prompt.code" style="margin: 0">
-                        Code: <code class="mono ready__code">{{ r.prompt.code }}</code>
-                        <button type="button" class="link small" @click="copy(r.prompt.code)">Copy</button>
-                      </p>
-                      <form v-if="r.prompt.needs_input" class="row" @submit.prevent="sendInput(r)">
-                        <label class="sr-only" :for="`paste-${r.request_id}`">{{ r.tool === "deploy_key" ? "Address the page ended on" : "Code from the sign-in page" }}</label>
-                        <input :id="`paste-${r.request_id}`" v-model="pasted[r.request_id]" class="mono" autocomplete="off" :placeholder="r.tool === 'deploy_key' ? 'Only if it would not load: paste its address' : 'Paste the code the page shows'" />
-                        <button type="submit" :disabled="busy || !(pasted[r.request_id] || '').trim()">Send</button>
-                      </form>
+                      <template v-if="r.prompt && r.prompt.url">
+                        <p class="small" style="margin: 0">{{ r.prompt.message }}</p>
+                        <p style="margin: 0">
+                          <a :href="r.prompt.url" target="_blank" rel="noopener noreferrer" class="btn">{{ r.tool === "deploy_key" ? "Open altengine" : "Open the sign-in page" }}</a>
+                        </p>
+                        <p v-if="r.prompt.code" style="margin: 0">
+                          Code: <code class="mono ready__code">{{ r.prompt.code }}</code>
+                          <button type="button" class="link small" @click="copy(r.prompt.code)">Copy</button>
+                        </p>
+                        <form v-if="r.prompt.needs_input" class="row" @submit.prevent="sendInput(r)">
+                          <label class="sr-only" :for="`paste-${r.request_id}`">{{ r.tool === "deploy_key" ? "Address the page ended on" : "Code from the sign-in page" }}</label>
+                          <input :id="`paste-${r.request_id}`" v-model="pasted[r.request_id]" class="mono" autocomplete="off" :placeholder="r.tool === 'deploy_key' ? 'Only if it would not load: paste its address' : 'Paste the code the page shows'" />
+                          <button type="submit" :disabled="busy || !(pasted[r.request_id] || '').trim()">Send</button>
+                        </form>
+                      </template>
                     </template>
-                  </template>
+                  </div>
+                  <MachineSecrets
+                    v-else-if="it.key === 'mcp_secrets' && ((it.secrets || []).length || (it.stored || []).length)"
+                    :machine="m"
+                    :secrets="it.secrets || []"
+                    :stored="it.stored || []"
+                    :disabled="busy"
+                    @requested="secretsRequested(m, $event)"
+                  />
+                  <div v-else-if="it.actions && it.actions.length && it.state === 'todo'" class="row" style="margin-top: 0.3rem">
+                    <button
+                      v-if="it.actions.includes('install')"
+                      type="button"
+                      :disabled="busy || !m.online"
+                      :title="m.online ? '' : `${m.name} is offline`"
+                      @click="toolWork(m, it, 'install_tool')"
+                    >
+                      Install<span class="sr-only"> {{ it.label }}</span>
+                    </button>
+                    <button
+                      v-if="it.actions.includes('sign_in')"
+                      type="button"
+                      :disabled="busy || !m.online"
+                      :title="m.online ? '' : `${m.name} is offline`"
+                      @click="toolWork(m, it, 'sign_in')"
+                    >
+                      <template v-if="it.key === 'deploy_key'">Connect altengine</template>
+                      <template v-else>Sign in<span class="sr-only"> to {{ it.label }}</span></template>
+                    </button>
+                    <span v-if="m.remote_setup === 'ask'" class="small muted">someone at {{ m.name }} accepts it by running <code class="mono">dutyboard</code> there</span>
+                  </div>
                 </div>
-                <MachineSecrets
-                  v-else-if="it.key === 'mcp_secrets' && it.state === 'todo' && it.secrets && it.secrets.length"
-                  :machine="m"
-                  :secrets="it.secrets"
-                  :disabled="busy"
-                  @requested="secretsRequested(m, $event)"
-                />
-                <div v-else-if="it.actions && it.actions.length && it.state === 'todo'" class="row" style="margin-top: 0.3rem">
-                  <button
-                    v-if="it.actions.includes('install')"
-                    type="button"
-                    :disabled="busy || !m.online"
-                    :title="m.online ? '' : `${m.name} is offline`"
-                    @click="toolWork(m, it, 'install_tool')"
-                  >
-                    Install<span class="sr-only"> {{ it.label }}</span>
-                  </button>
-                  <button
-                    v-if="it.actions.includes('sign_in')"
-                    type="button"
-                    :disabled="busy || !m.online"
-                    :title="m.online ? '' : `${m.name} is offline`"
-                    @click="toolWork(m, it, 'sign_in')"
-                  >
-                    <template v-if="it.key === 'deploy_key'">Connect altengine</template>
-                    <template v-else>Sign in<span class="sr-only"> to {{ it.label }}</span></template>
-                  </button>
-                  <span v-if="m.remote_setup === 'ask'" class="small muted">someone at {{ m.name }} accepts it by running <code class="mono">dutyboard</code> there</span>
-                </div>
-              </div>
-            </li>
-          </ul>
-          <p v-if="unneeded(m).length" class="small muted" style="margin: 0">
-            Not needed by its boards: {{ unneeded(m).map((it) => it.label).join(", ") }}.
-          </p>
-        </section>
+              </li>
+            </ul>
+            <p v-if="unneeded(m).length" class="small muted" style="margin: 0">
+              Not needed by its boards: {{ unneeded(m).map((it) => it.label).join(", ") }}.
+            </p>
+          </section>
 
-        <MachineAgents :machine="m" :disabled="busy" @refresh="checkAgain(m)" @save="(options) => update(m, { agent_options: options }, 'Agent availability saved.')" />
+          <section v-else-if="tabOf(m) === 'boards'" :id="`mpanel-${m.machine_id}-boards`" role="tabpanel" :aria-labelledby="`mtab-${m.machine_id}-boards`" tabindex="0" class="stack">
+            <div v-if="m.links.length" class="tablewrap">
+              <table>
+                <caption class="sr-only">Boards {{ m.name }} works</caption>
+                <thead>
+                  <tr>
+                    <th scope="col">Board</th>
+                    <th scope="col">Folder</th>
+                    <th scope="col">Now</th>
+                    <th scope="col"><span class="sr-only">Actions</span></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="l in m.links" :key="l.project_id">
+                    <td><router-link :to="{ name: 'board', params: { projectId: l.project_id } }">{{ l.project_id }}</router-link></td>
+                    <td class="mono small">{{ l.path_hint || "—" }}</td>
+                    <td>
+                      <p v-if="l.problem" class="notice notice--warn small" style="margin: 0 0 0.3rem">{{ l.problem }}</p>
+                      <p v-if="l.notice" class="notice small" style="margin: 0 0 0.3rem">{{ l.notice }}</p>
+                      <button v-if="l.problem || l.notice || runnerLimited(l)" type="button" class="link small" :disabled="busy" @click="retry(m, l)">
+                        Retry now<span class="sr-only"> for {{ l.project_id }}</span>
+                      </button>
+                      <span v-if="!l.runs.length" class="muted">idle</span>
+                      <ul v-else class="runs">
+                        <li v-for="r in l.runs" :key="r.duty_id">
+                          <DutyLink class="mono small" :project-id="l.project_id" :duty-id="r.duty_id">{{ r.duty_id }}</DutyLink>
+                          {{ runStateLabel(r.state) }}<span v-if="r.detail" class="muted small"> — {{ r.detail }}</span>
+                        </li>
+                      </ul>
+                    </td>
+                    <td><button type="button" class="link small" :disabled="busy" @click="unlink(m, l)">Unlink</button></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <p v-else class="muted small" style="margin: 0">No boards linked yet.</p>
 
-        <div v-if="m.links.length" class="tablewrap">
-          <table>
-            <caption class="sr-only">Boards {{ m.name }} works</caption>
-            <thead>
-              <tr>
-                <th scope="col">Board</th>
-                <th scope="col">Folder</th>
-                <th scope="col">Now</th>
-                <th scope="col"><span class="sr-only">Actions</span></th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="l in m.links" :key="l.project_id">
-                <td><router-link :to="{ name: 'board', params: { projectId: l.project_id } }">{{ l.project_id }}</router-link></td>
-                <td class="mono small">{{ l.path_hint || "—" }}</td>
-                <td>
-                  <p v-if="l.problem" class="notice notice--warn small" style="margin: 0 0 0.3rem">{{ l.problem }}</p>
-                  <p v-if="l.notice" class="notice small" style="margin: 0 0 0.3rem">{{ l.notice }}</p>
-                  <button v-if="l.problem || l.notice || runnerLimited(l)" type="button" class="link small" :disabled="busy" @click="retry(m, l)">
-                    Retry now<span class="sr-only"> for {{ l.project_id }}</span>
-                  </button>
-                  <span v-if="!l.runs.length" class="muted">idle</span>
-                  <ul v-else class="runs">
-                    <li v-for="r in l.runs" :key="r.duty_id">
-                      <DutyLink class="mono small" :project-id="l.project_id" :duty-id="r.duty_id">{{ r.duty_id }}</DutyLink>
-                      {{ runStateLabel(r.state) }}<span v-if="r.detail" class="muted small"> — {{ r.detail }}</span>
-                    </li>
-                  </ul>
-                </td>
-                <td><button type="button" class="link small" :disabled="busy" @click="unlink(m, l)">Unlink</button></td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-        <p v-else class="muted small" style="margin: 0">No boards linked yet.</p>
+            <ul v-if="openSetups(m).length" class="runs small">
+              <li v-for="r in openSetups(m)" :key="r.request_id">
+                Setting up {{ r.project_id }} in <span class="mono">{{ r.path }}</span>: {{ r.status }}
+                <span v-if="r.status === 'pending' && m.remote_setup === 'ask'" class="muted">
+                  — waiting for someone at {{ m.name }} to run <code class="mono">dutyboard</code> there and accept it
+                </span>
+              </li>
+            </ul>
 
-        <ul v-if="openSetups(m).length" class="runs small">
-          <li v-for="r in openSetups(m)" :key="r.request_id">
-            Setting up {{ r.project_id }} in <span class="mono">{{ r.path }}</span>: {{ r.status }}
-            <span v-if="r.status === 'pending' && m.remote_setup === 'ask'" class="muted">
-              — waiting for someone at {{ m.name }} to run <code class="mono">dutyboard</code> there and accept it
-            </span>
-          </li>
-        </ul>
-
-        <details>
-          <summary>Settings and setup</summary>
-          <div class="stack" style="margin-top: 0.75rem">
-            <form class="stack" @submit.prevent="requestSetup(m)">
+            <form v-if="unlinkedBoards(m).length" class="stack" @submit.prevent="requestSetup(m)">
               <div class="field">
                 <label :for="`s-board-${m.machine_id}`">Work a board on this machine</label>
-                <select :id="`s-board-${m.machine_id}`" v-model="draft(m).project_id" required>
-                  <option value="" disabled>Choose a board</option>
-                  <option v-for="b in unlinkedBoards(m)" :key="b.project_id" :value="b.project_id">{{ b.name }} ({{ b.project_id }})</option>
-                </select>
+                <div class="row">
+                  <select :id="`s-board-${m.machine_id}`" v-model="draft(m).project_id" required style="flex: 1 1 14rem; width: auto">
+                    <option value="" disabled>Choose a board</option>
+                    <option v-for="b in unlinkedBoards(m)" :key="b.project_id" :value="b.project_id">{{ b.name }} ({{ b.project_id }})</option>
+                  </select>
+                  <button type="submit" :disabled="busy || !draft(m).project_id">Work this board</button>
+                </div>
+                <p class="hint">It clones the board's repository into its projects folder and starts on its duties.</p>
               </div>
-              <p class="hint" style="margin: 0">It clones the board's repository into its projects folder and starts on its duties.</p>
-              <div><button type="submit" :disabled="busy || !draft(m).project_id">Work this board</button></div>
             </form>
+          </section>
 
+          <div v-else-if="tabOf(m) === 'agents'" :id="`mpanel-${m.machine_id}-agents`" role="tabpanel" :aria-labelledby="`mtab-${m.machine_id}-agents`" tabindex="0">
+            <MachineAgents :machine="m" :disabled="busy" @refresh="checkAgain(m)" @save="(options) => update(m, { agent_options: options }, 'Agent availability saved.')" />
+          </div>
+
+          <section v-else :id="`mpanel-${m.machine_id}-settings`" role="tabpanel" :aria-labelledby="`mtab-${m.machine_id}-settings`" tabindex="0" class="stack">
             <div class="field">
               <label :for="`s-max-${m.machine_id}`">Sessions at once</label>
               <input :id="`s-max-${m.machine_id}`" type="number" min="1" max="10" :value="m.max_sessions" @change="update(m, { max_sessions: Number($event.target.value) }, 'Saved.')" />
@@ -492,17 +531,70 @@ onUnmounted(() => {
                 <option value="ask">Wait for someone at the machine</option>
               </select>
             </div>
-          </div>
-        </details>
+            <p class="small muted" style="margin: 0">Agents run under <span class="mono">{{ m.agent_prefix }}/…</span></p>
+            <div class="machine__danger stack">
+              <p class="small" style="margin: 0">Revoking stops {{ m.name }} at once and forgets every board. Running <code class="mono">dutyboard</code> there again pairs it as a new machine.</p>
+              <div><button type="button" class="danger" :disabled="busy" @click="revoke(m)">Revoke {{ m.name }}</button></div>
+            </div>
+          </section>
+        </div>
       </li>
     </ul>
+
+    <details v-if="!loading" class="versions small" :open="behind.length > 0">
+      <summary>
+        Versions:
+        <template v-if="behind.length">not everything is on {{ consoleVersion }}</template>
+        <template v-else-if="boardVersion">everything is on {{ consoleVersion }}</template>
+        <template v-else>console {{ consoleVersion }}</template>
+      </summary>
+      <div class="stack">
+        <p class="muted" style="margin: 0">
+          Console <strong>{{ consoleVersion }}</strong> ·
+          board <strong>{{ boardVersion || "…" }}</strong>
+          <template v-for="m in machines" :key="m.machine_id">
+            · {{ m.name }} <strong>{{ m.cli_version || "?" }}</strong>
+          </template>
+        </p>
+        <p v-if="behind.length" class="hint" style="margin: 0">
+          Behind: {{ behind.join(", ") }}. A feature that is missing rather than broken is usually this. Update a
+          machine where it runs; update the board and this console with <code class="mono">dutyboard --provision-only</code>.
+        </p>
+        <p style="margin: 0">
+          API URL, for pairing a machine: <code class="mono">{{ config.api }}</code>
+          <button type="button" class="link small" @click="copy(config.api)">Copy</button>
+        </p>
+      </div>
+    </details>
+
+    <SidePanel v-if="pairing" label="Pair a machine" @close="pairing = false">
+      <PairMachine in-panel @paired="awaitPaired" @close="pairing = false" />
+    </SidePanel>
     <DutyDrawer v-if="reading" :key="reading.dutyId" :project-id="reading.projectId" :duty-id="reading.dutyId" @close="closeDuty" />
   </div>
 </template>
 
 <style scoped>
 .machine--focus { outline: 2px solid var(--accent); outline-offset: 2px; }
-.ready { border-top: 1px solid var(--border, rgba(127, 127, 127, 0.25)); padding-top: 0.75rem; }
+.machine__head { display: flex; align-items: center; justify-content: space-between; gap: 0.6rem; flex-wrap: wrap; }
+.machine__title { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; min-width: 0; }
+.machine__name { margin: 0; font-size: 1.15rem; }
+button.machine__toggle {
+  display: inline-flex; align-items: center; gap: 0.4rem;
+  background: none; border: 0; padding: 0.15rem 0.3rem 0.15rem 0; margin: 0;
+  font: inherit; color: inherit; text-align: left; overflow-wrap: anywhere;
+}
+button.machine__toggle:hover:not(:disabled) { background: none; color: var(--accent); }
+.machine__chevron { flex: none; color: var(--text-dim); transition: transform 0.15s ease; }
+.machine--open .machine__chevron { transform: rotate(90deg); }
+.machine__summary { display: flex; flex-wrap: wrap; align-items: center; gap: 0.25rem 0.45rem; margin: 0.35rem 0 0 1.4rem; }
+.machine__body { margin-top: 0.9rem; }
+.machine__body > [role="tabpanel"] { padding-top: 0.25rem; }
+.ready > .ready__list { margin-top: 0.75rem; }
+.page-head__text { flex: 1 1 32rem; min-width: 0; }
+.machine__danger { border-top: 1px solid var(--border); padding-top: 0.9rem; }
+.versions summary { cursor: pointer; color: var(--text-dim); }
+.versions > .stack { margin-top: 0.6rem; }
 .ready__list { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.5rem; }
 .ready__item { display: grid; grid-template-columns: 1.4rem 1fr; gap: 0.4rem; align-items: start; }
 .ready__mark { font-weight: 700; text-align: center; }

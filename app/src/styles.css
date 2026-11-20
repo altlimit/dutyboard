@@ -167,11 +167,14 @@ input[type="file"].sr-only:focus-visible + label.btn {
 main:focus { outline: none; }
 
 /* --- layout ------------------------------------------------------------ */
+/* Every page sits in the same container, so moving between them the page's edges stay put. A
+   board's Duties, Notes and Office take the whole window: columns of cards, and a building, are
+   worth more room than a tidy measure. Sign-in pages are narrow forms. */
 .wrap { max-width: 1200px; margin: 0 auto; padding: 1.25rem var(--gutter) 4rem; }
 .wrap--narrow { max-width: 640px; }
-/* The board, and only the board, takes the whole window: six columns that fit are worth
-   more than a tidy measure, and everything else here is prose or a form, which is not. */
-.wrap--board { max-width: none; }
+.wrap--full { max-width: none; }
+/* A duty read as its own page keeps the board's container, and its text a reading measure. */
+.duty-page > :not(.board-nav) { max-width: 48rem; }
 .stack > * + * { margin-top: 1rem; }
 .row { display: flex; gap: 0.6rem; align-items: center; flex-wrap: wrap; }
 .row--between { justify-content: space-between; }
@@ -865,8 +868,11 @@ button.tabs__tab[aria-selected="true"] { color: var(--text); border-bottom-color
 
 /* Board settings: tabs in a row above the page on a phone, a list down its side on a wider screen,
    where seven tabs in a row would not fit and a side list is the familiar shape for settings. */
-.wrap--settings { max-width: 1040px; }
 .settings > [role="tabpanel"] { margin-top: 1rem; }
+/* Board settings → Tokens: the two things a token is for, side by side. */
+.token-uses { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr)); gap: 0.75rem; }
+.token-use { border: 1px solid var(--border); border-radius: var(--radius); padding: 0.75rem 0.9rem; background: var(--surface); }
+.token-use p { margin: 0.3rem 0 0; }
 @media (min-width: 60rem) {
   .settings { display: grid; grid-template-columns: 12rem minmax(0, 1fr); gap: 0 2rem; align-items: start; }
   .settings > .tabs {
@@ -935,4 +941,3 @@ details > summary { cursor: pointer; font-weight: 550; }
 
 
 /* One MCP server in the board form: its fields grouped, so a list of them reads as separate servers. */
-.mcp-server { border: 1px solid var(--border); border-radius: 10px; padding: 0.9rem; }

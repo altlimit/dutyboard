@@ -132,7 +132,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="wrap wrap--board stack">
+  <div class="wrap wrap--full stack">
     <div>
       <h1>Office</h1>
       <p class="muted small" style="margin: 0">Each board is a room of cubicles, one per role. Whoever has nothing in hand is in the breakroom.</p>

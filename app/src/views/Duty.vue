@@ -325,7 +325,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="stack" :class="embedded ? 'duty-embedded' : 'wrap wrap--narrow'">
+  <div class="stack" :class="embedded ? 'duty-embedded' : 'wrap duty-page'">
     <BoardNav v-if="!embedded" :project-id="projectId" :active="duty?.kind === 'note' ? 'notes' : 'board'" />
     <p v-if="!embedded" style="margin: 0">
       <router-link :to="{ name: duty?.kind === 'note' ? 'notes' : 'board', params: { projectId } }">← {{ duty?.kind === 'note' ? 'Back to Notes' : 'Back to the board' }}</router-link>

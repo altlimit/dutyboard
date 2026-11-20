@@ -184,7 +184,7 @@ function readHere(event, dutyId) {
 </script>
 
 <template>
-  <div class="wrap wrap--board stack">
+  <div class="wrap wrap--full stack">
     <BoardNav :project-id="projectId" :name="board?.name" active="office" />
     <div class="row row--between">
       <div>
