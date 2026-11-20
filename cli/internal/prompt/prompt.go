@@ -44,7 +44,14 @@ type Input struct {
 	Repos       []Repo // the board's other repositories, when it has any
 	Files       *Files // set on a board with no repository
 	Check       string // what the schedule's check said, when it is why the session was started
+	// Memory is what the board's agents have written down for whoever works here next; nil when the
+	// board is too old to keep one. Who the session is on the board's team is on the duty (Duty.Team).
+	Memory *board.Memory
 }
+
+// MustHandOff reports whether this session's role hands its work to a reviewer instead of landing
+// and completing the duty itself.
+func (in Input) MustHandOff() bool { return in.Duty.Team.MustHandOff() }
 
 // Files is a duty's folder on a board with no repository: one of one-off tasks, or one that runs an
 // account through its MCP servers (Service).
@@ -76,6 +83,8 @@ func Duty(in Input) (string, error) {
 		return render("setup.md", in)
 	case "rules":
 		return render("rules.md", in)
+	case "roster":
+		return render("roster.md", in)
 	default:
 		return render("work.md", in)
 	}

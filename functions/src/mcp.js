@@ -17,7 +17,9 @@
 // look to most clients like the server broke.
 
 import { HttpError, badRequest, json, readBoundedText } from "./http.js";
-import { listNotes, listDuties, suggestDuty, pollDuties, claimDuty, enqueueDuty, checkpointDuty, completeDuty, failDuty, listThread, getDuty, cancelDuty, listChanges, PRIORITIES, THREAD_KINDS } from "./duties.js";
+import { listNotes, listDuties, suggestDuty, pollDuties, claimDuty, enqueueDuty, checkpointDuty, completeDuty, failDuty, listThread, getDuty, cancelDuty, listChanges, handoffDuty, PRIORITIES, THREAD_KINDS } from "./duties.js";
+import { getRoster, submitRoster, LEVELS, MAX_CHARTER_CHARS, MAX_ROLES } from "./roster.js";
+import { getMemory, writeMemory, MAX_MEMORY_CHARS } from "./memory.js";
 import { deleteAttachment, attachToDuty, listAttachments, MAX_BYTES, MAX_INLINE_BYTES } from "./attachments.js";
 import { searchDuties } from "./searching.js";
 import { createSchedule, deleteSchedule, listSchedules, scheduleHistory, updateSchedule } from "./schedules.js";
@@ -56,6 +58,12 @@ A note_review duty asks for suggestions only. Notes live in a separate board vie
 RUNNER SELECTION AND USAGE LIMITS
 board_profile returns runner.use_machine_defaults: true means inherit this machine's enabled list and order; otherwise runner.options is the board priority override (or legacy runner.agent/model/effort). The daemon chooses among combinations enabled on this machine and falls back when usage is exhausted, keeping the same duty and workspace. Resume from checkpoints and verify existing changes. Model catalogs come from installed CLIs; do not invent model names or edit runner configuration. Machine availability, board priorities and Refresh models are owner controls. A duty's agent_options overrides board priority; null inherits it. Recurring schedules copy agent_options to each occurrence. Only combinations enabled on the machine can run. After a server-side account or usage fix, the board or machine owner can use Retry now to clear usage cooldowns; Refresh models and Check again do not do that. Agents cannot reset usage, change access grants, or approve notes through MCP.
 
+THE TEAM
+A board may have a team: named roles — a Duty Officer, an Architect, an Engineer, QA, or whatever the board's owner accepted — that a duty passes between. When it does, the duty you claim comes with 'roster': 'role' is who you are for this duty and its 'charter' is the standard you work to, on top of the board's rules; 'team' is everyone you can pass it to and what each is for; 'handoff' is what the last role said when passing it to you, which is part of your brief. Work as your role and no further. duty_handoff passes the SAME duty to another role with a note — the thread, the files and the workspace go with it — and then it is no longer yours: stop. A role marked 'reviewed' never lands or completes its own work: it hands the duty to a role that 'reviews', which verifies it, lands it and completes it, or hands it straight back with findings. Nothing is finished until a reviewer has seen it work. The role with 'intake' reads every new duty first and decides who works it, so nobody filing a duty names a role — except when you split the duty you hold into pieces, where duty_enqueue takes the role each piece is for. board_roster shows the team, and one role's charter when you name it. A board with no team has no 'roster': work the duty start to finish yourself.
+
+THE TEAM'S MEMORY
+The board keeps one short memory for its agents — what the next session must know about this project that it cannot work out from the code, the rules or the profile: decisions and why, how things are really run, traps, where things live. It comes with the duty you claim ('memory'), and board_memory reads it. Anything worth remembering goes there, with board_memory_write, before you finish: if it is not written there, the next session does not know it. It is small and it is replaced whole, so read it, edit it — cut what is stale, merge what repeats — and write back the full text with the version you read. Never put a secret, a credential or anyone's personal data in it.
+
 WHAT YOU FIND ALONG THE WAY
 Do not widen the duty you are on. A discovery that blocks it: duty_enqueue with priority 'immediate_blocker' and spawned_by set to the duty you are holding — yours parks behind it, you claim the new one, and finishing it returns the parent to the front of the queue on its own. A discovery that does not block it: duty_enqueue with 'next' or 'backlog', then carry on with what you were doing.
 
@@ -78,7 +86,7 @@ SHOWING RATHER THAN DESCRIBING
 duty_attach puts a file on a duty — a screenshot of what you built, a recording of the failure, the log that explains it. duty_attachments reads what is there, including what a person attached for you; if a duty has attachments, look at them before asking about it.
 
 THE PROJECT ITSELF
-board_profile says what this project is — its type, repository, toolchain, test command, how it deploys — and board_rules gives the rules a person has put in force for it. Follow those rules in every duty. A duty of kind 'setup' is how a machine gets ready for the project: record what you found with board_profile_propose. A duty of kind 'rules' asks you to write the rules: hand them in with board_rules_submit, and a person decides whether they take effect.
+board_profile says what this project is — its type, repository, toolchain, test command, how it deploys — and board_rules gives the rules a person has put in force for it. Follow those rules in every duty. A duty of kind 'setup' is how a machine gets ready for the project: record what you found with board_profile_propose. A duty of kind 'rules' asks you to write the rules: hand them in with board_rules_submit, and a person decides whether they take effect. A duty of kind 'roster' asks you to draft the board's team: hand it in with board_roster_submit, and a person decides the same way. Rules are what the project requires; a role's charter is how that role works; both apply, and where they disagree the rules win.
 
 WORK THAT COMES ROUND AGAIN
 Some work is never finished, only due again — a weekly post, a monthly check of something that drifts. duty_schedule_list shows what this board already repeats; duty_schedule_create makes a duty recur on a cron expression, and each one it files tells the next how the last went. Only while you hold an active duty. It is also the only way to do anything later: never poll, sleep or stay in a session waiting for something to happen or to keep something up to date. When a duty asks for something to stay current or be watched, that is a person asking, so set one up and say so in your outcome; when nobody asked, propose it in a checkpoint rather than commit the board to work indefinitely.`;
@@ -192,10 +200,96 @@ const TOOLS = [
         external_ref: s("Your own id for this request. Filing the same external_ref again answers the duty already filed (existing: true) instead of a second one."),
         metadata: { type: "object", description: "Your own fields, up to 2KB of JSON, handed back on every read of the duty." },
         reserved_for: s("Send it to one runner: the agent_prefix of a machine linked to this board."),
+        role: s("Only on a board with a team, and only for a piece you are splitting out of the duty you hold: the id of the role that should work it, from board_roster. Leave it out otherwise — the role that reads new duties first decides."),
       },
       required: ["title", "brief"],
     },
     handler: enqueueDuty,
+  },
+  {
+    name: "duty_handoff",
+    title: "Pass this duty to another role",
+    description:
+      "On a board with a team: pass the duty you are holding to another role, with a note. It stays the same duty — its thread, files and workspace go with it — and it is no longer yours, so stop once this succeeds. Use it when the next step is another role's job: the role that reads new duties routing one to whoever should work it; a planner passing its plan to a builder; a builder passing finished, tested work to a reviewer (a role marked 'reviewed' cannot land or complete its own work — this is how it finishes); a reviewer passing work back with its findings. The note is the next role's brief, read with none of your context: what you did or decided, what is left, where to look, and for a reviewer every finding in one pass. Do not hand a duty on to avoid a question only a person can answer — park that with duty_checkpoint. A reviewer that keeps sending the same work back, and a plan on a board that asks to approve plans, go to a person first; the answer says so.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        duty_id: s("The duty you are holding."),
+        to_role: s("The id of the role to pass it to, from the 'team' that came with the duty or from board_roster."),
+        note: s("What the next role needs to know, as markdown. Lead with the point; then what changed and where, how it was checked, and what to look at or do next."),
+        agent_id: s("Which agent you are. Defaults to the id configured on this connection."),
+      },
+      required: ["duty_id", "to_role", "note"],
+    },
+    handler: handoffDuty,
+  },
+  {
+    name: "board_roster",
+    title: "The board's team",
+    description:
+      "The roles on this board's team: each one's id, name, what it is for, the level of model it runs on, and whether it reads new duties first ('intake'), plans, needs review ('reviewed') or reviews. Pass `role` to read one role's full charter. `in_force: false` means the board has no team and every duty is worked start to finish by whoever claims it. Your own role and charter already came with the duty you claimed.",
+    inputSchema: { type: "object", properties: { role: s("A role id, to read its charter as well.") } },
+    handler: getRoster,
+  },
+  {
+    name: "board_roster_submit",
+    title: "Hand in a drafted team",
+    description:
+      `While holding an active 'roster' duty: submit the team you drafted for this board. It becomes a draft a person reviews and accepts; submitting again replaces your draft. Two to ${MAX_ROLES} roles. Exactly one has intake true: it reads every new duty first, routes it, and does only the trivial ones itself. A role whose work must be verified before it counts has reviewed true, and then at least one role must have reviews true — that role verifies, lands and completes the work, or hands it back. A role whose output is a plan for others has plans true. Each charter is that role's standing instructions: the best practice of its discipline as concrete, checkable standards, written so that nobody filing a duty has to ask for quality, and so the reviewer's charter checks the builder's work against the same standards.`,
+    inputSchema: {
+      type: "object",
+      properties: {
+        duty_id: s("The roster duty you are holding."),
+        roles: {
+          type: "array",
+          minItems: 2,
+          maxItems: MAX_ROLES,
+          items: {
+            type: "object",
+            properties: {
+              id: s("Lowercase letters, digits and dashes, e.g. 'senior-engineer'."),
+              name: s("What people call it, e.g. 'Senior Engineer'."),
+              summary: s("One sentence: what it is for and when a duty should go to it. Other roles route by this."),
+              level: s("How capable a model it needs. light for routing and simple work, standard for most building, senior for risky work and for reviewing, principal for design.", { enum: LEVELS }),
+              charter: s(`Its standing instructions, as markdown, up to ${MAX_CHARTER_CHARS} characters.`),
+              intake: { type: "boolean", description: "Reads every new duty first. Exactly one role." },
+              plans: { type: "boolean", description: "Its handoff is a plan for another role to carry out." },
+              reviewed: { type: "boolean", description: "Its work must pass a reviewer; it cannot land or complete a duty itself." },
+              reviews: { type: "boolean", description: "Verifies other roles' work, lands it and completes the duty, or hands it back." },
+            },
+            required: ["id", "name", "summary", "level", "charter"],
+          },
+        },
+        note: s("Optional: why this team, in a sentence or two, for the person deciding whether to accept it."),
+        agent_id: s("Which agent you are. Defaults to the id configured on this connection."),
+      },
+      required: ["duty_id", "roles"],
+    },
+    handler: submitRoster,
+  },
+  {
+    name: "board_memory",
+    title: "The team's memory",
+    description:
+      `What this board's agents have written down for whoever works here next: decisions and why, how the project is really run, traps, where things live. Read it before starting — it also comes with the duty you claim. Answers the text, its version (pass that to board_memory_write) and how much of its ${MAX_MEMORY_CHARS} characters is used.`,
+    inputSchema: { type: "object", properties: {} },
+    handler: getMemory,
+  },
+  {
+    name: "board_memory_write",
+    title: "Update the team's memory",
+    description:
+      `Replace the team's memory with the text you send. Only while holding an active duty. Anything the next session needs and could not work out from the code, the rules or the profile belongs here, and nowhere else survives your session: a decision and the reason for it, a command that actually works, a trap you fell into, where something lives. It is read into every session, so it is capped at ${MAX_MEMORY_CHARS} characters and curated, not appended to: read it, keep what is still true, cut what is stale, merge what repeats, and send the whole text back with based_on set to the version you read. If someone else wrote meanwhile you get their text back to merge. Short bullets under a few plain headings. Never a secret, a credential or personal data; nothing that is only about the duty in hand — that goes in its outcome.`,
+    inputSchema: {
+      type: "object",
+      properties: {
+        body: s("The whole memory, as markdown. An empty string clears it."),
+        based_on: { type: "integer", description: "The version you read with board_memory, or that came with the duty." },
+        agent_id: s("Which agent you are. Defaults to the id configured on this connection."),
+      },
+      required: ["body", "based_on"],
+    },
+    handler: writeMemory,
   },
   {
     name: "duty_get",

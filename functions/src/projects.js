@@ -15,6 +15,7 @@ import { sharedBoards, sweepMembers, syncAccess } from "./members.js";
 import { isFolderBoard, mergeProfile, mergeRunner } from "./profile.js";
 import { rulesDuty, runnersOf, runnersOfBoards, sweepBoardMachines } from "./machines.js";
 import { upcomingSchedules } from "./schedules.js";
+import { presetOps, startingPreset } from "./roster.js";
 
 const SWEEP_PAGE = 200;
 
@@ -78,8 +79,12 @@ export async function createProjectFor(ctx, caller, body) {
   // claimed. Nor does a board with no repository — one-off tasks, or an account run through its MCP
   // servers: there is no project to read rules from.
   const rules = withRunner && !isFolderBoard(row) ? rulesDuty({ key, owner_uid: caller.uid }, now) : null;
-  await ctx.store.transaction([putOp("projects", key, row), ...(rules ? [rules.op] : [])]);
-  return { project_id: key, name, rules_duty_id: rules ? rules.id : null };
+  // The team the board starts with, when it asks for one: in force from its first duty.
+  const preset = startingPreset(body.roster, profile);
+  const team = preset ? presetOps({ key, owner_uid: caller.uid }, preset, now) : null;
+  if (team) row.roster = team.pointer;
+  await ctx.store.transaction([putOp("projects", key, row), ...(rules ? [rules.op] : []), ...(team ? [team.op] : [])]);
+  return { project_id: key, name, rules_duty_id: rules ? rules.id : null, roster: preset };
 }
 
 /** `POST /projects/list` — the boards this person owns, and the ones shared with them.
@@ -203,6 +208,8 @@ export async function openBoard(ctx, body) {
       profile: project.profile || null,
       runner: project.runner || null,
       rules_version: project.rules_version || 0,
+      // Whether the board has a team, and which role reads new duties first.
+      roster: project.roster || null,
     },
     // Which of the two this caller is, so the console can leave out what a member cannot do
     // rather than offer it and refuse.
@@ -262,6 +269,10 @@ export async function deleteProject(ctx, body) {
     webhooks: await sweep(ctx, "webhooks", project.key),
     schedules: await sweep(ctx, "schedules", project.key),
     finishes: await sweep(ctx, "finishes", project.key),
+    role_events: await sweep(ctx, "role_events", project.key),
+    // The team and what it wrote down, each one row keyed by the board.
+    roster: await ctx.store.delete("rosters", [project.key]).catch(() => 0),
+    memory: await ctx.store.delete("memories", [project.key]).catch(() => 0),
     // And everyone who was on it, with the board taken back out of their claims.
     members: await sweepMembers(ctx, project.key),
     // And every machine working it, each told so its daemon stops.

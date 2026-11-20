@@ -8,6 +8,7 @@ import (
 
 	"github.com/altlimit/dutyboard/cli/internal/board"
 	"github.com/altlimit/dutyboard/cli/internal/readiness"
+	"github.com/altlimit/dutyboard/cli/internal/seal"
 )
 
 // How often the machine's checklist is made again when nothing asks for it sooner, and how often it is
@@ -53,7 +54,13 @@ func (d *Daemon) checkReadiness(ctx context.Context) {
 		if same || ctx.Err() != nil {
 			return
 		}
-		err := d.api.ReportReadiness(ctx, rep.Items, rep.CheckedAt)
+		// The public half of this machine's sealing key goes with it: the console encrypts to it what
+		// its owner types there, so a secret reaches this machine without the board being able to read it.
+		sealKey, err := seal.PublicKey()
+		if err != nil {
+			d.log.Printf("this machine's sealing key: %v", err)
+		}
+		err = d.api.ReportReadiness(ctx, rep.Items, rep.CheckedAt, sealKey)
 		d.mu.Lock()
 		defer d.mu.Unlock()
 		switch {

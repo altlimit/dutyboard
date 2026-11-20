@@ -52,6 +52,11 @@ jobs:
       - run: node scripts/notes-check.mjs
       - run: node scripts/board-access-check.mjs
       - run: node scripts/mcp-features-check.mjs
+      # A board's team: who reads a duty first, handing it on, the review gate, levels, the memory,
+      # and what the console may send a machine sealed.
+      - run: node scripts/roster-check.mjs
+      # And what the console draws from it: the record, its ranking and the office.
+      - run: node scripts/team-ui-check.mjs
 
       # Every script parses. They are not imported by either build, so a syntax error in one
       # would otherwise surface the first time someone ran a release step.

@@ -4,6 +4,7 @@ import BoardNav from "../components/BoardNav.vue";
 import { computed, onUnmounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { api, getDocs, query, subscribeLive } from "../lib/altengine.js";
+import { dutyRoleId, roleNameFromId } from "../lib/team.js";
 import { ALL_STATUSES, PRIORITIES, THREAD_KIND_LABELS, ago, exactTime, expiryChoices, originLabel, priorityLabel, statusLabel } from "../lib/duties.js";
 import { activityByDuty, activityLine, optionLabel } from "../lib/runners.js";
 import NoteActions from "../components/NoteActions.vue";
@@ -21,6 +22,19 @@ const PAGE = 25;
 
 const duty = ref(null);
 const boardRunner = ref(null);
+/** Whether the board has a team, and who reads new duties first — from its profile. */
+const boardRoster = ref(null);
+/**
+ * Which role has this duty, by name. The thread's handoffs carry the names the team uses; a duty
+ * nobody has handed on yet is named from the role's id.
+ */
+const roleLabel = computed(() => {
+  if (!duty.value || duty.value.status === "done" || duty.value.status === "failed") return "";
+  const id = dutyRoleId(duty.value, boardRoster.value);
+  if (!id) return "";
+  const named = entries.value.map((e) => e.metadata && e.metadata.handoff).find((h) => h && (h.to === id || h.from === id));
+  return (named && (named.to === id ? named.to_name : named.from_name)) || roleNameFromId(id);
+});
 const machines = ref([]);
 const sourceNotes = ref([]);
 const entries = ref([]);
@@ -80,6 +94,7 @@ async function load() {
       api("/board/profile", { project_id: props.projectId }),
     ]);
     boardRunner.value = boardRes.runner || null;
+    boardRoster.value = boardRes.roster || null;
     duty.value = (dutyRes.documents || []).map(flat)[0] || null;
     const ids = duty.value?.source_note_ids || (duty.value?.source_note_id ? [duty.value.source_note_id] : []);
     const sources = [];
@@ -317,6 +332,11 @@ onUnmounted(() => {
           <span v-if="duty.kind !== 'note'" class="badge" :class="`badge--${duty.priority}`">{{ priorityLabel(duty.priority) }}</span>
           <span v-if="duty.kind === 'setup'" class="badge badge--active" title="Gets one machine ready for the project">setup</span>
           <span v-if="duty.kind === 'rules'" class="badge badge--active" title="Drafts the board's rules for the owner to accept">rules</span>
+          <span v-if="duty.kind === 'roster'" class="badge badge--active" title="Drafts the board's team for the owner to accept">team</span>
+          <span v-if="roleLabel" class="badge badge--role" :title="duty.status === 'active' ? `${roleLabel} is working it` : `It is with ${roleLabel}, the role on this board's team that takes it next`">
+            {{ duty.status === "active" ? "" : "with " }}{{ roleLabel }}
+          </span>
+          <span v-if="duty.bounces" class="badge" :title="`A reviewer has sent this work back ${duty.bounces} time${duty.bounces === 1 ? '' : 's'}`">sent back ×{{ duty.bounces }}</span>
           <span v-if="duty.reserved_for" class="badge" :title="`Only ${duty.reserved_for} can work this`">for {{ duty.reserved_for }}</span>
           <span v-if="duty.affinity && duty.status !== 'active'" class="badge" :title="`Its half-finished work is on ${duty.affinity.machine_name || duty.affinity.machine_id}, which resumes it`">
             waits for {{ duty.affinity.machine_name || "its machine" }}
@@ -405,7 +425,7 @@ onUnmounted(() => {
         </form>
       </div>
 
-      <p v-if="!editing && duty.kind !== 'note'" class="hint">Model priority: {{ duty.agent_options?.length ? duty.agent_options.map(optionLabel).join(' → ') : 'Board defaults' }}</p>
+      <p v-if="!editing && duty.kind !== 'note'" class="hint">Model priority: {{ duty.agent_options?.length ? duty.agent_options.map(optionLabel).join(' → ') : roleLabel ? `chosen for ${roleLabel}'s level by the machine that works it` : 'Board defaults' }}</p>
       <Attachments :duty-id="dutyId" :items="attachments" :busy="posting" :accept-paste="editing" @changed="load" />
 
       <div v-if="duty.outcome_summary" class="panel" :style="`border-left: 3px solid var(--${duty.status === 'failed' ? 'danger' : 'ok'})`">
@@ -521,7 +541,10 @@ onUnmounted(() => {
           <li v-for="e in entries" :key="e.key" class="entry" :class="`entry--${e.kind}`">
             <div class="entry__head">
               <span class="entry__who">{{ e.author_type === "human" ? e.author_name || "You" : e.author_id }}</span>
-              <span class="badge">{{ THREAD_KIND_LABELS[e.kind] || e.kind }}</span>
+              <span v-if="e.metadata && e.metadata.handoff" class="badge" :class="e.metadata.handoff.sent_back ? 'badge--needs_decision' : 'badge--active'">
+                {{ e.metadata.handoff.from_name }} {{ e.metadata.handoff.sent_back ? "sent it back to" : "handed it to" }} {{ e.metadata.handoff.to_name }}
+              </span>
+              <span v-else class="badge">{{ THREAD_KIND_LABELS[e.kind] || e.kind }}</span>
               <span class="muted small" :title="exactTime(e.created_at)">{{ ago(e.created_at) }}</span>
             </div>
             <div class="entry__body md" v-html="markdown(e.message)"></div>

@@ -10,6 +10,7 @@ const routes = [
   { path: "/notifications", name: "notifications", component: () => import("./views/Notifications.vue"), meta: { title: "Notifications" } },
   { path: "/machines", name: "runners", component: () => import("./views/Runners.vue"), meta: { title: "Your machines" } },
   { path: "/b/:projectId", name: "board", component: () => import("./views/Board.vue"), props: true, meta: { title: "Board" } },
+  { path: "/b/:projectId/office", name: "office", component: () => import("./views/Office.vue"), props: true, meta: { title: "Office" } },
   { path: "/b/:projectId/notes", name: "notes", component: () => import("./views/Notes.vue"), props: true, meta: { title: "Notes" } },
   { path: "/b/:projectId/settings", name: "settings", component: () => import("./views/Settings.vue"), props: true, meta: { title: "Board settings" } },
   { path: "/b/:projectId/d/:dutyId", name: "duty", component: () => import("./views/Duty.vue"), props: true, meta: { title: "Duty" } },

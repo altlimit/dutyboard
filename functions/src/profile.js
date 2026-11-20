@@ -45,6 +45,8 @@ export const ALTENGINE_KINDS = ["static", "functions"];
 export const RUNNER_AGENTS = ["claude-code", "codex", "cursor"];
 export const PERMISSION_MODES = ["default", "acceptEdits", "plan", "bypassPermissions"];
 export const EFFORTS = ["none", "minimal", "low", "medium", "high", "xhigh", "max"];
+/** How capable a role's model should be; a machine's combinations are each at one (roster.js). */
+export const LEVELS = ["light", "standard", "senior", "principal"];
 
 /** Duties at once on one board. Above this the bottleneck is merges and plan limits, not lanes. */
 export const MAX_PARALLEL = 10;
@@ -336,6 +338,9 @@ export function agentOptions(value, field = "agent_options", { toggles = false }
         if (typeof o.disabled !== "boolean") throw badRequest(`'${f}.disabled' must be a boolean`);
         if (o.disabled) option.disabled = true;
       }
+      // The level a machine's owner says this combination works at, for boards with a team. Left out,
+      // it is read from the model and effort (roster.js).
+      if (toggles && o.level) option.level = oneOf(o.level, `${f}.level`, LEVELS);
       return option;
     },
   });
@@ -384,6 +389,8 @@ export const profileView = (project) => ({
   profile: project.profile || null,
   runner: project.runner || null,
   rules_version: project.rules_version || 0,
+  // Whether the board has a team (roster.js): its version, and which role reads new duties first.
+  roster: project.roster || null,
 });
 
 // --- profile -----------------------------------------------------------------------------
@@ -525,7 +532,7 @@ async function writeRules(ctx, project, row, { body, draft, source }) {
 }
 
 /** The duty in `body.duty_id`, which must be an active duty of `kind` held by the calling agent. */
-async function heldDutyOfKind(ctx, body, kind) {
+export async function heldDutyOfKind(ctx, body, kind) {
   if (ctx.caller.kind !== "agent") throw forbidden(`only the agent holding a ${kind} duty can do this`);
   const duty = await loadDuty(ctx, body.duty_id);
   const project = await projectOfDuty(ctx.caller, duty, ctx.store);

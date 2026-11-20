@@ -304,7 +304,8 @@ const removeServer = (i) => {
     </p>
     <p class="hint">
       <strong>Nothing here is private:</strong> everyone on the board can read it. Name a server's credentials under
-      secrets, and set their values on each machine with <code class="mono">dutyboard --mcp-secrets</code>.
+      secrets, and give each machine their values: on the Machines page, where they are encrypted for that machine alone, or on the machine
+      with <code class="mono">dutyboard --mcp-secrets</code>.
     </p>
     <div v-for="(s, i) in draft.mcp_servers" :key="i" class="stack mcp-server">
       <div class="field">

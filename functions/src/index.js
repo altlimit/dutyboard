@@ -47,7 +47,11 @@ import {
   getDuty,
   listChanges,
   cancelDuty,
+  handoffDuty,
+  sweepOldRoleEvents,
 } from "./duties.js";
+import { getRoster, setRoster, acceptRoster, submitRoster, draftRoster } from "./roster.js";
+import { getMemory, writeMemory } from "./memory.js";
 import { handleMcp, callLinkedBoard } from "./mcp.js";
 import { addMember, listMembers, removeMember, setMemberAgents, syncAccess } from "./members.js";
 import { reindexBoard, searchConfigured, searchDuties } from "./searching.js";
@@ -143,6 +147,7 @@ const ROUTES = {
   "/duty/get": getDuty,
   "/duty/changes": listChanges,
   "/duty/cancel": cancelDuty,
+  "/duty/handoff": handoffDuty,
   "/duty/search": searchDuties,
   "/duty/attach": attachToDuty,
   "/duty/attachments": listAttachments,
@@ -160,6 +165,13 @@ const ROUTES = {
   "/board/rules/set": setRules,
   "/board/rules/accept": acceptRules,
   "/board/rules/submit": submitRules,
+  "/board/roster": getRoster,
+  "/board/roster/set": setRoster,
+  "/board/roster/accept": acceptRoster,
+  "/board/roster/submit": submitRoster,
+  "/board/roster/draft": draftRoster,
+  "/board/memory": getMemory,
+  "/board/memory/write": writeMemory,
   "/schedules/list": listSchedules,
   "/schedules/create": createSchedule,
   "/schedules/update": updateSchedule,
@@ -341,6 +353,7 @@ export default {
         if (expired) console.log(`duties: removed ${expired} expired`);
         // The boards page counts a fortnight of finishes; these are the ones past what it keeps.
         await sweepOldFinishes(ctx, at).catch((err) => console.log("forgetting old finishes:", err && err.message));
+        await sweepOldRoleEvents(ctx, at).catch((err) => console.log("forgetting old role events:", err && err.message));
         return json({ ok: true, ...ran, expired, at });
       } catch (err) {
         console.log("scheduled run:", err && err.message);

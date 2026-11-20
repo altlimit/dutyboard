@@ -369,6 +369,10 @@ input[aria-invalid="true"], textarea[aria-invalid="true"] { border-color: var(--
 .feed__what { min-width: 0; }
 .feed__empty { color: var(--text-dim); font-size: 0.9rem; margin: 0.25rem 0 0; }
 .feed__more { color: var(--text-dim); font-size: 0.85rem; margin: 0.5rem 0 0; }
+/* The roles whose work held up best: the rate leads, in a column of its own, like a schedule's time. */
+.toproles { counter-reset: none; }
+.toproles__rate { flex: 0 0 3.5rem; font-weight: 700; font-size: 1.05rem; font-variant-numeric: tabular-nums; color: var(--ok); }
+.toproles__rate--thin { color: var(--text-dim); font-weight: 600; }
 
 /* The boards, as a table: the same columns for every board, numbers right-aligned to compare. */
 .btable-wrap {
@@ -461,6 +465,9 @@ input[aria-invalid="true"], textarea[aria-invalid="true"] { border-color: var(--
 .badge--active { background: var(--accent-soft); color: var(--accent); border-color: currentColor; }
 .badge--done { background: var(--ok-soft); color: var(--ok); border-color: currentColor; }
 .badge--failed { background: var(--danger-soft); color: var(--danger); border-color: currentColor; }
+/* Which role on the board's team has a duty. Plain on purpose: it is on most cards of a board with a
+   team, so it reads as a label, not as a state. */
+.badge--role { background: var(--surface); color: var(--text); border-color: var(--border-strong); }
 
 /* --- board -------------------------------------------------------------- */
 /*

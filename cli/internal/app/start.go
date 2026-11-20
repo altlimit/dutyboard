@@ -506,10 +506,13 @@ func createBoard(ctx context.Context, u *ui.UI, api *board.Client, repo, url str
 	id, err := api.CreateBoard(ctx, map[string]any{
 		"name": name, "project_id": name, "profile": profile,
 		"runner": map[string]any{"agent": []string{"claude-code", "codex", "cursor"}[agent], "parallel": parallel},
+		// The team that fits the board: who reads each duty first, who builds, who verifies. Its owner
+		// can change or remove it in the board's settings.
+		"roster": "auto",
 	})
 	if err != nil {
 		return "", err
 	}
-	u.OK("created board %q; its first duty writes the project's rules", id)
+	u.OK("created board %q; its first duty writes the project's rules, and it starts with a team you can change in its settings", id)
 	return id, nil
 }

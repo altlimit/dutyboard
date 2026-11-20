@@ -5,6 +5,7 @@ import { api } from "../lib/altengine.js";
 import { config } from "../config.js";
 import { ago } from "../lib/duties.js";
 import MachineAgents from "../components/MachineAgents.vue";
+import MachineSecrets from "../components/MachineSecrets.vue";
 import { AGENTS, runnerLimited, runStateLabel, readinessStatus } from "../lib/runners.js";
 import { CONSOLE_VERSION, differs, serviceVersion } from "../lib/version.js";
 
@@ -54,7 +55,14 @@ const unneeded = (m) => (m.links.length ? readiness(m).filter((it) => !it.needed
 const following = ref({}); // request_id → request
 const toolRequest = (m, key) =>
   Object.values(following.value).find((r) => r.machine_id === m.machine_id && r.tool === key) ||
-  (m.requests || []).find((r) => r.tool === key && (r.kind === "install_tool" || r.kind === "sign_in"));
+  (m.requests || []).find((r) => r.tool === key && (r.kind === "install_tool" || r.kind === "sign_in" || r.kind === "mcp_secrets"));
+/** What a request under way is doing, as its checklist line says it. */
+const workLabel = (r) => ({ install_tool: "Installing", mcp_secrets: "Storing them" })[r.kind] || "Signing in";
+/** Secrets sent from here are followed like an install or a sign-in, until the machine says they are stored. */
+function secretsRequested(m, request) {
+  following.value = { ...following.value, [request.request_id]: request };
+  notice.value = `Sent to ${m.name}, encrypted. It says here when they are stored.`;
+}
 const pasted = ref({}); // request_id → value
 const openSetups = (m) => (m.requests || []).filter((r) => r.kind === "setup" || r.kind === "create_repo");
 
@@ -135,7 +143,7 @@ async function load({ quiet = false } = {}) {
     const add = {};
     for (const mm of machines.value) {
       for (const r of mm.requests || []) {
-        if ((r.kind === "install_tool" || r.kind === "sign_in") && !following.value[r.request_id]) add[r.request_id] = r;
+        if ((r.kind === "install_tool" || r.kind === "sign_in" || r.kind === "mcp_secrets") && !following.value[r.request_id]) add[r.request_id] = r;
       }
     }
     if (Object.keys(add).length) following.value = { ...following.value, ...add };
@@ -348,7 +356,7 @@ onUnmounted(() => {
                 <div v-if="toolRequest(m, it.key)" class="ready__work stack">
                   <template v-for="r in [toolRequest(m, it.key)]" :key="r.request_id">
                     <p class="small" style="margin: 0" role="status">
-                      {{ r.kind === "install_tool" ? "Installing" : "Signing in" }}…
+                      {{ workLabel(r) }}…
                       <span class="muted">{{ r.status === "pending" ? `waiting for ${m.name} to start` : "" }}</span>
                     </p>
                     <template v-if="r.prompt && r.prompt.url">
@@ -368,6 +376,13 @@ onUnmounted(() => {
                     </template>
                   </template>
                 </div>
+                <MachineSecrets
+                  v-else-if="it.key === 'mcp_secrets' && it.state === 'todo' && it.secrets && it.secrets.length"
+                  :machine="m"
+                  :secrets="it.secrets"
+                  :disabled="busy"
+                  @requested="secretsRequested(m, $event)"
+                />
                 <div v-else-if="it.actions && it.actions.length && it.state === 'todo'" class="row" style="margin-top: 0.3rem">
                   <button
                     v-if="it.actions.includes('install')"

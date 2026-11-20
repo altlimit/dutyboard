@@ -18,6 +18,7 @@ import {
 } from "../lib/boards.js";
 import { plain } from "../lib/markdown.js";
 import { newRepoDraft, noRepo, profileDraft, profilePayload, requestNewRepo, runnerSummary } from "../lib/runners.js";
+import { MIN_JUDGED, RECORD_DAYS, duration, percent, roleRecord, roleRecordRequest, topRoles } from "../lib/team.js";
 import ProfileForm from "../components/ProfileForm.vue";
 import NewRepoFields from "../components/NewRepoFields.vue";
 import BoardTable from "../components/BoardTable.vue";
@@ -117,7 +118,7 @@ const rowsOf = (res) => (res.documents || []).map((d) => ({ ...d.data, key: Stri
  *  fortnight's finishes. Each part is best-effort — the list of boards is what this page is for,
  *  and none of these may take it down. */
 async function loadStatus() {
-  const [agg, asks, active, done] = await Promise.allSettled([
+  const [agg, asks, active, done, team] = await Promise.allSettled([
     aggregate("duties", COUNTS_REQUEST),
     query("duties", {
       where: [{ field: "status", op: "=", value: "needs_decision" }],
@@ -130,7 +131,11 @@ async function loadStatus() {
       limit: RUNNING_SHOWN,
     }),
     aggregate("finishes", finishesRequest()),
+    aggregate("role_events", roleRecordRequest()),
   ]);
+  // Boards with a team keep a record of how each role's work went. A DutyBoard from before teams has
+  // no such collection, and a board without a team has no rows: either way the panel is left out.
+  if (team.status === "fulfilled") roles.value = topRoles(roleRecord(team.value.groups), ROLES_SHOWN);
   if (agg.status === "fulfilled") counts.value = countsByBoard(agg.value.groups);
   if (asks.status === "fulfilled") waiting.value = rowsOf(asks.value);
   if (active.status === "fulfilled") running.value = rowsOf(active.value);
@@ -153,7 +158,18 @@ async function loadRunners() {
       .catch(() => {}),
   ]);
 }
+/** The roles doing the best work across your boards, by how it held up — not by how much of it. */
+const ROLES_SHOWN = 5;
+const roles = ref([]);
+
 const creating = ref(false);
+/** A new board starts with the team that fits it unless its owner says otherwise. */
+const withTeam = ref(true);
+const TEAM_FOR = {
+  repo: "A Duty Officer reads each duty first; an Architect, Engineer or Senior Engineer does it; QA verifies it before anything merges.",
+  files: "A Duty Officer reads each duty first, a Specialist does the task, and a Checker opens every file before it comes back to you.",
+  service: "A Duty Officer reads each duty first, an Operator makes the change in the account, and a Reviewer reads it back before it is called done.",
+};
 const showForm = ref(false);
 const name = ref("");
 const slug = ref("");
@@ -242,6 +258,7 @@ async function create() {
       name: name.value,
       project_id: slug.value || undefined,
       ...payload,
+      ...(forRunner.value ? { roster: withTeam.value ? "auto" : "none" } : {}),
     });
     // The board exists now whatever happens next. A repository that could not be asked for is offered
     // again on its settings, so this goes there either way and says why.
@@ -327,6 +344,16 @@ onUnmounted(() => {
           <NewRepoFields v-model="newRepo" id-prefix="new-repo" :machines="machines" :disabled="creating" />
         </template>
       </ProfileForm>
+      <label v-if="forRunner" class="choice choice--block">
+        <input v-model="withTeam" type="checkbox" :disabled="creating" />
+        <span>
+          Start with a team
+          <span class="hint" style="display: block; margin: 0">
+            {{ TEAM_FOR[profile.workspace] || TEAM_FOR.repo }} Each role works to a written standard, so you do not have to ask for
+            secure, tested, readable work. Change the team, or turn it off, in the board's settings.
+          </span>
+        </span>
+      </label>
       <div>
         <button class="primary" type="submit" :disabled="creating || !name || (forRunner && creatingRepo && !noRepo(profile.workspace) && !(newRepo.machine_id && newRepo.name))">
           {{ creating ? "Creating…" : "Create board" }}
@@ -422,6 +449,31 @@ onUnmounted(() => {
             </ul>
             <p v-else class="feed__empty">Nothing is being worked right now.</p>
             <p v-if="sum && sum.active > running.length" class="feed__more">{{ sum.active - running.length }} more running.</p>
+          </section>
+
+          <section v-if="roles.length" aria-labelledby="roles-h" class="panel">
+            <div class="panel__head">
+              <h2 id="roles-h">Top roles</h2>
+              <span class="muted feed__count">last {{ RECORD_DAYS }} days</span>
+            </div>
+            <ol class="feed toproles">
+              <li v-for="r in roles" :key="`${r.project_id}:${r.role}`">
+                <router-link class="feed__item feed__item--row" :to="{ name: 'office', params: { projectId: r.project_id } }">
+                  <span class="toproles__rate" :class="{ 'toproles__rate--thin': !r.ranked }" :title="r.ranked ? '' : `Fewer than ${MIN_JUDGED} duties to judge by`">{{ r.judged ? percent(r.rate) : "—" }}</span>
+                  <span class="feed__what">
+                    <span class="duty__title">{{ r.name }}</span>
+                    <span class="duty__meta">
+                      <span class="badge">{{ nameOf[r.project_id] || r.project_id }}</span>
+                      <span v-if="r.judged">{{ r.good }} of {{ r.judged }} {{ r.verdict }}</span>
+                      <span v-else>{{ plural(r.stints, "duty", "duties") }} handled</span>
+                      <span v-if="r.sent_back" class="nowrap">sent back {{ r.sent_back }}×</span>
+                      <span v-if="r.avg_ms" class="nowrap">{{ duration(r.avg_ms) }} each</span>
+                    </span>
+                  </span>
+                </router-link>
+              </li>
+            </ol>
+            <p class="feed__more">Ranked by how the work held up, not by how much of it there was.</p>
           </section>
 
           <section v-if="upcoming" aria-labelledby="next-h" class="panel">

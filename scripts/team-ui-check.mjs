@@ -1,0 +1,126 @@
+#!/usr/bin/env node
+// What the console says about a board's team, checked without a browser: which role a duty is with,
+// how a role's record is judged and ranked, and what the office draws from a board's rows.
+import assert from "node:assert/strict";
+import {
+  LEVELS, MIN_JUDGED, characterLook, dutyRoleId, duration, levelLabel, officeFeed, officeFloor, percent, roleNameFromId, roleNames, roleRecord,
+  roleRecordRequest, roleTraits, topRoles,
+} from "../app/src/lib/team.js";
+import { LEVELS as SERVER_LEVELS } from "../functions/src/roster.js";
+import { PRESETS } from "../functions/src/charters.js";
+
+// The console and the board must mean the same levels, in the same order.
+assert.deepEqual(LEVELS.map((l) => l.key), SERVER_LEVELS);
+assert.equal(levelLabel("principal"), "Principal");
+assert.equal(levelLabel(""), "—");
+
+// --- which role has a duty -----------------------------------------------------------------------
+const pointer = { version: 1, intake: "duty-officer" };
+assert.equal(dutyRoleId({ kind: "work", role: "qa" }, pointer), "qa");
+assert.equal(dutyRoleId({ role: null }, pointer), "duty-officer", "filed before the team existed: with whoever reads duties first");
+assert.equal(dutyRoleId({ kind: "rules", role: "qa" }, pointer), "", "the board's housekeeping has no role");
+assert.equal(dutyRoleId({ kind: "work", role: "qa" }, null), "", "no team, no role");
+assert.equal(dutyRoleId({ kind: "work", role: "qa" }, { version: 3, intake: null }), "", "a team that was turned off");
+assert.equal(roleNameFromId("senior-engineer"), "Senior Engineer");
+assert.equal(roleNameFromId("qa"), "QA");
+assert.equal(roleNameFromId(""), "");
+const software = PRESETS.software.roles;
+assert.equal(roleNames(software).qa, "QA");
+assert.deepEqual(roleTraits(software.find((r) => r.id === "duty-officer")).map((t) => t.key), ["intake"]);
+assert.deepEqual(roleTraits(software.find((r) => r.id === "qa")).map((t) => t.key), ["reviews"]);
+assert.deepEqual(roleTraits(software.find((r) => r.id === "engineer")).map((t) => t.key), ["reviewed"]);
+assert.deepEqual(roleTraits(software.find((r) => r.id === "architect")).map((t) => t.key), ["plans"]);
+
+// --- the record ----------------------------------------------------------------------------------
+const request = roleRecordRequest(Date.UTC(2026, 10, 19), 30, "shop");
+assert.deepEqual(request.group, ["project_id", "role", "role_name"]);
+assert.equal(request.where[0].value, "shop");
+assert.ok(request.metrics.some((m) => m.field === "first_pass" && m.fn === "sum"));
+assert.equal(roleRecordRequest(Date.UTC(2026, 10, 19)).where.length, 1, "every board, when none is named");
+
+const group = (project_id, role, role_name, metrics) => ({ group: { project_id, role, role_name }, metrics });
+const record = roleRecord([
+  group("shop", "engineer", "Engineer", { stints: 12, ms: 12 * 600000, handoffs: 12, passed: 10, first_pass: 8, sent_back: 3, reopened: 1 }),
+  group("shop", "qa", "QA", { stints: 13, ms: 13 * 300000, done: 10, handoffs: 3, reopened: 1 }),
+  group("shop", "duty-officer", "Duty Officer", { stints: 14, ms: 14 * 30000, handoffs: 12, done: 2 }),
+  group("shop", "architect", "Architect", { stints: 2, ms: 2 * 900000, handoffs: 2 }),
+  group("blog", "writer", "Writer", { stints: 2, ms: 120000, handoffs: 2, passed: 2, first_pass: 2 }),
+  // The same role in two groups — its name changed part way through the month — is one line.
+  group("blog", "editor", "Editor", { stints: 1, done: 1 }),
+  group("blog", "editor", "Chief Editor", { stints: 1, done: 1 }),
+  { group: {}, metrics: { stints: 9 } },
+]);
+const of = (project, role) => record.find((r) => r.project_id === project && r.role === role);
+assert.equal(record.length, 6);
+assert.deepEqual([of("shop", "engineer").judged, of("shop", "engineer").good, of("shop", "engineer").rate], [10, 7, 0.7], "a builder: first time through review, and not reopened");
+assert.match(of("shop", "engineer").verdict, /passed review first time/);
+assert.deepEqual([of("shop", "qa").judged, of("shop", "qa").good], [10, 9], "a reviewer: what it passed stayed done");
+assert.equal(of("shop", "architect").rate, null, "a role that only plans has no verdict");
+assert.equal(of("shop", "architect").ranked, false);
+assert.equal(of("blog", "writer").ranked, false, `fewer than ${MIN_JUDGED} duties is not a record`);
+assert.equal(of("blog", "editor").name, "Chief Editor");
+assert.equal(of("blog", "editor").done, 2);
+assert.equal(of("shop", "engineer").avg_ms, 600000);
+const top = topRoles(record, 10);
+assert.deepEqual(top.slice(0, 3).map((r) => r.role), ["qa", "engineer", "duty-officer"], "roles with enough duties to judge come first, best rate first; the rest follow");
+assert.ok(top.findIndex((r) => r.role === "writer") > top.findIndex((r) => r.role === "engineer"), "a perfect rate on two duties ranks below a good one on ten");
+assert.equal(topRoles(record, 2).length, 2);
+assert.deepEqual(roleRecord(null), []);
+assert.equal(percent(0.7), "70%");
+assert.equal(percent(null), "—");
+assert.equal(duration(20000), "under a minute");
+assert.equal(duration(12 * 60000), "about 12m");
+assert.equal(duration(65 * 60000), "about 1h 5m");
+
+// --- the office ----------------------------------------------------------------------------------
+const duties = [
+  { key: "d1", title: "Routing", kind: "work", status: "queued", role: null, prio_rank: 1, created_at: 2 },
+  { key: "d2", title: "Urgent", kind: "work", status: "queued", role: "duty-officer", prio_rank: 0, created_at: 5 },
+  { key: "d3", title: "Building", kind: "work", status: "active", role: "engineer" },
+  { key: "d4", title: "Sent back", kind: "work", status: "queued", role: "engineer", prio_rank: 0.5, created_at: 1, handoff: { from: "qa", to: "engineer", sent_back: true, at: 300 } },
+  { key: "d5", title: "A question", kind: "work", status: "needs_decision", role: "architect", updated_at: 9 },
+  { key: "d6", title: "Older question", kind: "work", status: "needs_decision", role: "qa", updated_at: 3 },
+  { key: "d7", title: "Stuck", kind: "work", status: "blocked", role: "engineer" },
+  { key: "d8", title: "Gone role", kind: "work", status: "queued", role: "astronaut", prio_rank: 1, created_at: 9 },
+  { key: "d9", title: "Rules", kind: "rules", status: "active" },
+  { key: "n1", title: "A note", kind: "note", status: "note" },
+];
+const done = [
+  { key: "f1", title: "Earlier", status: "done", finished_at: 100, handoff: { from: "engineer", from_name: "Engineer", to: "qa", at: 90 } },
+  { key: "f2", title: "Later", status: "done", finished_at: 200, handoff: { from: "engineer", from_name: "Engineer", to: "qa", at: 190 } },
+];
+const floor = officeFloor({ roles: software, pointer, duties, done, activity: { d3: { machine: "laptop", state: "working", detail: "running tests" } } });
+const desk = (id) => floor.desks.find((d) => d.role.id === id);
+assert.equal(floor.teamed, true);
+assert.deepEqual(floor.desks.map((d) => d.role.id), software.map((r) => r.id), "a desk per role, in the team's order");
+assert.deepEqual(desk("duty-officer").waiting.map((d) => d.key), ["d2", "d1", "d8"], "the tray in the order it will be taken; a duty with no role, or one the team no longer has, is here");
+assert.deepEqual(desk("engineer").working.map((w) => [w.duty.key, w.activity.detail]), [["d3", "running tests"]]);
+assert.deepEqual(desk("engineer").waiting.map((d) => d.key), ["d4"]);
+assert.deepEqual(floor.needsYou.map((d) => d.key), ["d6", "d5"], "longest waiting first");
+assert.deepEqual(floor.blocked.map((d) => d.key), ["d7"]);
+assert.deepEqual(floor.done.map((d) => d.key), ["f2", "f1"]);
+assert.ok(!floor.desks.some((d) => [...d.waiting, ...d.working.map((w) => w.duty)].some((x) => x.key === "n1")), "notes are not work");
+assert.ok(desk("duty-officer").working.some((w) => w.duty.key === "d9"), "the board's own housekeeping is drawn at the front desk rather than hidden");
+
+const alone = officeFloor({ roles: [], pointer: null, duties, done });
+assert.equal(alone.teamed, false);
+assert.equal(alone.desks.length, 1);
+assert.equal(alone.desks[0].role.name, "Agents");
+assert.equal(alone.desks[0].working.length, 2);
+assert.equal(alone.desks[0].waiting.length, 4);
+assert.equal(officeFloor({ roles: software, pointer: { version: 2, intake: null }, duties: [] }).teamed, false, "a team that was turned off draws as none");
+
+const feed = officeFeed([...duties, ...done], roleNames(software), 2);
+assert.deepEqual(feed.map((e) => e.duty_id), ["d4", "f2"], "newest first, and only as many as asked for");
+assert.equal(feed[0].text, "QA sent it back to Engineer");
+assert.equal(feed[0].sent_back, true);
+assert.equal(feed[1].text, "Engineer handed it to QA");
+assert.equal(officeFeed([{ key: "x", title: "T", handoff: { from: "desk", to: "lead", at: 1 } }], {})[0].text, "Desk handed it to Lead", "roles named from their ids when the team is not loaded");
+assert.deepEqual(officeFeed(null, {}), []);
+
+// --- characters ----------------------------------------------------------------------------------
+assert.deepEqual(characterLook("qa:0"), characterLook("qa:0"), "the same role always looks the same");
+assert.ok(new Set(software.map((r) => JSON.stringify(characterLook(`${r.id}:0`)))).size >= 4, "and the shipped team's members mostly look different");
+for (const colour of Object.values(characterLook(""))) assert.match(colour, /^#[0-9a-f]{6}$/);
+
+console.log("Team console: roles of duties, traits, the record and its ranking, the office floor and feed, and characters passed.");

@@ -20,7 +20,9 @@
     "smoke": "node scripts/smoke.mjs",
     "check:cron": "node scripts/cron-check.mjs",
     "check:session": "node scripts/session-check.mjs",
-    "smoke:runner": "node scripts/smoke-runner.mjs"
+    "smoke:runner": "node scripts/smoke-runner.mjs",
+    "smoke:team": "node scripts/smoke-team.mjs",
+    "check:team": "node scripts/roster-check.mjs"
   },
   "devDependencies": {
     "esbuild": "^0.25.0"

@@ -181,3 +181,173 @@ func TestNoteReviewAndApprovedWorkCarrySource(t *testing.T) {
 		t.Fatal("approved work lost its source")
 	}
 }
+
+func teamAs(id string) *board.Team {
+	roles := []board.Role{
+		{ID: "duty-officer", Name: "Duty Officer", Summary: "Reads every new duty first.", Intake: true, Charter: "Route it."},
+		{ID: "architect", Name: "Architect", Summary: "Designs before code.", Plans: true, Charter: "Plan it."},
+		{ID: "engineer", Name: "Engineer", Summary: "Builds changes.", Reviewed: true, Charter: "Validate every external input."},
+		{ID: "qa", Name: "QA", Summary: "Verifies the work.", Reviews: true, Charter: "Read the whole diff."},
+	}
+	t := &board.Team{}
+	t.Settings.MaxBounces = 3
+	for _, r := range roles {
+		if r.ID == id {
+			t.Role = r
+		} else {
+			r.Charter = "" // only a session's own role carries its charter
+			t.Others = append(t.Others, r)
+		}
+	}
+	return t
+}
+
+// A session on a board with a team is told who it is, the standard it works to, who else is there,
+// and — the part that keeps unverified work off the main branch — whether it lands its own work.
+func TestRolePrompts(t *testing.T) {
+	base := Input{
+		Duty:  board.Duty{ID: "duty_1", Title: "Add export", Brief: "CSV of orders.", Kind: "work"},
+		Board: board.BoardView{Profile: &board.Profile{Type: "webapp"}},
+		Rules: "- Keep it small.", RulesAt: 1, Branch: "duty/duty_1", Worktree: "/w", Mode: "push",
+	}
+	render := func(in Input) (string, string) {
+		t.Helper()
+		sys, err := System(in)
+		if err != nil {
+			t.Fatal(err)
+		}
+		task, err := Duty(in)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return sys, task
+	}
+	mustSay := func(what, text string, wants ...string) {
+		t.Helper()
+		for _, want := range wants {
+			if !strings.Contains(text, want) {
+				t.Errorf("%s does not say %q:\n%s", what, want, text)
+			}
+		}
+	}
+	mustNotSay := func(what, text string, unwanted ...string) {
+		t.Helper()
+		for _, u := range unwanted {
+			if strings.Contains(text, u) {
+				t.Errorf("%s says %q", what, u)
+			}
+		}
+	}
+
+	// No team: nothing about roles, and the duty is finished by whoever holds it, as before.
+	sys, task := render(base)
+	mustNotSay("a duty with no team", sys+task, "# Your role", "duty_handoff", "The team's memory")
+	mustSay("a duty with no team", sys+task, "`duty_integrate`", "`duty_complete`")
+
+	builder := base
+	builder.Duty.Team = teamAs("engineer")
+	builder.Duty.Team.Handoff = &struct {
+		From     string `json:"from"`
+		FromName string `json:"from_name"`
+		Note     string `json:"note"`
+		SentBack bool   `json:"sent_back"`
+	}{From: "duty-officer", FromName: "Duty Officer", Note: "Goal: a download button on /orders."}
+	sys, task = render(builder)
+	mustSay("the Engineer's system prompt", sys,
+		"# Your role: Engineer", "Validate every external input.", "**QA** (`qa`) — Verifies the work. It verifies work, lands it and completes the duty.",
+		"**You do not land or complete this duty.**", "hand it to **QA** (`qa`)", "the reviewer's, once they have seen it work in this same worktree",
+		"The project's rules", "win where the two disagree")
+	mustNotSay("the Engineer's system prompt", sys, "Read the whole diff.", "call `duty_integrate` (it lands your commits")
+	mustSay("the Engineer's duty", task, "**Duty Officer handed this to you.**", "a download button on /orders", "do not start over", "then `duty_handoff` to the reviewer")
+	mustNotSay("the Engineer's duty", task, "then `duty_complete`")
+
+	sentBack := builder
+	sentBack.Duty.Team = teamAs("engineer")
+	sentBack.Duty.Team.Handoff = &struct {
+		From     string `json:"from"`
+		FromName string `json:"from_name"`
+		Note     string `json:"note"`
+		SentBack bool   `json:"sent_back"`
+	}{From: "qa", FromName: "QA", Note: "1. orders.js:40 has no ownership check.", SentBack: true}
+	_, task = render(sentBack)
+	mustSay("work that was sent back", task, "**QA reviewed this and sent it back.**", "every one", "no ownership check")
+
+	reviewer := base
+	reviewer.Duty.Team = teamAs("qa")
+	reviewer.Duty.Team.Bounces = 2
+	sys, task = render(reviewer)
+	mustSay("QA's prompt", sys+task, "# Your role: QA", "Read the whole diff.", "**You are the check before this counts.**", "land it with `duty_integrate` and complete the duty",
+		"already been sent back 2 time(s); at 3 a person is asked", "commit, `duty_integrate`, then `duty_complete`")
+	mustNotSay("QA's prompt", sys, "You do not land or complete this duty")
+
+	officer := base
+	officer.Duty.Team = teamAs("duty-officer")
+	sys, task = render(officer)
+	mustSay("the Duty Officer's prompt", sys+task, "**You read this duty first.**", "Hand it to the role that should work it with `duty_handoff`", "only if it is trivial and safe")
+
+	planner := base
+	planner.Duty.Team = teamAs("architect")
+	planner.Duty.Team.Settings.PlanApproval = true
+	sys, _ = render(planner)
+	mustSay("the Architect's prompt", sys, "This board's owner approves plans before they are built", "`duty_enqueue` each piece with `role` set")
+	planner.Duty.Team.Settings.PlanApproval = false
+	if sys, _ = render(planner); strings.Contains(sys, "approves plans") {
+		t.Error("a board that does not ask to approve plans says it does")
+	}
+
+	// Boards with no repository hand files or account changes on the same way.
+	files := builder
+	files.Files = &Files{Dir: "/t", In: "/t/in", Out: "/t/out"}
+	sys, task = render(files)
+	mustSay("a task's builder", sys+task, "put each file it produces in `out/`", "then `duty_handoff` to the reviewer", "this folder go with it")
+	mustNotSay("a task's builder", sys+task, "`duty_integrate`", "(`git log`")
+	account := builder
+	account.Files = &Files{Dir: "/t", Service: true, Keep: "/k"}
+	sys, task = render(account)
+	mustSay("an account's operator", sys+task, "check it in the account itself", "then `duty_handoff` to the reviewer")
+}
+
+// The memory is in every working session's prompt, with the version to write back and its bounds.
+func TestMemoryPrompt(t *testing.T) {
+	in := Input{
+		Duty:   board.Duty{ID: "duty_1", Title: "T", Brief: "B", Kind: "work"},
+		Board:  board.BoardView{Profile: &board.Profile{Type: "webapp"}},
+		Branch: "duty/duty_1", Worktree: "/w", Mode: "push",
+		Memory: &board.Memory{Body: "## Decisions\n- Orders export streams.", Version: 4, Chars: 38, MaxChars: 6000},
+	}
+	sys, err := System(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"# The team's memory", "Orders export streams.", "`based_on: 4`", "holds 6000 characters (38 used)", "must be written there before you finish", "Never a secret"} {
+		if !strings.Contains(sys, want) {
+			t.Errorf("the memory section does not say %q:\n%s", want, sys)
+		}
+	}
+	in.Memory = &board.Memory{MaxChars: 6000}
+	if sys, _ = System(in); !strings.Contains(sys, "nothing yet") || !strings.Contains(sys, "`based_on: 0`") {
+		t.Errorf("an empty memory:\n%s", sys)
+	}
+	in.Memory = nil
+	if sys, _ = System(in); strings.Contains(sys, "The team's memory") {
+		t.Error("a board too old to keep a memory is told to write one")
+	}
+}
+
+// A roster duty is told how to draft a team that the board will accept.
+func TestRosterDutyPrompt(t *testing.T) {
+	in := Input{
+		Duty:   board.Duty{ID: "duty_r", Title: "Draft this board's team", Brief: "Read what this board is for.", Kind: "roster"},
+		Board:  board.BoardView{Profile: &board.Profile{Type: "webapp"}},
+		Branch: "duty/duty_r", Worktree: "/w", Mode: "push",
+	}
+	task, err := Duty(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"**draft this board's team.**", "**Exactly one** role with `intake: true`", "`reviewed: true`", "`reviews: true`", "`board_roster_submit`", "`duty_integrate` will report nothing to integrate", "Read what this board is for."} {
+		if !strings.Contains(task, want) {
+			t.Errorf("the roster duty does not say %q:\n%s", want, task)
+		}
+	}
+}

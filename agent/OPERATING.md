@@ -65,6 +65,73 @@ workspaces and account credentials remain those of the source session; a link do
 If access is refused, refresh `board_links` and report the missing access if it blocks your duty.
 Only the receiving board's owner can grant or revoke access.
 
+## The team
+
+A board may have a team: named roles a duty passes between — on the software team a Duty Officer, an
+Architect, an Engineer, a Senior Engineer and QA; whatever its owner accepted, on any other. A board
+with no team has no `roster` on its duties, and you work each duty start to finish yourself.
+
+When there is one, the duty you claim carries **`roster`**:
+
+- `role` is who you are for this duty. Its `charter` is the standard you work to, on top of
+  `board_rules`; where the two disagree, the rules win. Work as that role and no further.
+- `team` is everyone you can pass the duty to: each one's `id`, what it is for, and whether it
+  reads new duties first (`intake`), `plans`, has its work `reviewed`, or `reviews`.
+- `handoff` is what the last role said when it passed the duty to you. It is part of your brief. If
+  `sent_back` is true, a reviewer found problems: fix every finding before handing it on again.
+
+**`duty_handoff`** passes the *same* duty to another role, with a note. Its thread, its files and
+its workspace go with it. Once it succeeds the duty is no longer yours: stop.
+
+```
+duty_handoff(
+  duty_id,
+  to_role="qa",
+  note="Added CSV export in orders/export.js with tests. `npm test` passes (212). I could not test a table over 1M rows. Look at the streaming in export.js:40 first.")
+```
+
+- The note is the next role's whole brief, read with none of your context: lead with the point,
+  then what you did or decided, what is left, where to look, and how you checked it.
+- **The role with `intake` reads every new duty first** and decides who works it: ask a person when
+  the brief is unclear, finish it yourself only when it is trivial and safe, hand on everything else.
+  Nobody else chooses the role, so do not name one when you file ordinary work.
+- **A role marked `reviewed` does not land or complete its own work.** `duty_complete` is refused,
+  and a daemon session is not offered `duty_integrate` at all. Commit, then hand the duty to a role
+  that `reviews`.
+- **A role that `reviews` is the check before the work counts.** Verify it where it sits rather than
+  taking the note's word for it. Pass: land it and complete the duty. Fail: hand it back to the role
+  that did it with every finding in one pass, numbered — where, what is wrong, what you expect.
+- A question only a person can answer is not a handoff: use `duty_checkpoint` with
+  `set_status: "needs_decision"`.
+- Work too big for one duty is split: `duty_enqueue` each piece with **`role`** set to the role
+  that should work it, then finish your duty with the plan as its outcome. `role` is accepted only
+  for a piece split out of the duty you hold.
+- A reviewer that has sent the same work back as many times as the board allows, and — on a board
+  that asks to approve plans — a planning role's handoff, go to a person first. The answer to your
+  `duty_handoff` says so; stop either way.
+
+`board_roster` shows the team, and one role's charter when you pass `role`. A duty of kind `roster`
+asks you to draft the board's team: hand it in with `board_roster_submit`, and a person accepts it
+before it takes effect.
+
+## The team's memory
+
+The board keeps one short memory for its agents: what the next session must know about this project
+and could not work out from the code, the rules or the profile. It comes with the duty you claim
+(`memory`), and **`board_memory`** reads it.
+
+**Anything worth remembering goes there before you finish**, with **`board_memory_write`**: a
+decision and the reason for it, a command that actually works, a trap you fell into, where something
+lives. If it is not written there, the next session does not know it.
+
+- It is replaced whole, not appended to. Read it, keep what is still true, cut what is stale, merge
+  what repeats, and send the full text with `based_on` set to the version you read.
+- It holds 6,000 characters. A write that would pass that is refused; curate it.
+- If another session wrote meanwhile, yours is refused with the current text: merge and write again.
+- Only while you hold an active duty. A note review reads it and writes nothing.
+- Never a secret, a credential or personal data. Nothing that is only about the duty in hand — that
+  belongs in its `outcome_summary`.
+
 ## Notes and human-approved suggestions
 
 Notes are source material outside the runnable queue. They appear as a separate sticky board in **Notes**. Use **`note_list`** to browse them,
@@ -235,7 +302,8 @@ Two kinds of duty are about the project rather than a piece of work in it:
 - `rules` asks you to write the rules. Hand them in with **`board_rules_submit`**. They are a
   draft until a person accepts them, so do not start following your own draft.
 
-Both have the board to themselves while they run.
+Both have the board to themselves while they run. A third kind, `roster`, asks you to draft the
+board's team (see *The team*); it runs alongside other work, and what it hands in is a draft too.
 
 ## Work that comes round again
 

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/altlimit/dutyboard/cli/internal/board"
 	"github.com/altlimit/dutyboard/cli/internal/state"
 	"github.com/altlimit/dutyboard/cli/internal/tools"
 )
@@ -22,13 +23,14 @@ type session struct {
 // Tools that change a duty. A headless session may only change its own.
 var dutyScoped = map[string]bool{
 	"duty_checkpoint": true, "duty_complete": true, "duty_fail": true, "duty_attach": true,
-	"board_profile_propose": true, "board_rules_submit": true,
+	"board_profile_propose": true, "board_rules_submit": true, "duty_handoff": true, "board_roster_submit": true,
 }
 
 // Tools that take an agent id, which the bridge fills in so a session cannot sign as anyone else.
 var takesAgent = map[string]bool{
 	"board_call": true, "duty_poll": true, "duty_claim": true, "duty_enqueue": true, "duty_suggest": true, "duty_checkpoint": true, "duty_complete": true,
 	"duty_fail": true, "duty_attach": true, "board_profile_propose": true, "board_rules_submit": true,
+	"duty_handoff": true, "board_roster_submit": true, "board_memory_write": true,
 }
 
 var localTools = []map[string]any{
@@ -234,10 +236,61 @@ func guard(s *session, name string, args map[string]any) string {
 			return fmt.Sprintf("this session may only change its own duty, %s — not %q", s.run.DutyID, id)
 		}
 	}
+	team := s.run.Team()
+	if name == "duty_handoff" && team == nil {
+		return "this duty is not being worked by a team, so there is no role to hand it to: finish it yourself, or put a question on the board"
+	}
+	if name == "board_roster_submit" && s.run.Kind != "roster" {
+		return "only a duty that drafts the board's team hands one in"
+	}
+	if team.MustHandOff() && (name == "duty_integrate" || name == "duty_complete" || strings.HasPrefix(name, "altengine_deploy_")) {
+		return fmt.Sprintf("as %s you do not land, deploy or complete this duty: its work is verified first. Commit it, then duty_handoff to %s with what changed, how you tested it and what to look at. Nothing is landed until they have seen it work.",
+			team.Role.Name, roleNames(team.Reviewers()))
+	}
 	if name == "duty_complete" && s.run.Kind != "note_review" && !s.run.Files && s.run.integration() == nil {
 		return "call duty_integrate first: a duty is complete only once its work has landed, and the outcome should name the commit or pull request it gives you"
 	}
 	return ""
+}
+
+// roleNames lists roles as a session should name them: "QA (`qa`) or Lead (`lead`)".
+func roleNames(roles []board.Role) string {
+	names := make([]string, 0, len(roles))
+	for _, r := range roles {
+		names = append(names, fmt.Sprintf("%s (`%s`)", r.Name, r.ID))
+	}
+	return strings.Join(names, " or ")
+}
+
+// handoffTool is duty_handoff as one session sees it: who it is, and exactly who it can pass its duty
+// to and what each of them is for — so the choice is made from the tool, not remembered from a prompt.
+func handoffTool(t map[string]any, team *board.Team) {
+	var lines []string
+	ids := make([]any, 0, len(team.Others))
+	for _, r := range team.Others {
+		ids = append(ids, r.ID)
+		what := r.Summary
+		if r.Reviews {
+			what += " Verifies work, lands it and completes the duty."
+		}
+		lines = append(lines, fmt.Sprintf("`%s` (%s): %s", r.ID, r.Name, what))
+	}
+	desc := fmt.Sprintf("Pass this duty to another role on the board's team, with a note. You are working it as %s. It stays the same duty — its thread, files and workspace go with it — and it is no longer yours once this succeeds: stop. ", team.Role.Name)
+	switch {
+	case team.MustHandOff():
+		desc += fmt.Sprintf("This is how your work is finished: you cannot land or complete it yourself. When it is committed and checked, hand it to %s. ", roleNames(team.Reviewers()))
+	case team.Role.Reviews:
+		desc += "If the work does not pass, hand it back to the role that did it with every finding in one pass; if it passes, land and complete it yourself instead. "
+	case team.Role.Intake:
+		desc += "You read this duty first: route it to the role that should work it. "
+	}
+	desc += "The note is the next role's whole brief, read with none of your context: lead with the point, then what you did or decided, what is left, where to look and how you checked it. A question only a person can answer is not a handoff — use duty_checkpoint with set_status needs_decision. You can hand it to: " + strings.Join(lines, " · ")
+	t["description"] = desc
+	schema, _ := t["inputSchema"].(map[string]any)
+	properties, _ := schema["properties"].(map[string]any)
+	if to, ok := properties["to_role"].(map[string]any); ok {
+		to["enum"] = ids
+	}
 }
 
 func (d *Daemon) filterTools(reply json.RawMessage, s *session) (json.RawMessage, error) {
@@ -281,6 +334,18 @@ func (d *Daemon) filterTools(reply json.RawMessage, s *session) (json.RawMessage
 		if s.run != nil && s.run.Kind != "note_review" && name == "duty_suggest" {
 			continue
 		}
+		var team *board.Team
+		if s.run != nil {
+			team = s.run.Team()
+		}
+		// What a session cannot use is not offered: a duty with no team has nobody to hand it to, only a
+		// roster duty hands a team in, and a role whose work is reviewed does not complete it.
+		if s.run != nil && (name == "duty_handoff" && team == nil || name == "board_roster_submit" && s.run.Kind != "roster" || name == "duty_complete" && team.MustHandOff()) {
+			continue
+		}
+		if name == "duty_handoff" && team != nil {
+			handoffTool(t, team)
+		}
 		if s.run != nil {
 			switch name {
 			case "duty_poll":
@@ -310,9 +375,12 @@ func (d *Daemon) filterTools(reply json.RawMessage, s *session) (json.RawMessage
 		if s.run != nil && s.run.Files && (t["name"] == "duty_integrate" || t["name"] == "duty_repo_open") {
 			continue // nothing to land: a task's files go on the duty when it completes
 		}
+		if s.run != nil && t["name"] == "duty_integrate" && s.run.Team().MustHandOff() {
+			continue // landing it is the reviewer's
+		}
 		out = append(out, t)
 	}
-	if s.run != nil && s.run.Kind != "note_review" {
+	if s.run != nil && s.run.Kind != "note_review" && !s.run.Team().MustHandOff() {
 		// Only the tools for the kinds the board allows: a board that publishes a site is not offered a
 		// function deploy it would only refuse.
 		v := d.view(s.board)

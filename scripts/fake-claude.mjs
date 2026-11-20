@@ -10,6 +10,11 @@
 //
 // What it does is steered by the duty: the setup and rules prompts are recognised by their wording,
 // and a work duty's title can carry [park], [crash], [slow] or [stray].
+//
+// On a board with a team it works as the role its system prompt names (scripts/smoke-team.mjs): the
+// role that reads duties first routes them, a builder builds and hands on — after trying to land its
+// own work, which must be refused — and a reviewer verifies what the builder left in the same
+// worktree, then lands it or, for a [bounce] duty, sends it back once.
 
 import { spawn, execFileSync } from "node:child_process";
 import { appendFileSync, existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
@@ -175,6 +180,7 @@ const listedTools = (await rpc("tools/list", {})).result.tools;
 const tools = listedTools.map((t) => t.name);
 const dutyId = (prompt.match(/`(duty_[0-9A-Z]+)`/) || [])[1];
 const title = (prompt.match(/^# (?!The project|Working|Tools|From)(.+)$/m) || [])[1] || "";
+const instructions = (codex ? config.developer_instructions : cursor ? cursorPrompt.slice(0, Math.max(cursorSplit, 0)) : opt("--append-system-prompt")) || "";
 record({
   event: "start", dutyId, title, resumed, session, tools,
   mcpAssigned: initialized.result?.instructions?.includes(dutyId) && initialized.result.instructions.includes("do not poll"),
@@ -188,7 +194,7 @@ record({
     }
   })(), path: process.env.PATH.split(":")[0],
   mcp: mcpServers, strictMCP: args.includes("--strict-mcp-config"), allowedTools: (opt("--allowedTools") || "").split(","),
-  instructions: (codex ? config.developer_instructions : cursor ? cursorPrompt.slice(0, Math.max(cursorSplit, 0)) : opt("--append-system-prompt")) || "",
+  instructions,
   sandbox: codex ? { mode: config.sandbox_mode, writable: config["sandbox_workspace_write.writable_roots"] } : null,
 });
 
@@ -257,6 +263,91 @@ if (/put what it produces in `out\/`/.test(prompt)) {
   const completed = await tool("duty_complete", { duty_id: dutyId, outcome_summary: "Made it printable." });
   record({ event: "files", dutyId, inputs, offeredIntegrate: tools.includes("duty_integrate"), completeError: completed.isError ? completed.text : null });
   finish("files");
+}
+
+if (/draft this board's team/.test(prompt)) {
+  const current = await tool("board_roster");
+  const charter = "Check the work against the brief before passing it on. Validate input, write tests, keep the code readable.";
+  const submitted = await tool("board_roster_submit", {
+    duty_id: dutyId,
+    note: "A desk, a doer and a lead.",
+    roles: [
+      { id: "desk", name: "Desk", summary: "Reads every new duty first and routes it.", level: "light", intake: true, charter },
+      { id: "doer", name: "Doer", summary: "Does the work.", level: "standard", reviewed: true, charter },
+      { id: "lead", name: "Lead", summary: "Verifies the work and lands it.", level: "senior", reviews: true, charter },
+    ],
+  });
+  const integrated = await tool("duty_integrate");
+  const completed = await tool("duty_complete", { duty_id: dutyId, outcome_summary: "Drafted a team of three." });
+  record({ event: "roster", dutyId, sawTeam: current.data?.roles?.length || 0, offered: tools.includes("board_roster_submit"), submitError: submitted.isError ? submitted.text : null, integrate: integrated.data, completeError: completed.isError ? completed.text : null });
+  finish("roster");
+}
+
+// A duty on a board with a team: work as the role the system prompt names.
+const role = (instructions.match(/^# Your role: (.+)$/m) || [])[1] || "";
+if (role) {
+  const handoffTool = listedTools.find((t) => t.name === "duty_handoff");
+  const seen = {
+    event: "team", dutyId, title, role, session, resumed, model: opt("--model") || opt("-m") || "", cwd: process.cwd(),
+    canHandTo: handoffTool?.inputSchema?.properties?.to_role?.enum || [],
+    handoffSaysWho: handoffTool?.description?.includes(`working it as ${role}`) || false,
+    offered: { complete: tools.includes("duty_complete"), integrate: tools.includes("duty_integrate"), handoff: !!handoffTool, memory: tools.includes("board_memory_write"), rosterSubmit: tools.includes("board_roster_submit") },
+    mcpSaysRole: initialized.result?.instructions?.includes(`you are its ${role}`) || false,
+    hasCharter: instructions.includes("## The rest of the team") && instructions.includes("## Passing the duty on"),
+    hasMemory: instructions.includes("# The team's memory"),
+    handedBy: (prompt.match(/\*\*(.+?) (?:handed this to you|reviewed this and sent it back)\.\*\*/) || [])[1] || "",
+    sentBack: prompt.includes("reviewed this and sent it back"),
+  };
+  const handOn = async (to, note) => {
+    const r = await tool("duty_handoff", { duty_id: dutyId, to_role: to, note });
+    record({ ...seen, handedTo: to, handoffError: r.isError ? r.text : null, handoffStatus: r.data?.status });
+    finish(`handed to ${to}`);
+  };
+
+  if (instructions.includes("**You read this duty first.**")) {
+    if (title.includes("[trivial]")) {
+      writeFileSync(`trivial-${dutyId}.txt`, "fixed by the role that read it first\n");
+      git("add", "-A");
+      git("commit", "--quiet", "-m", `trivial fix for ${dutyId}`);
+      const integrated = await tool("duty_integrate");
+      const completed = await tool("duty_complete", { duty_id: dutyId, outcome_summary: `Fixed it directly in ${integrated.data?.commit}` });
+      record({ ...seen, didItself: true, integrate: integrated.data, completeError: completed.isError ? completed.text : null });
+      finish("did it");
+    }
+    await handOn(title.includes("[design]") ? "architect" : "engineer", "Goal: do what the title says. Done when the file for it is on the main branch.");
+  }
+
+  if (instructions.includes("**You do not land or complete this duty.**")) {
+    // A builder. Landing its own work must be refused, whether or not the tools were offered.
+    const landed = await tool("duty_integrate");
+    const completed = await tool("duty_complete", { duty_id: dutyId, outcome_summary: "trying to finish my own work" });
+    const fixing = seen.sentBack;
+    writeFileSync(fixing ? `fix-${dutyId}.txt` : `built-${dutyId}.txt`, `${fixing ? "fixed" : "built"} by ${role}\n`);
+    git("add", "-A");
+    git("commit", "--quiet", "-m", `${fixing ? "fix" : "build"} for ${dutyId}`);
+    const memory = await tool("board_memory");
+    const wrote = await tool("board_memory_write", { body: `${memory.data?.body ? memory.data.body + "\n" : "## Notes\n"}- ${role} worked ${dutyId}.`, based_on: memory.data?.version ?? 0 });
+    record({ ...seen, event: "team-build", refused: { integrate: landed.isError && /duty_handoff/.test(landed.text), complete: completed.isError && /duty_handoff/.test(completed.text) }, memoryError: wrote.isError ? wrote.text : null });
+    await handOn("qa", fixing ? "Fixed every finding; see the fix file." : "Built it and committed. Tests pass.");
+  }
+
+  if (instructions.includes("**You are the check before this counts.**")) {
+    // A reviewer, in the worktree the builder left: the builder's commit is here, and not yet on main.
+    const built = existsSync(`built-${dutyId}.txt`);
+    const fixed = existsSync(`fix-${dutyId}.txt`);
+    const ahead = git("log", "--format=%s", "origin/main..HEAD");
+    if (title.includes("[bounce]") && !fixed) {
+      record({ ...seen, event: "team-review", built, fixed, ahead, verdict: "sent back" });
+      await handOn("engineer", "1. The footer file is missing a fix. Add it.");
+    }
+    const integrated = await tool("duty_integrate");
+    const completed = await tool("duty_complete", { duty_id: dutyId, outcome_summary: `Verified and landed in ${integrated.data?.commit}` });
+    record({ ...seen, event: "team-review", built, fixed, ahead, verdict: "passed", integrate: integrated.data, completeError: completed.isError ? completed.text : null });
+    finish("passed");
+  }
+
+  // A planner: its handoff is the plan.
+  await handOn("engineer", "Plan: 1. Add the file. 2. Test it.");
 }
 
 if (title.includes("[crash]")) {

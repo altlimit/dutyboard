@@ -462,5 +462,33 @@
       ],
       "for": "the function: deleting a board's finishes with it"
     }
+  ],
+  "role_events": [
+    {
+      "fields": [
+        "owner_uid",
+        "hour"
+      ],
+      "for": "console: the boards page's team record — what each role did across every board you own, summed per board and role"
+    },
+    {
+      "fields": [
+        "project_id",
+        "hour"
+      ],
+      "for": "member: the same, for the boards shared with you — and one board's own team record"
+    },
+    {
+      "fields": [
+        "at"
+      ],
+      "for": "the tick: forgetting role events as old as the finishes it forgets"
+    },
+    {
+      "fields": [
+        "project_id"
+      ],
+      "for": "the function: deleting a board's role events with it"
+    }
   ]
 }

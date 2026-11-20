@@ -66,6 +66,14 @@ func (d *Daemon) Accept(id string) {
 
 // work carries a request out, in the background.
 func (d *Daemon) work(ctx context.Context, req board.Request) {
+	if req.Kind == "mcp_secrets" {
+		d.wg.Add(1)
+		go func() {
+			defer d.wg.Done()
+			d.workSecrets(ctx, req)
+		}()
+		return
+	}
 	if req.Kind == "install_tool" || req.Kind == "sign_in" {
 		d.wg.Add(1)
 		go func() {

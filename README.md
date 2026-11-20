@@ -481,9 +481,11 @@ owner can't, even for a machine on their board. A machine set to wait for someon
 asked for here* → *Wait for someone at the machine*) holds these too, until someone runs `dutyboard`
 on it and accepts.
 
-A **deploy key** and **MCP secrets** are typed on the machine (`dutyboard --deploy-key`,
-`dutyboard --mcp-secrets`), never in the console: every member of a board can read what passes through
-it. The checklist says which are missing, and the command for each.
+A **deploy key** is connected from the console the same way a sign-in is (*Connect altengine*), or
+typed on the machine (`dutyboard --deploy-key`). **MCP secrets** can be typed in the console too,
+under *Set them here* on the checklist — encrypted in your browser for that one machine, so the board
+that carries them cannot read them (see *MCP servers for a board's sessions*) — or on the machine
+(`dutyboard --mcp-secrets`). The checklist says which are missing.
 
 A board worked by a machine names its **repository URL**, and the machine keeps its own clone of it
 at `<root>/<board>/`. It never works in, or adds branches to, a checkout you use. Point a board at
@@ -723,17 +725,108 @@ either a command every machine starts (`npx @playwright/mcp`) or a URL it connec
 - **what it is for** — a line every session is given, so the agent knows when to reach for it.
 
 Everyone on a board can read its profile, so no value there is private, and anything that looks like
-a credential in the settings is refused. Each machine keeps the secrets' values itself:
+a credential in the settings is refused. Each machine keeps the secrets' values itself, in its OS
+keyring. There are two ways to give them to it:
 
 ```bash
-dutyboard --mcp-secrets     # asks for the secrets the boards this machine works need and it lacks; OS keyring
+dutyboard --mcp-secrets     # on the machine: asks for the secrets its boards need and it lacks
 ```
+
+Or from the console, on the **Machines** page: the checklist names each secret the machine is
+missing, and **Set them here** takes their values. They are encrypted in your browser to a key only
+that machine holds — it makes a P-256 key pair, keeps the private half in its keyring and publishes
+the public half — and only the ciphertext is sent. DutyBoard carries it to the machine and holds it
+until the machine takes it, a few seconds; it cannot read it, and neither can its datastore's
+backups or anyone else on the board. The machine stores only values for secrets one of its boards
+actually names, and says what it stored by name. Only the machine's owner can send them, and a
+machine set to *wait for someone at the machine* holds them until someone there accepts. A machine
+older than 2.36.0 publishes no key and is set from its own terminal.
 
 A session is connected to exactly the board's servers and DutyBoard's — nothing else from your own
 Claude Code setup (`--strict-mcp-config`) — and may call only the tools the board allows. A server
 a machine cannot start, because a secret is not set there or its command is not installed, is left
 out of that machine's sessions and named on the Machines page. Editing the list is the owner's, like
 every other part of the profile that makes a machine run something.
+
+## A team on a board
+
+A board can be worked by a **team** instead of by one agent per duty: named roles that a duty passes
+between, each with a written standard. You file the work; the team decides who does it, and nothing
+lands until a reviewer has seen it work.
+
+- **The Duty Officer reads every new duty first.** Nobody assigns a duty to a role by hand. The
+  role marked as intake — the Duty Officer, on the shipped teams — runs on the cheapest model: it asks
+  you when the brief is unclear, finishes what is trivial and safe itself, and hands everything else
+  to the role that should do it.
+- **A duty is handed on, not re-filed.** `duty_handoff` passes the *same* duty to another role with a
+  note. Its thread, its files and its worktree go with it, so the next role starts from exactly what
+  the last one left. Each role is a session of its own — its own conversation, usually its own model.
+- **A builder cannot land its own work.** A role whose work is reviewed is not offered
+  `duty_integrate` or `duty_complete`, and is refused if it calls them. It commits, and hands the
+  duty to a role that reviews. The reviewer verifies the work in the same worktree, then lands it and
+  completes the duty — or hands it straight back with its findings. Nothing reaches the main branch
+  in between.
+- **Two roles that cannot agree ask you.** After a reviewer has sent the same work back three times
+  (a setting), the duty goes to *Needs you* with the latest findings.
+- **Plans can wait for you.** Off by default: with *I approve plans before they are built* on, a
+  planning role's handoff waits in *Needs you* until you approve it or say what to change.
+- **Bigger work is split.** A role holding a duty can file pieces of it with `duty_enqueue`, naming
+  the role each is for. Any other new duty goes to the Duty Officer.
+
+**Charters.** Each role has a charter: its standing instructions, given to every session that works
+as it, on top of the board's rules. A charter is the discipline's best practice written down once,
+so nobody filing a duty has to ask for it. The software team's builders are held to security (input
+validation, authorisation on every entry point, injection, secrets, dependencies), performance (no
+N+1, bounded reads, indexes), reuse over duplication, unit tests for every behaviour and fixed bug,
+end-to-end tests for every changed user-visible flow, and idiomatic, readable code — and QA's charter
+checks the work against the same list. Rules are what *this project* requires; a charter is how a
+role works on any duty; where they disagree, the rules win.
+
+**The shipped teams.** A new board starts with the one that fits it, unless you untick *Start with
+a team*:
+
+| Team | Roles | For |
+| --- | --- | --- |
+| Software | Duty Officer, Architect, Engineer, Senior Engineer, QA | a project in a repository |
+| Marketing and content | Duty Officer, Strategist, Writer, Editor | writing that gets published |
+| Business and analysis | Duty Officer, Advisor, Analyst, Reviewer | research, numbers, decisions |
+| Operations | Duty Officer, Operator, Reviewer | a board that runs an account through MCP servers |
+| Task | Duty Officer, Specialist, Checker | one-off tasks, files in and files out |
+
+In a board's **Settings → Team** its owner can switch teams, edit any role's name, level and
+charter, change the two handoff settings, or turn the team off. **Have an agent draft one for this
+board** files a `roster` duty: an agent reads what the board is for and proposes roles and charters
+for it. Like the rules, what it proposes is a draft — nothing changes until the owner accepts it.
+An existing board has no team until its owner gives it one.
+
+**Levels, not models.** A role names a level — *light* for routing, *standard* for most building,
+*senior* for risky work and reviewing, *principal* for design — and each machine works it with the
+agent/model/effort combinations it has enabled at that level, in its own order, with the usual
+fallback when one runs out of usage. A combination's level is read from its model and effort (a
+small model is light; the largest at high effort is principal; between them effort decides), and the
+machine's owner can set it on the **Machines** page. A machine with nothing at a level uses the
+nearest one above, then below, so a duty never waits for a model that machine does not have. A duty
+a person pinned to a model keeps it whatever its role.
+
+**The team's memory.** Every board — with a team or not — keeps one short memory for its agents:
+what the next session must know about the project and could not work out from the code, the rules or
+the profile. It is in every session's prompt, and every session is told to write there
+(`board_memory_write`) before it finishes: a decision and its reason, a command that actually works,
+a trap. It is theirs, not yours — the board's description is what you say the project is, and the
+rules are what you accept — but its owner can read, edit or clear it under **Settings → Team**. It is
+held to 6,000 characters and replaced whole rather than appended to, so it stays curated; a write
+based on a stale copy is refused with the current text to merge.
+
+**Watching it.** A board's **Office** tab draws the same rows as its Duties tab as an office: a desk
+per role, with who is working on what and what is waiting in each tray; a meeting room for what
+needs you; and each handoff crossing the floor from one desk to the next as it happens. The
+dashboard's **Top roles** ranks roles across your boards by how their work held up — the share of a
+builder's duties that passed review first time and were not reopened, the share of a reviewer's that
+stayed done — never by how much of it there was.
+
+A team needs `dutyboard` 2.36.0 or later on the machines working the board; an older one is told to
+update rather than given the board. Teams are built for boards worked by machines: an agent
+connected by token works as its role too, but hands work on only as far as its own checkout reaches.
 
 ## Notes and suggested duties
 
@@ -971,6 +1064,8 @@ while interactive connections get the poll/claim loop. The standalone equivalent
 | Notes and files | `duty_list` with `status: "note"`; `duty_get`, `duty_thread`, `duty_attachments` for contents. | Board members: add notes/files and **Suggest duties**. |
 | Suggested duties | While holding `note_review`, `duty_suggest` creates Needs you proposals; `duty_get` on the source follows `suggestions_cursor` and preserves tracking across reviews. | Board members: approve/reject, request suggestions from unlinked notes, or clear one note link to retry. |
 | Linked boards | `board_links` discovers grants; `board_call` invokes allowed tools on the target with ordinary nested arguments. | Receiving board owner: grant/revoke READ, WRITE or FULL, with current source-board access. |
+| The team | The duty a session claims carries `roster`: its `role` with its charter, the `team` it can hand to, and the last role's `handoff` note. `duty_handoff` passes the duty on; `board_roster` reads the team; `duty_enqueue` takes `role` for a piece split from the held duty; a `roster` duty hands a drafted team in with `board_roster_submit`. A daemon session's `duty_handoff` names exactly who it can go to, and a builder is not offered `duty_integrate` or `duty_complete`. | Board owner: choose, edit, accept or turn off the team; approve plans. Nobody assigns a role. |
+| The team's memory | `board_memory` reads it (it also comes with a claim); `board_memory_write` replaces it, with the version read. | Board owner: read, edit or clear it. Members read it. |
 
 `duty_list` returns `duties` and `cursor`; pass the cursor until null. `duty_get` on a note
 returns `duty`, `suggestions` and `suggestions_cursor`; pass `suggestions_cursor` until null.
@@ -1037,7 +1132,10 @@ only when you first try it hosted.
 | `/schedules/sync` | any | Tell the board what its schedules' timezones are worth in minutes from UTC, and read back what it believes. |
 | `/schedules/history` | any | The duties one schedule has filed, newest first, with how each went. A page at a time (`limit` up to 50, `cursor` for the rest). |
 | `/me/access` | human | Repair this person's `boards` claim; says whether their token is behind. |
-| `/projects/*` | human | `create` (optionally with a `profile` and `runner`), `list` (owned and shared), `rename`, `profile` and `delete` (owner only). |
+| `/duty/handoff` | agent | The role holding a duty passes it to another role, with a note: `{ duty_id, to_role, note }`. Same duty, same thread, same workspace. |
+| `/board/roster` · `/board/roster/*` | both · owner · agent | The team in force (people also see a draft and the shipped teams). `set` puts a preset or an edited team in force, changes the handoff settings, or turns it off; `accept` puts a draft in force; `draft` files a roster duty; `submit` is that duty handing its team in. |
+| `/board/memory` · `/board/memory/write` | both | The team's memory, and replacing it: an agent holding an active duty, with the version it read, or the board's owner. |
+| `/projects/*` | human | `create` (optionally with a `profile` and `runner`, and `roster: "auto"` or a team's id to start with one), `list` (owned and shared), `rename`, `profile` and `delete` (owner only). |
 | `/tokens/*` | owner | `mint` (with a `scope`: `agent`, or `submit` for an integration, and an optional runner to pin it to), `list`, `update` (its name and runner), `revoke`. |
 | `/tokens/webhook` · `/tokens/webhook/test` | owner | Set or remove a token's webhook; queue a `ping` to it. |
 | `/live/token` · `/live/me` | human | A subscribe-only channel token for one board; or for the person's own channel, where "needs you" events arrive. |
@@ -1062,6 +1160,16 @@ it is filed: duties in progress are blocked behind it, and every other claim is 
 finishes.
 
 ## The rules the state machine actually enforces
+
+- **On a board with a team, a builder's work is not finished by the builder.** A `duty_complete`
+  from an agent holding a duty as a role marked `reviewed` is a `409` naming who to hand it to, and a
+  daemon session in that role is refused `duty_integrate` and the deploy tools as well. The only way
+  that role's duty ends `done` is through a role that `reviews` — or a person.
+- **Nobody filing a duty chooses its role.** A `role` on `/duty/enqueue` is refused from a person, a
+  submit token or a linked board; only an agent splitting the duty it holds may name one. Everything
+  else starts with the role that reads new duties first, as does a duty a person reopens.
+- **A drafted team, like drafted rules, is not in force.** `board_roster_submit` writes a draft;
+  only the board's owner accepting it changes who works the board.
 
 - **One active duty per agent, and one agent per duty.** Both directions, and neither is a
   read-then-check — they are **two unique indexes**, so the datastore refuses the losing

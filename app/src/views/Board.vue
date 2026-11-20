@@ -1,7 +1,8 @@
 <script setup>
 import DutyAgentPriority from "../components/DutyAgentPriority.vue";
 import BoardNav from "../components/BoardNav.vue";
-import { computed, onUnmounted, reactive, ref, watch } from "vue";
+import { computed, onUnmounted, provide, reactive, ref, watch } from "vue";
+import { roleNames } from "../lib/team.js";
 import { aggregate, api, putSigned, query, subscribeLive } from "../lib/altengine.js";
 import { STATUS_COLUMNS, PRIORITIES, expiryChoices, ago, columnOrder, sortColumn } from "../lib/duties.js";
 import BoardColumn from "../components/BoardColumn.vue";
@@ -60,6 +61,20 @@ const columns = ref({});
  *  runs at setup time and would hit the temporal dead zone. */
 const paged = ref(false);
 const agents = ref([]);
+/**
+ * The board's team, for the cards: which role reads new duties first, and what each role is called.
+ * Read once the board says it has one; a board without a team never asks.
+ */
+const teamRoles = ref([]);
+provide("team", { pointer: computed(() => (board.value && board.value.roster) || null), names: computed(() => roleNames(teamRoles.value)) });
+async function loadTeam() {
+  if (!(board.value && board.value.roster && board.value.roster.intake)) return (teamRoles.value = []);
+  try {
+    teamRoles.value = (await api("/board/roster", { project_id: props.projectId })).roles || [];
+  } catch {
+    /* the cards fall back to a name made from the role's id */
+  }
+}
 /**
  * The strip shows who is working and who was around lately. An agent row is never deleted — a
  * token used once, a machine lane idle since yesterday — so the rest fold behind a count rather than
@@ -367,6 +382,7 @@ async function openBoard() {
     agents.value = res.agents || [];
     runners.value = res.runners || [];
     searchable.value = res.search === true;
+    loadTeam();
     connect(res.live || null);
   } catch (err) {
     error.value = err.message;
@@ -397,6 +413,8 @@ function scheduleRefresh(frame) {
   // re-reading them would be six queries for a change this page does not show. A runner event
   // re-reads only the runners, for the header.
   if (ev && ev.t === "runner") return refreshRunners();
+  // The team changed: the cards name roles, so re-read the board's pointer to it and its roles.
+  if (ev && ev.t === "board" && ev.what === "roster") return void api("/board/open", { project_id: props.projectId }).then((res) => { board.value = res.project || board.value; loadTeam(); }).catch(() => {});
   if (ev && ev.t === "board") return;
   if (ev && (ev.t === "notes" || ev.status === "note")) return;
   if (!ev || !ev.id) {

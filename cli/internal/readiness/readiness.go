@@ -49,6 +49,20 @@ type Item struct {
 	Fix string `json:"fix,omitempty"`
 	// Actions are what the console can ask this machine to do about it.
 	Actions []string `json:"actions,omitempty"`
+	// Secrets are the MCP secrets this machine lacks, by name, so the console can ask for exactly
+	// those. Never a value.
+	Secrets []MissingSecret `json:"secrets,omitempty"`
+}
+
+// MissingSecret names one secret an MCP server on a board needs and this machine does not have.
+type MissingSecret struct {
+	Board  string `json:"board"`
+	Server string `json:"server"`
+	Name   string `json:"name"`
+	// Header is true for a URL server, whose secrets are request headers; false for a command's
+	// environment variables.
+	Header bool   `json:"header,omitempty"`
+	Note   string `json:"note,omitempty"`
 }
 
 // Report is the whole checklist.
@@ -292,6 +306,7 @@ func mcpSecretsItem(linked []board.BoardView) (Item, bool) {
 				}
 				if v, _ := state.Credential(state.MCPSecret(b.ProjectID, s.Name, name)); v == "" {
 					missing = append(missing, b.ProjectID+"/"+s.Name+" "+name)
+					it.Secrets = append(it.Secrets, MissingSecret{Board: b.ProjectID, Server: s.Name, Name: name, Header: s.URL != "", Note: s.Note})
 				}
 			}
 		}
@@ -304,6 +319,7 @@ func mcpSecretsItem(linked []board.BoardView) (Item, bool) {
 		it.State, it.Detail = OK, "all set on this machine"
 		return it, true
 	}
+	// Set from the console, sealed to this machine's key, or typed here.
 	it.State, it.Fix = Todo, "dutyboard --mcp-secrets"
 	it.Detail = "not set on this machine: " + strings.Join(missing, ", ")
 	return it, true

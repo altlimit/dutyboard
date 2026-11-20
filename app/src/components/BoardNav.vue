@@ -4,7 +4,7 @@ defineProps({
   name: { type: String, default: "" },
   active: { type: String, required: true },
 });
-const tabs = [{ route: "board", label: "Duties" }, { route: "notes", label: "Notes" }, { route: "settings", label: "Settings" }];
+const tabs = [{ route: "board", label: "Duties" }, { route: "office", label: "Office" }, { route: "notes", label: "Notes" }, { route: "settings", label: "Settings" }];
 </script>
 
 <template>

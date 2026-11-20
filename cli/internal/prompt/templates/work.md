@@ -24,6 +24,15 @@ Read the note before the brief, and `duty_thread` before you change anything.
 # {{.Duty.Title}}
 
 {{.Duty.Brief}}
+{{- with .Duty.Team}}{{with .Handoff}}
+
+{{if .SentBack}}**{{.FromName}} reviewed this and sent it back.** These findings are what you fix now — every one — before handing it on again:{{else}}**{{.FromName}} handed this to you.** Their note is part of your brief:{{end}}
+
+{{.Note}}
+
+The earlier roles' work is already in this {{if $.Files}}folder{{else}}worktree{{end}}. Look at what is there{{if not $.Files}} (`git log` and the diff against the main branch){{end}} and at `duty_thread` before changing anything; do not start over.
+{{- end}}{{end}}
+
 {{- if or .Duty.SourceNoteIDs .Duty.SourceNoteID}}
 
 This duty was suggested from notes {{if .Duty.SourceNoteIDs}}{{range .Duty.SourceNoteIDs}}`{{.}}` {{end}}{{else}}`{{.Duty.SourceNoteID}}`{{end}}and approved by a person. Read ALL those notes with `duty_get`, their threads with `duty_thread` and their files with `duty_attachments` for the source context. The approved duty's brief and human answer define the work; other suggestions on the note are separate duties.
@@ -55,18 +64,18 @@ The files that came with it are in `in/`: {{join .Files.Inputs ", "}}.
 {{- end}}
 {{- if .Files.Missing}} {{.Files.Missing}} more were still being uploaded when it started and are not there; if the task needs them, ask on the board.{{end}}
 
-When it is done: check it in the account, then `duty_complete` with an outcome summary naming what changed there. Then stop.
+{{if .MustHandOff}}When it is done: check it in the account, then `duty_handoff` to the reviewer. Then stop.{{else}}When it is done: check it in the account, then `duty_complete` with an outcome summary naming what changed there. Then stop.{{end}}
 {{- else if .Files}}
 
 {{if .Files.Inputs}}The files that came with it are in `in/`: {{join .Files.Inputs ", "}}.{{else}}No files came with it.{{end}}
 {{- if .Files.Missing}} {{.Files.Missing}} more were still being uploaded when it started and are not there; if the task needs them, ask on the board.{{end}}
 
-When it is done: put what it produces in `out/`, check it, then `duty_complete` with a specific outcome summary. Then stop.
+{{if .MustHandOff}}When it is done: put what it produces in `out/`, check it, then `duty_handoff` to the reviewer. Then stop.{{else}}When it is done: put what it produces in `out/`, check it, then `duty_complete` with a specific outcome summary. Then stop.{{end}}
 {{- else}}
 {{- if .Duty.AttachmentCount}}
 
 This duty has {{.Duty.AttachmentCount}} attachment(s). Read them with `duty_attachments` before anything else.
 {{- end}}
 
-When it is done: verify it, commit, `duty_integrate`, then `duty_complete` with a specific outcome summary. Then stop.
+{{if .MustHandOff}}When it is done: verify it, commit, then `duty_handoff` to the reviewer. Then stop.{{else if and .Duty.Team .Duty.Team.Role.Intake}}Hand it to the role that should work it with `duty_handoff`, or — only if it is trivial and safe — do it, verify it, commit, `duty_integrate`, then `duty_complete`. Then stop.{{else}}When it is done: verify it, commit, `duty_integrate`, then `duty_complete` with a specific outcome summary. Then stop.{{end}}
 {{- end}}

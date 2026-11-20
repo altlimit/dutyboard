@@ -47,6 +47,7 @@ type Run struct {
 
 	mu         sync.Mutex
 	st, det    string
+	team       *board.Team // who this session is on the board's team; nil on a board with none
 	integrated *worktree.Result
 	opened     []string // the board's other repositories this duty has a worktree of
 	cancel     context.CancelFunc
@@ -76,6 +77,19 @@ func (r *Run) detail() string {
 	return r.det
 }
 
+func (r *Run) setTeam(t *board.Team) {
+	r.mu.Lock()
+	r.team = t
+	r.mu.Unlock()
+}
+
+// Team is who this session is on the board's team for its duty, or nil on a board with none.
+func (r *Run) Team() *board.Team {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.team
+}
+
 func (r *Run) cancelByBoard() {
 	r.byBoard.Store(true)
 	r.cancel()
@@ -96,7 +110,7 @@ func (r *Run) integration() *worktree.Result {
 // launch starts a session for a claimed (or already held) duty.
 func (d *Daemon) launch(ctx context.Context, boardID, agent string, duty *board.Duty, resuming bool) {
 	rctx, cancel := context.WithCancel(ctx)
-	run := &Run{Board: boardID, DutyID: duty.ID, Agent: agent, Kind: duty.Kind, Title: duty.Title, Token: randomHex(24), cancel: cancel}
+	run := &Run{Board: boardID, DutyID: duty.ID, Agent: agent, Kind: duty.Kind, Title: duty.Title, Token: randomHex(24), cancel: cancel, team: duty.Team}
 	d.mu.Lock()
 	d.runs[duty.ID] = run
 	d.tokens[run.Token] = run
@@ -264,6 +278,7 @@ func (d *Daemon) execute(dctx, rctx context.Context, run *Run, duty *board.Duty,
 	if created {
 		rec.Attempts = 0
 	}
+	resume = prepareRole(&rec, roleID(duty), resume)
 
 	for {
 		if rctx.Err() != nil {
@@ -292,11 +307,12 @@ func (d *Daemon) execute(dctx, rctx context.Context, run *Run, duty *board.Duty,
 		var switched bool
 		resume, switched = prepareChoice(&rec, choice, resume)
 		rulesAt, rules := d.rulesFor(dctx, run.Board)
+		run.setTeam(duty.Team)
 		in := prompt.Input{
 			Duty: *duty, Board: v, Rules: rules, RulesAt: rulesAt, Branch: spec.Branch(), Worktree: path,
 			Mode: string(modeFor(dctx, v, spec)), Resuming: resume || switched, Attempt: rec.Attempts,
 			ProjectRoot: spec.Repo, LocalDir: spec.CopyFrom, Tools: d.tools.Describe(), PrepFailed: prepFailed,
-			Repos: d.promptRepos(dctx, run, v), Check: rec.Check,
+			Repos: d.promptRepos(dctx, run, v), Check: rec.Check, Memory: d.memoryFor(rctx, run.Board),
 		}
 		if run.Files {
 			in.Files = &files
@@ -443,11 +459,51 @@ func (d *Daemon) execute(dctx, rctx context.Context, run *Run, duty *board.Duty,
 			}
 			fresh.Notes = duty.Notes // a claim hands them over; a read of the duty does not
 			duty, resume = fresh, true
-		default: // needs_decision, blocked, queued: the session parked it, or a person moved it
+		default: // needs_decision, blocked, queued: the session parked it or handed it on, or a person moved it
+			if fresh.Role != "" && fresh.Role != rec.Role {
+				d.log.Printf("%s: %q was handed from %s to %s", run.Board, clip(run.Title, 60), rec.Role, fresh.Role)
+			}
 			d.afterPark(dctx, run, rec)
 			return
 		}
 	}
+}
+
+// prepareRole keeps one role's conversation from being resumed by another. A different role on the
+// board's team has its own charter, usually its own model, and must read the work rather than
+// remember making it — so it starts a session of its own, with its own count of attempts. The
+// worktree, and everything the earlier roles left in it, stays. It answers whether to resume.
+func prepareRole(rec *state.RunRecord, role string, resume bool) bool {
+	if role == rec.Role {
+		return resume
+	}
+	if rec.Role != "" || resume {
+		rec.Session, rec.Attempts, resume = newSessionID(), 0, false
+	}
+	rec.Role = role
+	return resume
+}
+
+// roleID is the role on the board's team a duty is being worked as, "" on a board with none.
+func roleID(duty *board.Duty) string {
+	if duty.Team == nil {
+		return ""
+	}
+	return duty.Team.Role.ID
+}
+
+// memoryFor reads what the board's agents have written down for whoever works there next, fresh for
+// every session: the one before may have added to it. Nil from a board too old to keep one, or when
+// it cannot be read — a session can work without it, and is not told to write to something missing.
+func (d *Daemon) memoryFor(ctx context.Context, boardID string) *board.Memory {
+	mem, err := d.api.Memory(ctx, boardID)
+	if err != nil {
+		if !board.IsStatus(err, 404) && ctx.Err() == nil {
+			d.log.Printf("reading the team's memory for %s: %v", boardID, err)
+		}
+		return nil
+	}
+	return mem
 }
 
 // settleStopped ends a run stopped while no session was running: still being prepared, or waiting to

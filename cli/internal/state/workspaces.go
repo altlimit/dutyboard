@@ -81,6 +81,9 @@ type RunRecord struct {
 	Repos []string `json:"repos,omitempty"`
 	// Check is what the schedule's check said when it woke an agent for the duty.
 	Check string `json:"check,omitempty"`
+	// Role is the role on the board's team the last session worked the duty as. A different role
+	// starts a conversation of its own, in the same worktree.
+	Role string `json:"role,omitempty"`
 }
 
 var runsMu sync.Mutex

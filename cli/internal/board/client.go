@@ -360,6 +360,11 @@ type BoardView struct {
 	Profile      *Profile `json:"profile"`
 	Runner       *Runner  `json:"runner"`
 	RulesVersion int      `json:"rules_version"`
+	// Roster says whether the board has a team; nil or an empty Intake means it has none.
+	Roster *struct {
+		Version int    `json:"version"`
+		Intake  string `json:"intake"`
+	} `json:"roster"`
 }
 
 // Folder reports whether the board's duties are worked in a folder of their own, with no repository:
@@ -470,6 +475,7 @@ type PollBoard struct {
 		DutyID       string        `json:"duty_id"`
 		AgentID      string        `json:"agent_id"`
 		Kind         string        `json:"kind"`
+		Role         string        `json:"role"`
 		Mine         bool          `json:"mine"`
 	} `json:"active"`
 	Runnable []struct {
@@ -478,6 +484,7 @@ type PollBoard struct {
 		Title        string        `json:"title"`
 		Priority     string        `json:"priority"`
 		Kind         string        `json:"kind"`
+		Role         string        `json:"role"`
 		Reserved     bool          `json:"reserved"`
 		Resumes      bool          `json:"resumes"`
 	} `json:"runnable"`
@@ -559,8 +566,13 @@ func (c *Client) ReportState(ctx context.Context, projectID string, runs []Run, 
 
 // ReportReadiness replaces what this machine says duties need from it: items is the readiness
 // checklist, checkedAt when it was made (Unix milliseconds).
-func (c *Client) ReportReadiness(ctx context.Context, items any, checkedAt int64) error {
-	return c.Call(ctx, "/machine/readiness", "", map[string]any{"items": items, "checked_at": checkedAt}, nil)
+// sealKey is the public half of this machine's sealing key, which the console encrypts secrets to.
+func (c *Client) ReportReadiness(ctx context.Context, items any, checkedAt int64, sealKey string) error {
+	body := map[string]any{"items": items, "checked_at": checkedAt}
+	if sealKey != "" {
+		body["seal_key"] = sealKey
+	}
+	return c.Call(ctx, "/machine/readiness", "", body, nil)
 }
 
 // ReportRequest reports a setup request's progress.
@@ -617,6 +629,76 @@ type Duty struct {
 	// Check is the command its schedule runs before waking an agent for it.
 	Check      string `json:"check"`
 	ScheduleID string `json:"schedule_id"`
+	// Role is the id of the role on the board's team that has the duty; "" on a board with none.
+	Role string `json:"role"`
+	// Team is who this session is on the board's team for this duty, as a claim or a read of the
+	// duty says. Nil on a board with no team.
+	Team *Team `json:"-"`
+}
+
+// Role is one member of a board's team, as other roles see it.
+type Role struct {
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Summary string `json:"summary"`
+	Level   string `json:"level"`
+	// Charter is the role's standing instructions. Only a session's own role carries it.
+	Charter string `json:"charter"`
+	// Intake reads every new duty first and routes it.
+	Intake bool `json:"intake"`
+	// Plans marks a role whose handoff is a plan for another to carry out.
+	Plans bool `json:"plans"`
+	// Reviewed marks a role that cannot land or complete its own work: a reviewer does.
+	Reviewed bool `json:"reviewed"`
+	// Reviews marks a role that verifies others' work, lands it and completes the duty.
+	Reviews bool `json:"reviews"`
+}
+
+// Team is what a session is told about the board's team when it takes a duty.
+type Team struct {
+	Version  int    `json:"version"`
+	Role     Role   `json:"role"`
+	Others   []Role `json:"team"`
+	Settings struct {
+		PlanApproval bool `json:"plan_approval"`
+		MaxBounces   int  `json:"max_bounces"`
+	} `json:"settings"`
+	// Handoff is what the last role said when it passed the duty on.
+	Handoff *struct {
+		From     string `json:"from"`
+		FromName string `json:"from_name"`
+		Note     string `json:"note"`
+		SentBack bool   `json:"sent_back"`
+	} `json:"handoff"`
+	Bounces int `json:"bounces"`
+}
+
+// Reviewers are the roles a builder hands its work to.
+func (t *Team) Reviewers() []Role {
+	var out []Role
+	for _, r := range t.Others {
+		if r.Reviews {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// MustHandOff reports whether this session's role may not land or complete the duty itself.
+func (t *Team) MustHandOff() bool { return t != nil && t.Role.Reviewed && len(t.Reviewers()) > 0 }
+
+// Memory is what a board's agents have written down for whoever works there next.
+type Memory struct {
+	Body     string `json:"body"`
+	Version  int    `json:"version"`
+	Chars    int    `json:"chars"`
+	MaxChars int    `json:"max_chars"`
+}
+
+// Memory reads the team's memory on board.
+func (c *Client) Memory(ctx context.Context, board string) (*Memory, error) {
+	var m Memory
+	return &m, c.Call(ctx, "/board/memory", board, nil, &m)
 }
 
 // Note is a person's note on a duty.
@@ -627,22 +709,28 @@ type Note struct {
 
 // Claimed is /duty/claim's answer.
 type Claimed struct {
-	Duty         Duty `json:"duty"`
-	RulesVersion int  `json:"rules_version"`
+	Duty         Duty  `json:"duty"`
+	RulesVersion int   `json:"rules_version"`
+	Roster       *Team `json:"roster"`
 }
 
 // Claim claims dutyID on board as agentID.
 func (c *Client) Claim(ctx context.Context, board, dutyID, agentID string) (*Claimed, error) {
 	var out Claimed
-	return &out, c.Call(ctx, "/duty/claim", board, map[string]any{"duty_id": dutyID, "agent_id": agentID}, &out)
+	err := c.Call(ctx, "/duty/claim", board, map[string]any{"duty_id": dutyID, "agent_id": agentID}, &out)
+	out.Duty.Team = out.Roster
+	return &out, err
 }
 
-// Get reads a duty.
+// Get reads a duty, with who the reader is on the board's team for it.
 func (c *Client) Get(ctx context.Context, board, dutyID string) (*Duty, error) {
 	var out struct {
-		Duty Duty `json:"duty"`
+		Duty   Duty  `json:"duty"`
+		Roster *Team `json:"roster"`
 	}
-	return &out.Duty, c.Call(ctx, "/duty/get", board, map[string]any{"duty_id": dutyID}, &out)
+	err := c.Call(ctx, "/duty/get", board, map[string]any{"duty_id": dutyID}, &out)
+	out.Duty.Team = out.Roster
+	return &out.Duty, err
 }
 
 // Checkpoint posts to a duty's thread; setStatus may be empty. affinity keeps a parked duty for

@@ -1,6 +1,7 @@
 <script setup>
 import { computed, ref, watch } from "vue";
 import { AGENTS, optionKey, optionLabel } from "../lib/runners.js";
+import { LEVELS, levelLabel } from "../lib/team.js";
 const props = defineProps({ machine: { type: Object, required: true }, disabled: Boolean });
 const emit = defineEmits(["save", "refresh"]);
 const options = ref([]);
@@ -32,6 +33,20 @@ function toggle(i) {
   dirty.value = true;
 }
 function remove(i) { options.value.splice(i, 1); dirty.value = true; }
+/**
+ * The level a combination works at, for boards with a team: the owner's choice, or — left on
+ * automatic — what the board reads from its model and effort. A combination added here and not yet
+ * saved has no reading to show until it is.
+ */
+const autoLevel = (o) => {
+  const at = (props.machine.agent_options || []).findIndex((saved) => optionKey(saved) === optionKey(o));
+  return at >= 0 ? (props.machine.auto_levels || [])[at] || "" : "";
+};
+function setLevel(i, level) {
+  if (level) options.value[i].level = level;
+  else delete options.value[i].level;
+  dirty.value = true;
+}
 function save() { emit("save", options.value.map((o) => ({ ...o }))); }
 // Only acknowledge a successful save; failed requests leave the draft intact.
 watch(() => JSON.stringify(props.machine.agent_options), (value) => {
@@ -46,12 +61,22 @@ watch(() => JSON.stringify(props.machine.agent_options), (value) => {
       <button type="button" class="link small" :disabled="disabled || !machine.online" @click="emit('refresh')">Refresh models</button>
     </div>
     <p class="hint">Enable combinations and order them by preference. Boards use enabled combinations in this order by default; boards and duties can override the order. Disable a combination to keep it saved without using it.</p>
+    <p class="hint">
+      On a board with a team, each role asks for a level rather than a model — light for routing, standard for most building, senior for
+      risky work and reviewing, principal for design — and this machine works it with its combinations at that level, in this order.
+      With none at a level it uses the nearest one above, then below, so a duty is never left waiting for a model this machine does not have.
+    </p>
     <p v-if="machine.agent_options == null" class="notice small">Existing boards still use their previous agent settings. Saving here makes this list the machine's allowed combinations.</p>
     <ol v-if="options.length" class="stack" style="padding-left: 1.25rem">
       <li v-for="(o, i) in options" :key="optionKey(o)">
         <div class="row row--between">
           <span style="overflow-wrap: anywhere; min-width: 0">{{ optionLabel(o) }} <span v-if="o.disabled" class="badge">Disabled</span></span>
           <div class="row">
+            <label class="sr-only" :for="`level-${machine.machine_id}-${i}`">Level of {{ optionLabel(o) }}</label>
+            <select :id="`level-${machine.machine_id}-${i}`" :value="o.level || ''" :disabled="disabled" style="width: auto" @change="setLevel(i, $event.target.value)">
+              <option value="">Level: automatic{{ autoLevel(o) ? ` (${levelLabel(autoLevel(o)).toLowerCase()})` : "" }}</option>
+              <option v-for="l in LEVELS" :key="l.key" :value="l.key">{{ l.label }}</option>
+            </select>
             <button type="button" :disabled="disabled" :aria-pressed="!o.disabled" :aria-label="`${o.disabled ? 'Enable' : 'Disable'} ${optionLabel(o)}`" @click="toggle(i)">{{ o.disabled ? "Enable" : "Disable" }}</button>
             <button type="button" :disabled="disabled || i === 0" :aria-label="`Move ${optionLabel(o)} up`" @click="move(i, -1)">Move up</button>
             <button type="button" :disabled="disabled || i === options.length - 1" :aria-label="`Move ${optionLabel(o)} down`" @click="move(i, 1)">Move down</button>

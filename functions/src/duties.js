@@ -44,7 +44,9 @@ import { dutyAgentOptions } from "./profile.js";
 import { olderRelease } from "./version.js";
 import { notifyNeedsYou } from "./notify.js";
 import { badRequest, conflict, forbidden, notFound, str, oneOf, intIn, clip } from "./http.js";
-import { dutyId, threadId } from "./ids.js";
+import { dutyId, threadId, ulid } from "./ids.js";
+import { rosterInForce, hasRoster, roleFor, roleContext, dutyOptions, intakeOf, settingsFrom, ROSTER_MIN_RELEASE } from "./roster.js";
+import { memoryOf } from "./memory.js";
 import { putOp } from "./store.js";
 import { resolveProject, projectOfDuty, requireHuman, requireAgent, authorOf, checkAgentId } from "./identity.js";
 import { sweepAttachments, MAX_ATTACHMENTS } from "./attachments.js";
@@ -58,11 +60,12 @@ export const PRIORITIES = ["immediate_blocker", "next", "backlog"];
 export const THREAD_KINDS = ["question", "resolution", "checkpoint", "note"];
 
 /**
- * What a duty is for. `work` is everything a person files. The other two are how a daemon sets a
- * project up, and they change what every other duty on the board runs against — the toolchain,
- * the rules — which is why they are exclusive (invariant 3).
+ * What a duty is for. `work` is everything a person files. `setup` and `rules` are how a daemon sets
+ * a project up, and they change what every other duty on the board runs against — the toolchain,
+ * the rules — which is why they are exclusive (invariant 3). `roster` drafts the board's team; what
+ * it hands in changes nothing until a person accepts it, so it runs alongside everything else.
  */
-export const KINDS = ["work", "setup", "rules"];
+export const KINDS = ["work", "setup", "rules", "roster"];
 
 /**
  * How long a finished duty stays on the board, in days — for work nobody needs the record of once it
@@ -119,6 +122,9 @@ const agentEvent = (id, activeDutyId, at) => ({ id, active: activeDutyId || null
  */
 export const MAX_OPEN_DUTIES = 500;
 const MAX_THREAD_ENTRIES = 200;
+
+/** Roles a duty remembers having passed through — far above any team's size, and a bound on the row. */
+const MAX_ROLE_TRAIL = 12;
 
 /** Statuses that still need someone. A finished board may hold any number of duties; it is
  *  the UNFINISHED pile that means work is being created faster than it is being done. */
@@ -186,7 +192,7 @@ export async function pollDuties(ctx, body) {
     await touchAgent(ctx, project, agentId);
   }
 
-  const rows = await runnableDuties(ctx, project.key, agentId, limit);
+  const rows = await runnableDuties(ctx, project.key, agentId, limit, project);
   return {
     project_id: project.key,
     active_duty: active,
@@ -202,7 +208,8 @@ export async function pollDuties(ctx, body) {
  * machine that is still around to resume it. Poll and claim apply the same rules through
  * `claimBlocker`, so nothing is offered that the claim would then refuse.
  */
-export async function runnableDuties(ctx, projectKey, agentId, limit) {
+export async function runnableDuties(ctx, projectKey, agentId, limit, project = null) {
+  const teamed = hasRoster(project || (await ctx.store.get("projects", projectKey)));
   const settingUp = await hasUnfinished(ctx, projectKey, [{ field: "kind", op: "=", value: "setup" }]);
   const eligible = [];
   let cursor = null;
@@ -222,7 +229,7 @@ export async function runnableDuties(ctx, projectKey, agentId, limit) {
     });
     const present = await presenceFor(ctx, page.rows);
     const now = Date.now();
-    eligible.push(...page.rows.filter((d) => !claimBlocker(ctx, d, agentId, present, now) && (!settingUp || d.kind === "setup")));
+    eligible.push(...page.rows.filter((d) => !claimBlocker(ctx, d, agentId, present, now, teamed) && (!settingUp || d.kind === "setup")));
     cursor = page.cursor;
     scanned += page.rows.length;
     // Model-specific duties for other machines must not hide later runnable work.
@@ -365,8 +372,21 @@ export function dutyRunnerTooOld(ctx, duty) {
  * is done on the wrong computer. Affinity is not: it keeps a parked duty for the machine whose
  * worktree has the half-finished work, but only while that machine is there to pick it up.
  */
-function claimBlocker(ctx, duty, agentId, present, now) {
+/**
+ * A board with a team needs a runner that knows its role: an older one would work the duty as if it
+ * were alone, and then be refused when it tried to finish what a reviewer has to see first.
+ */
+export function rosterTooOld(ctx, duty, teamed) {
+  return teamed && (duty.kind || "work") === "work" && !!ctx.caller.machineId && olderRelease(ctx.clientVersion || ctx.caller.machineRow?.cli_version, ROSTER_MIN_RELEASE);
+}
+
+function claimBlocker(ctx, duty, agentId, present, now, teamed = false) {
   if (dutyRunnerTooOld(ctx, duty)) return "this duty's model priority requires dutyboard 2.30.0 or later";
+  if (rosterTooOld(ctx, duty, teamed)) return `this board has a team, which needs dutyboard ${ROSTER_MIN_RELEASE} or later on the machine`;
+  if (teamed && duty.agent_options == null && (duty.kind || "work") === "work" && ctx.caller.machineId) {
+    const mine = ctx.caller.machineRow?.agent_options;
+    if (Array.isArray(mine) && !mine.some((o) => !o.disabled)) return "this machine has no agent/model combination enabled to work a role with";
+  }
   if (duty.agent_options != null && ctx.caller.machineId && !duty.agent_options.some((choice) =>
     (ctx.caller.machineRow?.agent_options || []).some((allowed) => !allowed.disabled && choice.agent === allowed.agent && (choice.model || "") === (allowed.model || "") && (choice.effort || "") === (allowed.effort || "")))) {
     return "this machine has no enabled combination matching this duty's model priority";
@@ -396,10 +416,18 @@ export async function getDuty(ctx, body) {
   await projectOfDuty(ctx.caller, duty, ctx.store);
   const project = duty.kind === "note" ? await ctx.store.get("projects", duty.project_id) : null;
   const linked = duty.kind === "note" ? await noteSuggestions(ctx, duty, body.suggestions_cursor) : null;
+  // A session reading the duty it holds is told its role again: a runner that restarted reads the
+  // duty here, not through a claim.
+  const roster = ctx.caller.kind === "agent" && ctx.caller.scope !== "submit" && (duty.kind || "work") === "work" ? await rosterInForce(ctx, duty.project_id) : null;
   return {
+    ...(roster ? { roster: roleContext(roster, duty) } : {}),
     ...(linked ? { suggestions: linked.rows.map(d => ({ ...briefOf(d, { full: true }), review_duty_id: d.spawned_by, outcome_summary: d.outcome_summary || null })), suggestions_cursor: linked.cursor } : {}),
     duty: {
       ...briefOf(duty, { full: true }),
+      ...(roster ? { agent_options: dutyOptions(ctx, roster, duty), role: roleFor(roster, duty).id } : {}),
+      handoffs: duty.handoffs || 0,
+      bounces: duty.bounces || 0,
+      role_trail: duty.role_trail || [],
       ...(duty.kind === "note" ? { has_suggestions: await hasNoteSuggestions(ctx, duty) } : {}),
       ...(duty.kind === "note" && project?.notes_review_duty_id ? { review_duty_id: project.notes_review_duty_id } : {}),
       outcome_summary: duty.outcome_summary || null,
@@ -521,17 +549,21 @@ export async function claimDuty(ctx, body) {
   if (duty.status !== "queued") {
     throw conflict(`duty '${duty.key}' is ${duty.status}, not queued`, { status: duty.status });
   }
-  const blocker = claimBlocker(ctx, duty, agentId, await presenceFor(ctx, [duty]), now);
+  // The board row carries how many duties may be active at once, which rules are current and whether
+  // it has a team — all of which a claim needs and `projectOfDuty` deliberately does not read.
+  const board = await ctx.store.get("projects", project.key);
+  const blocker = claimBlocker(ctx, duty, agentId, await presenceFor(ctx, [duty]), now, hasRoster(board));
   if (blocker) throw conflict(blocker, { reserved_for: duty.reserved_for || null, affinity: duty.affinity || null });
   if (duty.kind !== "setup" && (await hasUnfinished(ctx, project.key, [{ field: "kind", op: "=", value: "setup" }]))) {
     // Worded like the exclusive refusal below, which a daemon already reads as "the board is busy".
     throw conflict("a machine's setup has the board to itself until it finishes", { waiting_for: "setup" });
   }
 
-  // The board row carries how many duties may be active at once, and which rules are current —
-  // both of which a claim needs and `projectOfDuty` deliberately does not read.
-  const [board, active] = await Promise.all([ctx.store.get("projects", project.key), activeDuties(ctx, project.key)]);
+  const [active, roster] = await Promise.all([activeDuties(ctx, project.key), hasRoster(board) ? rosterInForce(ctx, project.key) : null]);
   const lane = pickLane(duty, board, active, project.key);
+  // The role this claim works as. A duty filed before the board had a team, or naming a role the team
+  // no longer has, starts with whoever reads new duties first.
+  const role = roleFor(roster, duty);
 
   const aKey = agentKey(project.key, agentId);
   const agent = (await ctx.store.get("agents", aKey)) || newAgent(project, agentId, now);
@@ -581,6 +613,7 @@ export async function claimDuty(ctx, body) {
     // for 40m" on the boards page has to mean since the agent took it, not since it last spoke.
     claimed_at: now,
     updated_at: now,
+    ...(role ? { role: role.id, role_trail: [...new Set([...(duty.role_trail || []), role.id])].slice(-MAX_ROLE_TRAIL) } : {}),
   };
   try {
     await ctx.store.transaction([
@@ -627,9 +660,18 @@ export async function claimDuty(ctx, body) {
   return {
     status: "active",
     duty_id: duty.key,
-    duty: { ...briefOf({ ...claimed, key: duty.key }, { full: true }), expect_files: claimed.expect_files || 0, notes },
+    duty: {
+      ...briefOf({ ...claimed, key: duty.key }, { full: true }),
+      ...(role ? { agent_options: dutyOptions(ctx, roster, claimed) } : {}),
+      expect_files: claimed.expect_files || 0,
+      notes,
+    },
     // So a daemon can tell, from the claim alone, whether the rules it has are current.
     rules_version: (board && board.rules_version) || 0,
+    // Who this session is on the board's team, and who it can hand the duty to.
+    ...(role ? { roster: roleContext(roster, claimed) } : {}),
+    // What the team has written down for whoever works here next.
+    memory: await memoryOf(ctx, project.key),
   };
 }
 
@@ -896,6 +938,7 @@ export async function enqueueDuty(ctx, body, internal = {}) {
   }
   const reservedFor = await reservation(ctx, body, project.key);
   const metadata = metadataFrom(body.metadata);
+  const role = await filedRole(ctx, body, project, { kind, held, outsider: submit || !!review || !!ctx.caller.crossBoard });
 
   const duty = {
     project_id: project.key,
@@ -910,6 +953,8 @@ export async function enqueueDuty(ctx, body, internal = {}) {
     ...(review ? { source_note_rounds: Object.fromEntries(sources.map(n => [n.key, n.suggestion_round || "initial"])) } : {}),
     approval_required: !!review,
     agent_options: dutyAgentOptions(body.agent_options),
+    // Who on the board's team has it. Null on a board with none.
+    role,
     priority,
     prio_rank: RANK[priority],
     origin_board_id: ctx.caller.crossBoard?.source || null,
@@ -1004,6 +1049,31 @@ export async function enqueueDuty(ctx, body, internal = {}) {
   }
 
   return { duty_id: id, status: duty.status, priority, kind, reserved_for: reservedFor, blocked_duty_id: blocked, external_ref: externalRef };
+}
+
+/**
+ * The role a newly filed duty starts with. On a board with a team that is whoever reads new duties
+ * first, and nobody filing work chooses otherwise — except an agent splitting the duty it holds,
+ * which has just worked out who each piece is for and may say so.
+ */
+async function filedRole(ctx, body, project, { kind, held, outsider }) {
+  const wanted = str(body.role, "role", { max: 32, fallback: "" });
+  if (!hasRoster(project) || kind !== "work") {
+    if (wanted) throw badRequest("this board has no team, so there is no role to name");
+    return null;
+  }
+  if (!wanted) return project.roster.intake;
+  if (ctx.caller.kind !== "agent" || outsider) {
+    throw forbidden("file the duty without 'role': on this board the role that reads new duties first decides who works them");
+  }
+  if (!held || held.status !== "active" || held.project_id !== project.key) {
+    throw conflict("name a role only for work you are splitting out of the duty you hold");
+  }
+  const roster = await rosterInForce(ctx, project.key);
+  if (!roster || !roster.roles.some((r) => r.id === wanted)) {
+    throw badRequest(`this board has no role '${wanted}' — its roles are: ${roster ? roster.roles.map((r) => r.id).join(", ") : "none"}`);
+  }
+  return wanted;
 }
 
 /** Whose namespace an `external_ref` is in: the token, machine or person filing. Two integrations
@@ -1222,6 +1292,130 @@ export async function checkpointDuty(ctx, body) {
   return { ok: true, state, duty_id: duty.key, entry: { id: entryKey, ...entry } };
 }
 
+/**
+ * `POST /duty/handoff` — `{ duty_id, to_role, note }`. The role holding a duty passes it to another.
+ *
+ * It stays the SAME duty: its thread, its files and — for a machine — the worktree its work is in
+ * all carry over, which is the point. A builder hands work that has not landed to a reviewer who
+ * verifies it where it sits, so nothing merges until it has been seen working; a reviewer hands it
+ * straight back with findings, and the builder picks up the same branch.
+ *
+ * It goes back to the queue ahead of work nobody has started, since a duty in flight is worth
+ * finishing first, and is kept for the machine that holds its workspace while that machine is around.
+ *
+ * Two handoffs stop for a person instead. A reviewer sending work back for the Nth time, where N is
+ * the board's limit: two roles that cannot agree need someone to say what should change. And, when
+ * the board asks for it, a plan: a person approves it before anyone builds it.
+ */
+export async function handoffDuty(ctx, body) {
+  requireAgent(ctx.caller);
+  if (ctx.caller.scope === "submit") throw forbidden("this credential works no duties, so it has none to hand on");
+  const agentId = agentIdFrom(ctx, body, { required: true });
+  const duty = await loadDuty(ctx, body.duty_id);
+  const project = await projectOfDuty(ctx.caller, duty, ctx.store);
+  const now = Date.now();
+
+  if (duty.status !== "active" || duty.assigned_agent_id !== agentId) {
+    throw conflict(`duty '${duty.key}' is not one you are holding`, { status: duty.status, assigned_agent_id: duty.assigned_agent_id || null });
+  }
+  const roster = (duty.kind || "work") === "work" ? await rosterInForce(ctx, project.key) : null;
+  const from = roleFor(roster, duty);
+  if (!from) throw conflict("this board has no team to hand a duty to — finish it yourself, or park it with a question");
+  const toId = str(body.to_role, "to_role", { required: true, max: 32 });
+  const to = roster.roles.find((r) => r.id === toId);
+  const team = roster.roles.filter((r) => r.id !== from.id).map((r) => `'${r.id}' (${r.name})`).join(", ");
+  if (!to) throw badRequest(`this board has no role '${toId}' — you can hand this duty to: ${team}`);
+  if (to.id === from.id) throw badRequest(`you are ${from.name} already — hand it to another role (${team}), or carry on`);
+  const note = str(body.note, "note", { required: true, max: 4000 });
+  await unreadNotes(ctx, duty, "handoff");
+
+  const settings = settingsFrom(roster.settings);
+  const sentBack = !!from.reviews && !!to.reviewed;
+  const bounces = (duty.bounces || 0) + (sentBack ? 1 : 0);
+  const stuck = sentBack && bounces % settings.max_bounces === 0;
+  const plan = settings.plan_approval && !!from.plans && !to.plans;
+  const question = stuck
+    ? `${from.name} has sent this back to ${to.name} ${bounces} times. The latest findings:\n\n${note}\n\nWhat should change before ${to.name} tries again?`
+    : plan
+      ? `${from.name} proposes this plan for ${to.name} to build:\n\n${note}\n\nApprove it, or say what to change.`
+      : null;
+  const status = question ? "needs_decision" : "queued";
+  const base = RANK[duty.priority] ?? RANK.next;
+
+  const next = {
+    ...stripMeta(duty),
+    status,
+    role: to.id,
+    handoff: { from: from.id, from_name: from.name, to: to.id, note, sent_back: sentBack, at: now },
+    handoffs: (duty.handoffs || 0) + 1,
+    bounces,
+    // Ahead of fresh work at the same priority, behind anything more urgent.
+    prio_rank: Math.min(duty.prio_rank ?? base, base - 0.5),
+    holder: null,
+    lane: null,
+    // The work is in this machine's worktree; the next role picks it up there while it is around.
+    affinity: ctx.caller.machineId
+      ? { machine_id: ctx.caller.machineId, machine_name: (ctx.caller.machineRow && ctx.caller.machineRow.name) || "", at: now }
+      : duty.affinity || null,
+    ...(question ? { last_question: clip(question, 4000), last_resolution: null } : {}),
+    updated_at: now,
+  };
+  const ops = [
+    putOp("duties", duty.key, next),
+    putOp("threads", threadId(), {
+      duty_id: duty.key,
+      project_id: project.key,
+      owner_uid: project.owner_uid,
+      ...authorOf(ctx.caller, agentId),
+      kind: "checkpoint",
+      message: note,
+      metadata: { handoff: { from: from.id, from_name: from.name, to: to.id, to_name: to.name, sent_back: sentBack } },
+      created_at: now,
+    }),
+    roleEventOp(project, duty, from, now, { stints: 1, ms: stintMs(duty, now), handoffs: 1 }),
+  ];
+  if (sentBack) ops.push(roleEventOp(project, duty, to, now, { sent_back: 1 }));
+  if (question) {
+    ops.push(putOp("threads", threadId(), {
+      duty_id: duty.key,
+      project_id: project.key,
+      owner_uid: project.owner_uid,
+      author_type: "agent",
+      author_id: "DutyBoard",
+      kind: "question",
+      message: stuck
+        ? `${from.name} and ${to.name} have passed this back and forth ${bounces} times. What should change before it is tried again?`
+        : `Approve ${from.name}'s plan before ${to.name} builds it?`,
+      metadata: stuck ? null : { suggested_options: ["Approve the plan"] },
+      created_at: now + 1,
+    }));
+  }
+  const aKey = agentKey(project.key, agentId);
+  const agent = await ctx.store.get("agents", aKey);
+  if (agent && agent.active_duty_id === duty.key) ops.push(putOp("agents", aKey, { ...stripMeta(agent), active_duty_id: null, last_seen_at: now }));
+
+  await ctx.store.transaction(ops);
+  await ctx.publish(project.key, duty.key, {
+    t: "duty",
+    id: duty.key,
+    status,
+    handoff: { from: from.id, to: to.id, sent_back: sentBack },
+    ag: agentEvent(agentId, null, now),
+  });
+  if (question) await notifyNeedsYou(ctx, project, duty, question);
+
+  return {
+    ok: true,
+    duty_id: duty.key,
+    status,
+    role: to.id,
+    bounces,
+    message: question
+      ? `Not handed on yet: a person is asked first${stuck ? " what should change" : " to approve the plan"}. Stop this session now; ${to.name} takes it once they answer.`
+      : `Handed to ${to.name}. It is no longer yours: stop this session now.`,
+  };
+}
+
 /** `POST /duty/complete` — active → done, with the summary that outlives the run. */
 export async function completeDuty(ctx, body) {
   return finishDuty(ctx, body, "done");
@@ -1281,6 +1475,20 @@ async function finishDuty(ctx, body, terminal, { duty: held, cancelled = false }
   if (duty.assigned_agent_id && agentId && duty.assigned_agent_id !== agentId) {
     throw forbidden(`duty '${duty.key}' is assigned to agent '${duty.assigned_agent_id}'`);
   }
+  // On a board with a team, the role holding the duty decides whether it may be the one to finish it.
+  const roster = duty.role && (duty.kind || "work") === "work" ? await rosterInForce(ctx, project.key) : null;
+  const role = roleFor(roster, duty);
+  if (role && role.reviewed && terminal === "done" && ctx.caller.kind === "agent" && duty.status === "active") {
+    const reviewers = roster.roles.filter((r) => r.reviews);
+    if (reviewers.length) {
+      throw conflict(
+        `as ${role.name} you do not finish this duty yourself: its work is verified first. Hand it on with duty_handoff to ` +
+          `${reviewers.map((r) => `'${r.id}' (${r.name})`).join(" or ")}, with a note saying what changed, how you tested it and what to look at first. ` +
+          `Nothing is landed or completed until they pass it.`,
+        { role: role.id, hand_to: reviewers.map((r) => r.id) },
+      );
+    }
+  }
   if (ctx.caller.kind === "agent" && duty.status === "active") await unreadNotes(ctx, duty, terminal);
 
   const ops = [
@@ -1309,6 +1517,16 @@ async function finishDuty(ctx, body, terminal, { duty: held, cancelled = false }
   // Work that ended, counted for the boards page. A cancellation is somebody changing their mind
   // and a rejected suggestion was never work, so neither is counted as work that failed.
   if (!cancelled && !duty.approval_required) ops.push(finishOp(project, duty, terminal, now));
+  // And for the team's own record: who finished it, and — when it is done — that every builder whose
+  // work it carried got it past review, at the first attempt or not.
+  if (!cancelled && role && ctx.caller.kind === "agent") {
+    ops.push(roleEventOp(project, duty, role, now, { stints: 1, ms: stintMs(duty, now), [terminal]: 1 }));
+    if (terminal === "done") {
+      for (const built of roster.roles.filter((r) => r.reviewed && (duty.role_trail || []).includes(r.id))) {
+        ops.push(roleEventOp(project, duty, built, now, { passed: 1, first_pass: duty.bounces ? 0 : 1 }));
+      }
+    }
+  }
 
   const holder = agentId || duty.assigned_agent_id;
   let freed = null;
@@ -1398,6 +1616,8 @@ async function peopleNotes(ctx, dutyKey) {
  * finish goes through unless someone writes again.
  */
 async function unreadNotes(ctx, duty, terminal) {
+  const verb = { done: "completed", failed: "failed", handoff: "handed on" }[terminal];
+  const again = terminal === "handoff" ? "duty_handoff" : `duty_${terminal === "done" ? "complete" : "fail"}`;
   const { rows } = await ctx.store.query("threads", {
     where: [
       { field: "duty_id", op: "=", value: duty.key },
@@ -1412,10 +1632,10 @@ async function unreadNotes(ctx, duty, terminal) {
   await ctx.store.transaction([putOp("duties", duty.key, { ...stripMeta(duty), notes_seen_at: seen })]);
   const listed = notes.map((t) => `- ${t.author_name || "A person"}: ${t.message}`).join("\n");
   throw conflict(
-    `not ${terminal === "done" ? "completed" : "failed"} yet — a person wrote on this duty while you were working on it:\n` +
+    `not ${verb} yet — a person wrote on this duty while you were working on it:\n` +
       `${listed}\n` +
       `Do what the note${notes.length > 1 ? "s ask" : " asks"} first. If that changes the work, land it again (commit and ` +
-      `duty_integrate, put it in out/, or make it through the board's MCP servers), then call duty_${terminal === "done" ? "complete" : "fail"} again — this refusal will not repeat for the same notes.`,
+      `duty_integrate, put it in out/, or make it through the board's MCP servers), then call ${again} again — this refusal will not repeat for the same notes.`,
     { notes: notes.length },
   );
 }
@@ -1475,6 +1695,9 @@ export async function reopenDuty(ctx, body) {
   // urgent thing on most boards, and it is why somebody is looking at this screen.
   const priority = oneOf(body.priority, "priority", PRIORITIES, "immediate_blocker");
   const terminal = duty.status;
+  // Work a person sent back starts again with whoever reads new duties first, who has the note saying
+  // why and decides who should take it — and it counts against every role it had passed through.
+  const roster = duty.role && (duty.kind || "work") === "work" ? await rosterInForce(ctx, project.key) : null;
 
   const ops = [
     putOp("threads", threadId(), {
@@ -1512,8 +1735,14 @@ export async function reopenDuty(ctx, body) {
       // Not finished any more, so not on its way off the board either.
       expires_at: null,
       updated_at: now,
+      ...(roster ? { role: intakeOf(roster).id, handoff: null } : {}),
     }),
   ];
+  if (roster && terminal === "done") {
+    for (const worked of roster.roles.filter((r) => (duty.role_trail || []).includes(r.id) && !r.intake)) {
+      ops.push(roleEventOp(project, duty, worked, now, { reopened: 1 }));
+    }
+  }
 
   await ctx.store.transaction(ops);
   await ctx.publish(project.key, duty.key, { t: "duty", id: duty.key, status: "queued" });
@@ -1775,6 +2004,48 @@ export async function sweepOldFinishes(ctx, now = Date.now(), limit = FINISHES_S
   return rows.length;
 }
 
+/** How long the role holding a duty has had it, for the team's record. */
+const stintMs = (duty, now) => (duty.claimed_at ? Math.max(0, now - duty.claimed_at) : 0);
+
+/**
+ * One line of a role's record: a stint it worked, work of its that passed or was sent back, a duty
+ * of its a person reopened. Append-only and all numbers, like `finishes`, so the console sums them
+ * with one aggregate and two things happening at once never overwrite each other.
+ */
+export function roleEventOp(project, duty, role, now, counts) {
+  return putOp("role_events", `re_${ulid(now)}`, {
+    project_id: project.key,
+    owner_uid: project.owner_uid,
+    duty_id: duty.key,
+    role: role.id,
+    role_name: role.name,
+    stints: 0,
+    ms: 0,
+    handoffs: 0,
+    done: 0,
+    failed: 0,
+    passed: 0,
+    first_pass: 0,
+    sent_back: 0,
+    reopened: 0,
+    ...counts,
+    hour: Math.floor(now / HOUR_MS),
+    at: now,
+  });
+}
+
+/** Forget role events as old as the finishes the boards page has stopped counting. */
+export async function sweepOldRoleEvents(ctx, now = Date.now(), limit = FINISHES_SWEPT_PER_TICK) {
+  const { rows } = await ctx.store.query("role_events", {
+    where: [{ field: "at", op: "<", value: now - FINISHES_KEPT_MS }],
+    keys_only: true,
+    limit,
+  });
+  if (!rows.length) return 0;
+  await ctx.store.delete("role_events", rows.map((r) => r.key));
+  return rows.length;
+}
+
 // --- helpers --------------------------------------------------------------
 
 export async function loadDuty(ctx, id) {
@@ -1877,6 +2148,11 @@ function briefOf(duty, { full = false } = {}) {
   if (duty.kind === "note") out.review_duty_id = duty.review_duty_id || null;
   if (duty.approval_required) out.approval_required = true;
   if (duty.reserved_for) out.reserved_for = duty.reserved_for;
+  // Who on the board's team has it, and what the last role said when handing it on.
+  if (duty.role) out.role = duty.role;
+  // The note is the next role's brief, so the duty in hand carries it whole; the queue only says a
+  // handoff happened, like the clipped brief beside it.
+  if (duty.handoff) out.handoff = full ? duty.handoff : { from: duty.handoff.from, to: duty.handoff.to, sent_back: !!duty.handoff.sent_back };
   if (duty.last_resolution) {
     out.unblocked_context = {
       last_question: duty.last_question || null,

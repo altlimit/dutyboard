@@ -562,7 +562,8 @@ async function main() {
     check("two review requests track the same review duty", reviews[0].duty_id === reviews[1].duty_id);
     const review = reviews[0];
     const reviewed = await until("note reviewed", async () => (await get(review.duty_id)).status === "done", 30_000);
-    const noteEvent = events(log).find(e => e.event === "note-review" && e.dutyId === review.duty_id);
+    // As with setup: the agent records what it saw after its last call returns, just after the board says done.
+    const noteEvent = await until("note review event", () => events(log).find(e => e.event === "note-review" && e.dutyId === review.duty_id), 10_000);
     const reviewStart = events(log).find(e => e.event === "start" && e.dutyId === review.duty_id);
     check("MCP initialization describes the assigned duty across all tested agent CLIs", events(log).filter(e => e.event === "start").every(e => e.mcpAssigned));
     check("review MCP instructions and tool discovery enforce review-only work", reviewStart?.mcpReview && reviewStart?.tools.includes("duty_suggest") && !reviewStart.tools.includes("duty_integrate") && !reviewStart.tools.includes("duty_schedule_create") && reviewStart.linkedOperations.includes("board_rules") && !reviewStart.linkedOperations.includes("duty_enqueue"), reviewStart?.tools);

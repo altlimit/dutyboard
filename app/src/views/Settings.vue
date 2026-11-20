@@ -12,6 +12,7 @@ import BoardAccess from "../components/BoardAccess.vue";
 import ProfileForm from "../components/ProfileForm.vue";
 import DeployConnect from "../components/DeployConnect.vue";
 import NewRepoFields from "../components/NewRepoFields.vue";
+import TeamSettings from "../components/TeamSettings.vue";
 import { DAYS, REPEATS, allZones, browserZone, knownZone, repeatText, runText, scheduleDraft, schedulePayload, zoneOffsets } from "../lib/schedules.js";
 
 const props = defineProps({ projectId: { type: String, required: true } });
@@ -621,6 +622,8 @@ watch(() => props.projectId, () => {
   boardName.value = "";
   load();
   socket = subscribeLive({ projectId: props.projectId }, (frame) => {
+    // The team or its memory changed — an agent handed in a draft, or wrote something down.
+    if (frame && frame.data && frame.data.t === "board" && (frame.data.what === "roster" || frame.data.what === "memory")) teamTick.value++;
     if (!frame || !frame.data || frame.data.t !== "runner" || runnersTimer) return;
     runnersTimer = setTimeout(async () => {
       runnersTimer = null;
@@ -633,6 +636,11 @@ onUnmounted(() => {
   if (runnersTimer) clearTimeout(runnersTimer);
 });
 
+// The board's team and its memory live in their own component; this page only needs to know whether
+// a drafted team is waiting, for the tab's dot, and to tell it when the board says something changed.
+const teamDraft = ref(false);
+const teamTick = ref(0);
+
 // One page of seven unrelated things was a page nobody could find anything on, so each is a tab.
 // The tab is in the address, so a link — or a reload — lands on the same one.
 const tabs = computed(() => [
@@ -641,6 +649,7 @@ const tabs = computed(() => [
     ? [{ key: "machines", label: "Machines", count: runners.value.length, alert: runners.value.some((r) => r.problem) || needsRepo.value }]
     : []),
   { key: "rules", label: "Rules", alert: !!rules.value.draft },
+  { key: "team", label: "Team", alert: teamDraft.value },
   { key: "recurring", label: "Recurring", count: schedules.value.length },
   { key: "members", label: "Members", count: members.value.length },
   { key: "access", label: "Board access" },
@@ -856,6 +865,9 @@ function tabKey(event) {
           </div>
         </form>
       </section>
+    </div>
+    <div v-show="tab === 'team'" id="panel-team" role="tabpanel" :aria-labelledby="`tab-team`" tabindex="0">
+      <TeamSettings v-if="role" :project-id="projectId" :is-owner="isOwner" :tick="teamTick" @draft="teamDraft = $event" />
     </div>
     <div
       v-show="tab === 'recurring'"

@@ -30,6 +30,7 @@ import { runnableDuties, dutyRunnerTooOld, MAX_OPEN_DUTIES, activeDuties, seedDu
 import { isFolderBoard, isServiceBoard, agentOptions, enabledAgentOptions, mergeRunner, profileView, repoUrl } from "./profile.js";
 import { createProjectFor } from "./projects.js";
 import { runDueSchedules } from "./schedules.js";
+import { hasRoster, rosterInForce, roleFor, dutyOptions, levelOf, ROSTER_MIN_RELEASE } from "./roster.js";
 
 const PAIRING_TTL_MS = 10 * 60 * 1000;
 const PAIRING_POLL_SECONDS = 3;
@@ -71,6 +72,9 @@ function tooOldFor(project, version, machineName) {
   if (project?.runner?.use_machine_defaults && olderRelease(version, "2.28.0")) {
     return `${machineName || "this machine"} needs dutyboard 2.28.0 or later to use machine defaults — run \`alt update altlimit/dutyboard && dutyboard --service\``;
   }
+  if (hasRoster(project) && olderRelease(version, ROSTER_MIN_RELEASE)) {
+    return `${machineName || "this machine"} needs dutyboard ${ROSTER_MIN_RELEASE} or later to work a board with a team — run \`alt update altlimit/dutyboard && dutyboard --service\``;
+  }
   if (Array.isArray(project?.runner?.options) && olderRelease(version, "2.27.0")) {
     return `${machineName || "this machine"} needs dutyboard 2.27.0 or later for agent priorities — run \`alt update altlimit/dutyboard && dutyboard --service\``;
   }
@@ -96,6 +100,12 @@ const machineView = (m, { online = null, links = [], requests = [], readiness = 
   paused: !!m.paused,
   max_sessions: m.max_sessions || 3,
   agent_options: m.agent_options ?? null,
+  // The level each combination works at when its owner has not said — read from its model and effort,
+  // in the same order as `agent_options`. A role on a board with a team asks for a level.
+  auto_levels: (m.agent_options || []).map((o) => levelOf({ ...o, level: "" })),
+  // The public half of the key this machine keeps for itself. The console encrypts a secret to it,
+  // so a value typed there reaches the machine without this server ever being able to read it.
+  seal_key: m.seal_key || "",
   remote_setup: m.remote_setup || "auto",
   workspace_root: m.workspace_root || "",
   created_at: m.created_at,
@@ -820,6 +830,30 @@ function modelCatalog(value) {
   });
 }
 
+const SECRET_NAME = /^[A-Za-z0-9_-]{1,64}$/;
+const SERVER_NAME = /^[a-z0-9][a-z0-9-]{0,31}$/;
+const MAX_SECRETS = 80;
+
+/** Secrets a machine says it lacks: `[{ board, server, name, header? }]`. Names, never values. */
+function missingSecrets(value, field) {
+  if (value == null) return [];
+  if (!Array.isArray(value) || value.length > MAX_SECRETS) throw badRequest(`'${field}' must be an array of at most ${MAX_SECRETS} entries`);
+  return value.map((v, i) => {
+    if (v == null || typeof v !== "object") throw badRequest(`'${field}[${i}]' must be an object`);
+    const server = str(v.server, `${field}[${i}].server`, { required: true, max: 32 });
+    const name = str(v.name, `${field}[${i}].name`, { required: true, max: 64 });
+    if (!SERVER_NAME.test(server) || !SECRET_NAME.test(name)) throw badRequest(`'${field}[${i}]' does not name an MCP server's secret`);
+    return { board: str(v.board, `${field}[${i}].board`, { required: true, max: 60 }), server, name, header: v.header === true, note: str(v.note, `${field}[${i}].note`, { max: 300 }) };
+  });
+}
+
+/** A P-256 public key as a machine reports it: the uncompressed point, base64url. */
+function sealKeyFrom(value) {
+  const key = str(value, "seal_key", { max: 120 });
+  if (key && !/^[A-Za-z0-9_-]{86,88}$/.test(key)) throw badRequest("'seal_key' is not a P-256 public key");
+  return key;
+}
+
 /** A readiness report as stored, for the console. */
 function readinessView(r) {
   if (!r) return null;
@@ -854,6 +888,8 @@ export async function reportReadiness(ctx, body) {
       actions,
       models: modelCatalog(it.models),
       models_error: str(it.models_error, `items[${i}].models_error`, { max: 300 }),
+      // Which secrets are missing, by name only, so the console can ask for exactly those.
+      secrets: missingSecrets(it.secrets, `items[${i}].secrets`),
     };
   });
   const now = Date.now();
@@ -865,6 +901,14 @@ export async function reportReadiness(ctx, body) {
     checked_at: checkedAt,
     reported_at: now,
   });
+  // The machine's sealing key rides along: it is made once and rarely changes, so it is written only
+  // when it does.
+  if (body.seal_key != null) {
+    const sealKey = sealKeyFrom(body.seal_key);
+    if (sealKey !== (caller.machineRow.seal_key || "")) {
+      await ctx.store.putOne("machines", caller.machineKey, { ...stripMeta(caller.machineRow), seal_key: sealKey });
+    }
+  }
   return { ok: true, items: items.length };
 }
 
@@ -896,13 +940,16 @@ export async function pollMachine(ctx, body) {
     links.map(async (l) => {
       const project = projects.get(l.project_id);
       if (!project || runnerTooOld(ctx, project, caller.machineRow.name)) return null;
-      const [active, runnable, machines] = await Promise.all([
+      const [active, runnable, machines, roster] = await Promise.all([
         activeDuties(ctx, project.key),
-        runnableDuties(ctx, project.key, caller.agentPrefix, limit),
+        runnableDuties(ctx, project.key, caller.agentPrefix, limit, project),
         // Whether anyone else could resume this machine's parked work — which decides whether that
         // work is worth snapshotting to the repository's remote when it parks.
         ctx.store.countAtMost("machine_links", [{ field: "project_id", op: "=", value: project.key }], MAX_LINKS_PER_BOARD),
+        // On a board with a team, a duty's role decides which of this machine's combinations work it.
+        hasRoster(project) ? rosterInForce(ctx, project.key) : null,
       ]);
+      const role = (d) => (roleFor(roster, d) || {}).id || null;
       const mine = (d) => d.assigned_agent_id === caller.agentPrefix || (d.assigned_agent_id || "").startsWith(caller.agentPrefix + "/");
       return {
         project_id: project.key,
@@ -910,10 +957,11 @@ export async function pollMachine(ctx, body) {
         parallel: (project.runner && project.runner.parallel) || null,
         machines,
         rules_version: project.rules_version || 0,
-        active: active.map((d) => ({ duty_id: d.key, agent_id: d.assigned_agent_id, kind: d.kind || "work", agent_options: d.agent_options ?? null, mine: mine(d) && !dutyRunnerTooOld(ctx, d) })),
+        active: active.map((d) => ({ duty_id: d.key, agent_id: d.assigned_agent_id, kind: d.kind || "work", agent_options: dutyOptions(ctx, roster, d), role: role(d), mine: mine(d) && !dutyRunnerTooOld(ctx, d) })),
         runnable: runnable.map((d) => ({
           duty_id: d.key,
-          agent_options: d.agent_options ?? null,
+          agent_options: dutyOptions(ctx, roster, d),
+          role: role(d),
           title: d.title,
           priority: d.priority,
           kind: d.kind || "work",
@@ -1009,8 +1057,9 @@ function newRepo(v, description) {
  */
 export async function requestSetup(ctx, body) {
   const machine = await ownMachine(ctx, body);
-  const kind = oneOf(body.kind, "kind", ["setup", "create_repo", "install_tool", "sign_in"], "setup");
+  const kind = oneOf(body.kind, "kind", ["setup", "create_repo", "install_tool", "sign_in", "mcp_secrets"], "setup");
   if (kind === "install_tool" || kind === "sign_in") return requestToolWork(ctx, machine, kind, body);
+  if (kind === "mcp_secrets") return requestSecrets(ctx, machine, body);
   const project = await resolveProject(ctx.caller, body.project_id, ctx.store, { ownerOnly: kind === "create_repo" });
   if (!(await mayRunAgents(ctx, project, ctx.caller.uid))) throw forbidden("the board's owner has not let you run agents on it");
   const hasRepo = !!(project.profile && project.profile.repo_url);
@@ -1101,6 +1150,56 @@ async function requestToolWork(ctx, machine, kind, body) {
     result: "",
     prompt: null,
     input: "",
+    requested_by: ctx.caller.uid,
+    created_at: now,
+    updated_at: now,
+  };
+  await ctx.store.putOne("machine_requests", id, row);
+  await publishMachine(ctx, machine.machine_id, { t: "setup", request_id: id });
+  return { ok: true, request: requestView({ ...row, key: id }) };
+}
+
+/** The first `dutyboard` that keeps a sealing key and can open what the console encrypts to it. */
+const SEALED_RUNNER = ROSTER_MIN_RELEASE;
+/** A sealed envelope: an ephemeral key, a nonce and the ciphertext of a few dozen short values. */
+const MAX_SEALED_CHARS = 24000;
+
+/**
+ * An `mcp_secrets` request: `{ machine_id, kind, sealed }`. Values for the MCP secrets a machine is
+ * missing, typed in the console by the machine's owner.
+ *
+ * `sealed` is ciphertext. The browser encrypted it to the machine's own public key, whose private
+ * half never leaves the machine's keyring — so what is stored here, briefly, until the machine takes
+ * it, is unreadable to this server, to its datastore's backups and to everyone else on the board.
+ * That is what lets a credential that is NOT single-use travel this way at all. The machine's
+ * owner's alone, like a sign-in: it changes what software on their computer is trusted with.
+ */
+async function requestSecrets(ctx, machine, body) {
+  if (olderRelease(machine.cli_version, SEALED_RUNNER) || !machine.seal_key) {
+    throw conflict(`${machine.name} has not published a key to encrypt to — it must be online and on dutyboard ${SEALED_RUNNER} or later. Until then, set them on the machine with \`dutyboard --mcp-secrets\`.`);
+  }
+  const sealed = str(body.sealed, "sealed", { required: true, max: MAX_SEALED_CHARS });
+  if (!/^[A-Za-z0-9_.-]+$/.test(sealed)) throw badRequest("'sealed' must be the encrypted envelope the console made, not the values themselves");
+  if (str(body.seal_key, "seal_key", { max: 120 }) !== machine.seal_key) {
+    throw conflict(`${machine.name}'s key changed since this page loaded — reload and enter them again`);
+  }
+  const open = await ctx.store.query("machine_requests", { where: [{ field: "machine_id", op: "=", value: machine.machine_id }], limit: 50 });
+  if (open.rows.some((r) => r.kind === "mcp_secrets" && underWay(r))) throw conflict(`${machine.name} is already storing secrets — wait for it to finish`);
+
+  const now = Date.now();
+  const id = requestId();
+  const row = {
+    machine_id: machine.machine_id,
+    project_id: "",
+    owner_uid: machine.owner_uid,
+    kind: "mcp_secrets",
+    tool: "mcp_secrets",
+    path: "",
+    repo_url: "",
+    status: "pending",
+    result: "",
+    prompt: null,
+    input: sealed,
     requested_by: ctx.caller.uid,
     created_at: now,
     updated_at: now,
