@@ -51,6 +51,7 @@ jobs:
       - run: node scripts/agent-options-check.mjs
       - run: node scripts/duty-options-check.mjs
       - run: node scripts/readiness-check.mjs
+      - run: node scripts/release-check.mjs
       - run: node scripts/notes-check.mjs
       - run: node scripts/board-access-check.mjs
       - run: node scripts/mcp-features-check.mjs
