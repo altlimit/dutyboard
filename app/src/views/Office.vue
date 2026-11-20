@@ -10,6 +10,7 @@ import { computed, onUnmounted, ref, watch } from "vue";
 import BoardNav from "../components/BoardNav.vue";
 import OfficeBuilding from "../components/OfficeBuilding.vue";
 import WaitingOnYou from "../components/WaitingOnYou.vue";
+import QuickDuty from "../components/QuickDuty.vue";
 import { api, query, subscribeLive } from "../lib/altengine.js";
 import { ago } from "../lib/duties.js";
 import { activityByDuty } from "../lib/runners.js";
@@ -158,6 +159,7 @@ onUnmounted(() => {
 
 /** The questions waiting on you, beside the building; a "?" in it brings one to the front. */
 const waiting = ref(null);
+const quick = ref(null);
 const dutyLink = (d) => ({ name: "duty", params: { projectId: props.projectId, dutyId: d.key } });
 </script>
 
@@ -174,7 +176,10 @@ const dutyLink = (d) => ({ name: "duty", params: { projectId: props.projectId, d
           <span v-if="teamed">{{ roles.length }} roles</span>
         </p>
       </div>
-      <router-link class="btn" :to="{ name: 'board', params: { projectId } }">Add or manage duties</router-link>
+      <div class="row">
+        <button class="primary" type="button" @click="quick && quick.open(projectId)">Add a duty</button>
+        <router-link class="btn" :to="{ name: 'board', params: { projectId } }">All duties</router-link>
+      </div>
     </div>
 
     <p v-if="error" class="notice notice--error" role="alert">{{ error }}</p>
@@ -191,10 +196,11 @@ const dutyLink = (d) => ({ name: "duty", params: { projectId: props.projectId, d
       <div class="office">
         <section aria-labelledby="floor-h" style="min-width: 0">
           <h2 id="floor-h" class="sr-only">The team</h2>
-          <OfficeBuilding :boards="rooms" :duties="duties" :recent="done" :next="next" :activity="activity" single @ask="(key) => waiting && waiting.open(key)" />
+          <OfficeBuilding :boards="rooms" :duties="duties" :recent="done" :next="next" :activity="activity" single @ask="(key) => waiting && waiting.open(key)" @add="() => quick && quick.open(projectId)" />
         </section>
 
         <aside class="rooms">
+          <QuickDuty ref="quick" class="room" :boards="[{ project_id: projectId, name: board.name }]" @added="loadDuties" />
           <WaitingOnYou ref="waiting" class="room room--you" :duties="needsYou" :boards="{ [projectId]: rooms[0] || {} }" single @answered="loadDuties" />
 
           <section v-if="blocked.length" class="room" aria-labelledby="room-blocked-h">

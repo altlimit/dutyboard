@@ -13,6 +13,7 @@ import NewRepoFields from "../components/NewRepoFields.vue";
 import BoardTable from "../components/BoardTable.vue";
 import OfficeBuilding from "../components/OfficeBuilding.vue";
 import WaitingOnYou from "../components/WaitingOnYou.vue";
+import QuickDuty from "../components/QuickDuty.vue";
 
 const router = useRouter();
 const route = useRoute();
@@ -85,6 +86,7 @@ const activity = computed(() => runsByDuty(runners.value));
 const asking = computed(() => officeDuties.value.filter((d) => d.status === "needs_decision").sort((a, b) => (a.updated_at || 0) - (b.updated_at || 0)));
 const boardsById = computed(() => Object.fromEntries(officeBoards.value.map((b) => [b.project_id, b])));
 const waiting = ref(null);
+const quick = ref(null);
 
 const rowsOf = (res) => (res.documents || []).map((d) => ({ ...d.data, key: String(d.key) }));
 
@@ -359,7 +361,16 @@ watch(
         </p>
         <p v-if="!officeLoaded" class="muted" role="status">Opening the office…</p>
         <template v-else>
-          <OfficeBuilding :boards="officeBoards" :duties="officeDuties" :recent="officeDone" :next="upcoming ? upcoming.next : {}" :activity="activity" @ask="(key) => waiting && waiting.open(key)" />
+          <OfficeBuilding
+            :boards="officeBoards"
+            :duties="officeDuties"
+            :recent="officeDone"
+            :next="upcoming ? upcoming.next : {}"
+            :activity="activity"
+            @ask="(key) => waiting && waiting.open(key)"
+            @add="(id) => quick && quick.open(id)"
+          />
+          <QuickDuty ref="quick" :boards="officeBoards" @added="loadOfficeDuties" />
           <WaitingOnYou ref="waiting" :duties="asking" :boards="boardsById" @answered="loadOfficeDuties" />
         </template>
       </template>

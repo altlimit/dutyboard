@@ -6,7 +6,8 @@
 //   asking    an amber "?" bubble with the duty waiting on a person — they stay at their desk;
 //   just done a while at the desk — a different while for each, so they do not all get up at once —
 //             after handing a duty on ("→ QA"), having it sent back ("↩ Engineer") or finishing it
-//             ("✓"), then a walk to the breakroom;
+//             ("✓"). One that handed a duty on then walks over to the desk it handed it to and
+//             stands there talking for a while — helping — before going on a break;
 //   on call   whoever picks up a board's next scheduled duty stays in their seat with a clock and
 //             what is coming ("Weekly report · in 3h");
 //   idle      in the breakroom — chatting, at the arcade, by the coffee, on the couch — their tray
@@ -35,7 +36,8 @@ const props = defineProps({
 });
 // A "?" in the building is a question waiting on you: selecting it asks the page to open the question
 // where it can be answered, rather than leaving the office.
-const emit = defineEmits(["ask"]);
+// "+ Duty" on a room's plate asks the page to open a new duty on that board.
+const emit = defineEmits(["ask", "add"]);
 
 /** People drawn in the breakroom before the rest are a number. */
 const BREAK_SHOWN = 40;
@@ -56,7 +58,7 @@ const linger = reactive({});
 const stretch = ref(Math.floor(Date.now() / WANDER_MS));
 /** The clock the "in 3h" on a desk that is on call reads from, moved on every half minute. */
 const now = ref(Date.now());
-const inBreak = computed(() => floor.value.breakroom.filter((p) => !linger[p.key]));
+const inBreak = computed(() => floor.value.breakroom.filter((p) => !linger[p.key] && !visit[p.key]));
 /** The breakroom's people in little groups, by what each group is doing. */
 const groups = computed(() => {
   const out = { chat: [], game: [], coffee: [], couch: [] };
@@ -99,7 +101,9 @@ function roomSays(room) {
 
 /** What the speech bubble over a cubicle says, or null when it says nothing. */
 function bubbleOf(desk) {
-  if (arriving[desk.key]) return null;
+  // A bubble belongs to the person, not the desk: none while they are walking there, or away from it
+  // helping someone else.
+  if (arriving[desk.key] || !present(desk)) return null;
   if (desk.asking.length) return { kind: "ask", mark: "?", title: desk.asking[0].title, more: desk.asking.length - 1 };
   if (desk.working.length) return { kind: "work", mark: "", title: desk.working[0].duty.title, more: desk.working.length - 1 };
   const l = linger[desk.key];
@@ -118,10 +122,13 @@ function deskSays(desk) {
   }
   if (!desk.asking.length && !desk.working.length) {
     const l = linger[desk.key];
-    parts.push(l ? `${l.said} “${l.title}”` : desk.onCall ? `on call for “${desk.onCall.title}”, ${until(desk.onCall.at, now.value)}` : "on a break");
+    const helping = visit[desk.key] && placeOf(desk).startsWith("visit:");
+    parts.push(l ? `${l.said} “${l.title}”` : helping ? `over at ${deskName(visit[desk.key].to)}'s desk, helping with “${visit[desk.key].title}”` : desk.onCall ? `on call for “${desk.onCall.title}”, ${until(desk.onCall.at, now.value)}` : "on a break");
   }
+  for (const v of visitors.value[desk.key] || []) parts.push(`${v.name} is here helping`);
   if (desk.tray.length) parts.push(`${desk.tray.length} waiting in the tray`);
-  return parts.join(": ").replace(/: (?=[^:]*$)/, ", ");
+  // "Engineer: working on “Export”, QA is here helping, 2 waiting in the tray".
+  return `${parts[0]}: ${parts.slice(1).join(", ")}`;
 }
 
 // --- movement ----------------------------------------------------------------------------------
@@ -132,8 +139,33 @@ const papers = ref([]); // [{ id, title, from, to }]
 const arriving = reactive({}); // person key → true while they walk there
 /** At its desk and working — not just given the work while it is still walking over. */
 const seated = (desk) => desk.working.length > 0 && !arriving[desk.key];
-/** At its desk for any reason: working, waiting on you, wrapping up what it just passed on, or on call. */
-const present = (desk) => atDesk(desk) || !!linger[desk.key] || !!desk.onCall;
+/** Roles over at another desk after handing it a duty: desk key → { to: desk key, title }. */
+const visit = reactive({});
+/**
+ * Where a role is: "desk" — working, waiting on you, wrapping up, or on call; "visit:<desk>" — over at
+ * the desk it just handed a duty to; or "break". Work in hand always wins: it is at its own desk.
+ */
+function placeOf(desk) {
+  if (atDesk(desk) || linger[desk.key]) return "desk";
+  // Only while the one being helped is still at their desk: nobody stands at an empty one, and when
+  // they get up, so does whoever was helping.
+  const target = visit[desk.key] && deskByKey.value.get(visit[desk.key].to);
+  if (target && atOwnDesk(target)) return `visit:${target.key}`;
+  return desk.onCall ? "desk" : "break";
+}
+/** At their own desk, not counting a visit of theirs — which is what a visit to them depends on. */
+const atOwnDesk = (desk) => atDesk(desk) || !!linger[desk.key] || !!desk.onCall;
+const present = (desk) => placeOf(desk) === "desk";
+const deskByKey = computed(() => new Map(floor.value.rooms.flatMap((r) => r.desks.map((d) => [d.key, d]))));
+/** Who is standing at each desk, visiting: desk key → [{ key, title }]. */
+const visitors = computed(() => {
+  const out = {};
+  for (const d of deskByKey.value.values()) {
+    const place = placeOf(d);
+    if (place.startsWith("visit:")) (out[place.slice(6)] ||= []).push({ key: d.key, name: d.role.name, title: visit[d.key].title });
+  }
+  return out;
+});
 let nextId = 0;
 const reducedMotion = typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)");
 
@@ -147,7 +179,10 @@ function centre(selector) {
 }
 const personAt = (key) => centre(`[data-person="${CSS.escape(key)}"]`);
 const deskAt = (key) => centre(`[data-desk="${CSS.escape(key)}"]`);
-const presentKeys = (f) => new Set(f.rooms.flatMap((r) => r.desks.filter(present).map((d) => d.key)));
+/** Where everyone is: desk key → place. Compared before and after anything changes, to walk the difference. */
+const placesOf = (f) => new Map(f.rooms.flatMap((r) => r.desks.map((d) => [d.key, placeOf(d)])));
+/** A random while, so people who started together do not move together. */
+const awhile = () => LINGER_MIN_MS + Math.random() * (LINGER_MAX_MS - LINGER_MIN_MS);
 
 /**
  * Walk everyone whose place changed between `before` and `after`, and fly each handed-on duty from
@@ -155,7 +190,7 @@ const presentKeys = (f) => new Set(f.rooms.flatMap((r) => r.desks.filter(present
  */
 async function travel(before, after, handoffs = []) {
   if (!root.value || (reducedMotion && reducedMotion.matches)) return;
-  const changed = [...new Set([...before, ...after])].filter((k) => before.has(k) !== after.has(k));
+  const changed = [...new Set([...before.keys(), ...after.keys()])].filter((k) => before.get(k) !== after.get(k));
   if (!changed.length && !handoffs.length) return;
   const starts = new Map(changed.map((k) => [k, personAt(k)]));
   const deskStarts = new Map(handoffs.map((h) => [h.from, deskAt(h.from)]));
@@ -175,17 +210,34 @@ async function travel(before, after, handoffs = []) {
 }
 
 const timers = new Map();
-function stay(key, value) {
+function later(key, fn) {
   clearTimeout(timers.get(key));
-  linger[key] = value;
-  timers.set(key, setTimeout(() => leave(key), LINGER_MIN_MS + Math.random() * (LINGER_MAX_MS - LINGER_MIN_MS)));
+  timers.set(key, setTimeout(() => (timers.delete(key), fn()), awhile()));
 }
-/** The wrap-up is over: back to the breakroom, unless there is work at the desk by now. */
+/** Change where people are, and walk them there. */
+function move(change) {
+  const before = placesOf(floor.value);
+  change();
+  travel(before, placesOf(floor.value));
+}
+function stay(key, value) {
+  delete visit[key];
+  linger[key] = value;
+  later(key, () => leave(key));
+}
+/**
+ * The wrap-up is over. One that handed a duty on goes over to the desk it handed it to, to help for a
+ * while; anyone else goes on a break — unless there is work at their own desk by now.
+ */
 function leave(key) {
-  timers.delete(key);
-  const before = presentKeys(floor.value);
-  delete linger[key];
-  travel(before, presentKeys(floor.value));
+  const { helps, title } = linger[key] || {};
+  move(() => {
+    delete linger[key];
+    // Only if there is someone there to help: one who has already finished and gone is not visited.
+    const target = helps && deskByKey.value.get(helps);
+    if (target && atOwnDesk(target)) visit[key] = { to: helps, title };
+  });
+  if (visit[key]) later(key, () => move(() => delete visit[key]));
 }
 // The breakroom's groups drift every few minutes, and an "in 3h" stays true.
 const wander = setInterval(() => {
@@ -206,19 +258,21 @@ watch(
     const before = lastFloor;
     lastFloor = now;
     if (!before) return;
-    const was = presentKeys(before);
+    const was = placesOf(before);
     const { handoffs, left } = floorMoves(before, now);
     for (const h of handoffs) {
       const to = deskName(h.to);
       stay(h.from, h.sent_back
-        ? { kind: "back", mark: `↩ ${to}`, said: `sent back to ${to}:`, title: h.title, duty: h.duty }
-        : { kind: "pass", mark: `→ ${to}`, said: `handed to ${to}:`, title: h.title, duty: h.duty });
+        ? { kind: "back", mark: `↩ ${to}`, said: `sent back to ${to}:`, title: h.title, duty: h.duty, helps: h.to }
+        : { kind: "pass", mark: `→ ${to}`, said: `handed to ${to}:`, title: h.title, duty: h.duty, helps: h.to });
     }
+    // Work back at their own desk ends a visit at once.
+    for (const r of now.rooms) for (const d of r.desks) if (visit[d.key] && atDesk(d)) delete visit[d.key];
     const done = new Set(props.recent.map((d) => d.key));
     for (const l of left) {
       if (done.has(l.duty)) stay(l.desk, { kind: "done", mark: "✓", said: "finished", title: l.title, duty: l.duty });
     }
-    travel(was, presentKeys(now), handoffs);
+    travel(was, placesOf(now), handoffs);
   },
   { flush: "pre" },
 );
@@ -339,6 +393,7 @@ function animate(el, item, kind) {
           <span aria-hidden="true">?</span> {{ room.needsYou.length }} {{ room.needsYou.length === 1 ? "needs" : "need" }} you
         </button>
         <span v-if="roomSays(room)" class="plate__note">{{ roomSays(room) }}</span>
+        <button type="button" class="plate__add" :aria-label="`Add a duty to ${room.board.name}`" @click="emit('add', room.board.project_id)">+ Duty</button>
       </header>
 
       <ul class="cubes">
@@ -367,6 +422,20 @@ function animate(el, item, kind) {
               </span>
               <span v-if="!present(desk)" class="cube__chair" aria-hidden="true"></span>
               <span v-if="desk.working.length > SEATS" class="cube__more" aria-hidden="true">+{{ desk.working.length - SEATS }}</span>
+            </span>
+            <!-- Whoever came over after handing this desk a duty, standing beside it talking. -->
+            <span v-if="visitors[desk.key]" class="cube__visitors" aria-hidden="true">
+              <span
+                v-for="v in visitors[desk.key]"
+                :key="v.key"
+                class="cube__visitor"
+                :class="{ 'is-arriving': arriving[v.key] }"
+                :data-person="v.key"
+                :title="`${v.name} came over to help with “${v.title}”`"
+              >
+                <span v-if="!arriving[v.key]" class="hang__talk"><i></i><i></i><i></i></span>
+                <PixelPerson pose="stand" :seed="v.key" :size="24" />
+              </span>
             </span>
             <span class="cube__desk" aria-hidden="true">
               <span class="cube__screen"></span>
@@ -403,11 +472,16 @@ function animate(el, item, kind) {
         <span v-if="pointedDesk.working.length" class="info__line">
           <template v-for="(w, i) in pointedDesk.working" :key="w.duty.key">{{ i ? " · " : "" }}{{ w.duty.title }}<em v-if="w.activity"> — {{ activityLine(w.activity) }}</em></template>
         </span>
+        <span v-if="visitors[pointedDesk.key]" class="info__line info__line--dim">
+          {{ visitors[pointedDesk.key].map((v) => v.name).join(" and ") }} came over to help
+        </span>
         <span v-else-if="!pointedDesk.asking.length" class="info__line">
           {{
             linger[pointedDesk.key]
               ? `Just ${linger[pointedDesk.key].said} ${linger[pointedDesk.key].title}`
-              : pointedDesk.onCall
+              : placeOf(pointedDesk).startsWith("visit:")
+                ? `Over at ${deskName(visit[pointedDesk.key].to)}'s desk, helping with ${visit[pointedDesk.key].title}`
+                : pointedDesk.onCall
                 ? `On call: “${pointedDesk.onCall.title}” is due ${until(pointedDesk.onCall.at, now)}`
                 : `On a break${pointedDesk.tray.length ? "" : ", nothing waiting"}`
           }}
@@ -483,6 +557,16 @@ function animate(el, item, kind) {
 }
 a.plate__name:hover { text-decoration: underline; }
 .plate__note { color: var(--text-dim); font-size: 0.76rem; }
+.plate__add {
+  margin-left: auto;
+  min-height: 0;
+  padding: 0 0.45rem;
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  border-radius: 3px;
+  border: 2px solid var(--room, var(--office-wall));
+  background: var(--surface);
+}
 .plate__ask {
   min-height: 0;
   cursor: pointer;
@@ -658,6 +742,12 @@ button.cube:hover:not(:disabled) { background: color-mix(in srgb, var(--room) 16
 .cube--done .cube__bubble { background: var(--ok-soft); border-color: var(--ok); }
 .cube--done .cube__bubble::after { border-top-color: var(--ok); }
 .cube--done .cube__mark { color: var(--ok); }
+/* A visitor stands beside the desk, at the side away from the screen. */
+/* In front of the desk, so the desk never hides their face; their talk bubble sits clear of their head. */
+.cube__visitors { position: absolute; right: 3px; bottom: 16px; z-index: 3; display: flex; gap: 1px; }
+.cube__visitor { position: relative; display: block; }
+.cube__visitor .hang__talk { top: -13px; left: 50%; margin-left: -10px; padding: 1px 2px; }
+
 /* On call for the board's next scheduled duty. */
 .cube--clock .cube__bubble { border-color: var(--accent); border-style: dashed; color: var(--text-dim); }
 .cube--clock .cube__bubble::after { border-top-color: var(--accent); }
