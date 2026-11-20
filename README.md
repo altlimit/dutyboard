@@ -766,12 +766,39 @@ lands until a reviewer has seen it work.
   duty to a role that reviews. The reviewer verifies the work in the same worktree, then lands it and
   completes the duty — or hands it straight back with its findings. Nothing reaches the main branch
   in between.
+- **The machine checks before a reviewer is woken.** When a builder hands work to a reviewer, the
+  machine running it refuses the handoff if anything is uncommitted, then runs the board's test
+  command on the worktree; if it fails, the handoff is refused with the output and the builder fixes
+  it in the same session. When it passes, the reviewer is told which commit passed, so it spends its
+  time on what tests cannot tell it rather than running the suite again.
+- **Review depth follows risk.** A duty is low, normal or high risk: the Duty Officer says which when
+  it routes it, any role can raise it, and a change that touches one of the board's *sensitive paths*
+  (`auth/**`, `*.sql`, …) is high whatever anyone said — the machine sees the changed files itself. A
+  high-risk duty is reviewed line by line on a more capable model; a low-risk one gets a lighter look
+  on a lighter one.
+- **A different pair of eyes.** On by default, the reviewer runs on a different model from the one
+  that built the work, when the machine has one at the reviewer's level.
+- **Sent back, the builder remembers.** A builder whose work comes back picks up its own conversation
+  — it reads the findings against what it did, instead of the whole change as a stranger would.
 - **Two roles that cannot agree ask you.** After a reviewer has sent the same work back three times
-  (a setting), the duty goes to *Needs you* with the latest findings.
+  (a setting), the duty goes to *Needs you* with the latest findings — and so does any duty handed
+  from role to role twelve times (a setting) without being finished.
+- **A duty has an allowance of agent time.** Ten hours of sessions by default, across every role and
+  attempt (the board's *Agent time one duty may use*; 0 is no limit). Past it, the duty waits in
+  *Needs you*; answering lets it go on for as long again. A bound on a loop nobody is watching.
 - **Plans can wait for you.** Off by default: with *I approve plans before they are built* on, a
   planning role's handoff waits in *Needs you* until you approve it or say what to change.
-- **Bigger work is split.** A role holding a duty can file pieces of it with `duty_enqueue`, naming
-  the role each is for. Any other new duty goes to the Duty Officer.
+- **Bigger work is split, and checked as a whole.** A role holding a duty can file pieces of it with
+  `duty_enqueue`, naming the role each is for. When the last piece is finished, the board files one
+  more duty for the reviewer: check that the pieces, together, deliver what was originally asked. Any
+  other new duty goes to the Duty Officer.
+- **Recurring work remembers its route.** When the Duty Officer hands on a run of a recurring duty,
+  the schedule remembers where it went, and later runs start there — no routing session each time.
+  Changing what the schedule asks for forgets the route.
+- **The team learns from what is sent back.** The board keeps the latest send-backs. Every ten, or
+  when its owner presses *Look back now*, a `retro` duty reads them, finds what repeats, and proposes
+  the smallest changes to the charters and the rules that would have prevented it — drafts, like
+  anything an agent proposes, that change nothing until the owner accepts them.
 
 **Charters.** Each role has a charter: its standing instructions, given to every session that works
 as it, on top of the board's rules. A charter is the discipline's best practice written down once,
@@ -794,7 +821,8 @@ a team*:
 | Task | Duty Officer, Specialist, Checker | one-off tasks, files in and files out |
 
 In a board's **Settings → Team** its owner can switch teams, edit any role's name, level and
-charter, change the two handoff settings, or turn the team off. **Have an agent draft one for this
+charter, change the handoff settings and sensitive paths, see what was sent back lately, or turn the
+team off. **Have an agent draft one for this
 board** files a `roster` duty: an agent reads what the board is for and proposes roles and charters
 for it. Like the rules, what it proposes is a draft — nothing changes until the owner accepts it.
 An existing board has no team until its owner gives it one.
@@ -815,7 +843,16 @@ the profile. It is in every session's prompt, and every session is told to write
 a trap. It is theirs, not yours — the board's description is what you say the project is, and the
 rules are what you accept — but its owner can read, edit or clear it under **Settings → Team**. It is
 held to 6,000 characters and replaced whole rather than appended to, so it stays curated; a write
-based on a stale copy is refused with the current text to merge.
+based on a stale copy is refused with the current text to merge. The last ten versions are kept, and
+the owner can put any of them back.
+
+**What it costs.** Each role's prompt puts what is the same for every duty first — the generic
+instructions, the rules, the project, the role's charter — and what changes last: the memory, the
+other repositories, and finally the worktree and branch. The shared part is the same from one duty to
+the next, so an agent that reuses a prompt prefix it has seen recently does. The Duty Officer, which
+mostly reads a duty and passes it on, gets a shorter prompt still (the rules by reference, not in
+full) and a worktree made without running the board's prep command; prep runs when someone builds,
+and before anything lands.
 
 **Watching it.** **Boards → Office** draws all your boards as one office building: a room per board
 with a cubicle per role, and a breakroom they share. A role working a duty sits at its cubicle

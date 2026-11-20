@@ -196,6 +196,8 @@ export function profileDraft(profile, runner) {
     effort: r.effort || "",
     permission_mode: r.permission_mode || "acceptEdits",
     session_minutes: r.session_minutes || 180,
+    // Hours, as the form asks: a person thinks of a duty's allowance in hours, a session's in minutes.
+    duty_hours: r.duty_minutes === 0 ? 0 : (r.duty_minutes || 600) / 60,
     instructions: r.instructions || "",
   };
 }
@@ -263,6 +265,7 @@ export function profilePayload(d) {
       effort: d.effort,
       permission_mode: d.permission_mode,
       session_minutes: Number(d.session_minutes) || 180,
+      duty_minutes: d.duty_hours === "" || d.duty_hours == null ? 600 : Math.round(Number(d.duty_hours) * 60) || 0,
       instructions: d.instructions.trim(),
     },
   };

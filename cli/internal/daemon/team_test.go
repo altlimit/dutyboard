@@ -191,26 +191,40 @@ func TestSessionInstructionsNameTheRole(t *testing.T) {
 	}
 }
 
-// One role's conversation is never resumed by another; the same role's is.
+// One role's conversation is never resumed by another; the same role's is — including when the duty
+// comes back to it.
 func TestAnotherRoleStartsItsOwnSession(t *testing.T) {
-	rec := state.RunRecord{}
-	if prepareRole(&rec, "duty-officer", false) || rec.Role != "duty-officer" {
+	rec := state.RunRecord{Session: "first"}
+	if resume, fresh := prepareRole(&rec, "duty-officer", false); resume || fresh || rec.Role != "duty-officer" || rec.Session != "first" {
 		t.Fatalf("a first session: %#v", rec)
 	}
-	rec.Session, rec.Attempts = "officer-session", 2
-	if !prepareRole(&rec, "duty-officer", true) || rec.Session != "officer-session" || rec.Attempts != 2 {
+	rec.Session, rec.Attempts, rec.ExecutionAgent, rec.ExecutionModel = "officer-session", 2, "claude-code", "haiku"
+	if resume, _ := prepareRole(&rec, "duty-officer", true); !resume || rec.Session != "officer-session" || rec.Attempts != 2 {
 		t.Fatalf("the same role did not resume its own session: %#v", rec)
 	}
-	if prepareRole(&rec, "engineer", true) || rec.Session == "officer-session" || rec.Attempts != 0 || rec.Role != "engineer" {
+	resume, fresh := prepareRole(&rec, "engineer", true)
+	if resume || !fresh || rec.Session == "officer-session" || rec.Attempts != 0 || rec.Role != "engineer" || rec.ExecutionAgent != "" {
 		t.Fatalf("the Engineer resumed the Duty Officer's session: %#v", rec)
 	}
-	built := rec.Session
-	if prepareRole(&rec, "qa", false) || rec.Session == built {
-		t.Fatalf("QA was given the Engineer's session id: %#v", rec)
+	rec.Session, rec.ExecutionAgent, rec.ExecutionModel, rec.ExecutionEffort, rec.Attempts = "engineer-session", "claude-code", "opus", "high", 1
+	if resume, fresh := prepareRole(&rec, "qa", false); resume || !fresh || rec.Session == "engineer-session" {
+		t.Fatalf("QA was given the Engineer's session: %#v", rec)
+	}
+	rec.Session, rec.ExecutionAgent, rec.ExecutionModel = "qa-session", "codex", "gpt-x"
+	// Sent back: the Engineer picks up its own conversation, with what it ran on, and QA's is kept.
+	if resume, fresh := prepareRole(&rec, "engineer", false); !resume || fresh || rec.Session != "engineer-session" || rec.ExecutionModel != "opus" || rec.ExecutionEffort != "high" || rec.Attempts != 0 {
+		t.Fatalf("the Engineer did not pick its own session up again: %#v", rec)
+	}
+	if rec.Sessions["qa"].Session != "qa-session" || rec.Sessions["qa"].Agent != "codex" {
+		t.Fatalf("QA's session was not kept: %#v", rec.Sessions)
+	}
+	// And a different model for the Engineer this time starts afresh after all.
+	if resume, switched := prepareChoice(&rec, board.AgentOption{Agent: "claude-code", Model: "fable", Effort: "high"}, true); resume || !switched {
+		t.Fatalf("resumed a conversation on another model: %#v", rec)
 	}
 	// A board with no team, before and after: nothing is disturbed.
 	plain := state.RunRecord{Session: "s", Attempts: 1}
-	if !prepareRole(&plain, "", true) || plain.Session != "s" || plain.Attempts != 1 {
+	if resume, fresh := prepareRole(&plain, "", true); !resume || fresh || plain.Session != "s" || plain.Attempts != 1 {
 		t.Fatalf("a duty with no team lost its session: %#v", plain)
 	}
 }

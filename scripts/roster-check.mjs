@@ -3,10 +3,12 @@
 // duty first, how it is handed on, that nothing a builder made is finished without a reviewer, what
 // a machine's levels pick, what the team's memory accepts, and what the console may send a machine.
 import assert from "node:assert/strict";
-import { enqueueDuty, claimDuty, getDuty, completeDuty, failDuty, handoffDuty, reopenDuty, resolveDuty, pollDuties, checkpointDuty } from "../functions/src/duties.js";
-import { getRoster, setRoster, acceptRoster, submitRoster, draftRoster, rolesFrom, levelOf, optionsForLevel, LEVELS, MAX_CHARTER_CHARS, ROSTER_MIN_RELEASE } from "../functions/src/roster.js";
+import { enqueueDuty, claimDuty, getDuty, completeDuty, failDuty, handoffDuty, reopenDuty, resolveDuty, pollDuties, checkpointDuty, reportUsage, UNFINISHED } from "../functions/src/duties.js";
+import { getRoster, setRoster, acceptRoster, submitRoster, draftRoster, retroRoster, rolesFrom, levelOf, levelFor, optionsForLevel, LEVELS, MAX_CHARTER_CHARS, ROSTER_MIN_RELEASE, RETRO_EVERY, SENT_BACKS_KEPT } from "../functions/src/roster.js";
+import { submitRules } from "../functions/src/profile.js";
+import { createSchedule, updateSchedule, runDueSchedules } from "../functions/src/schedules.js";
 import { PRESETS, presetFor } from "../functions/src/charters.js";
-import { getMemory, writeMemory, MAX_MEMORY_CHARS } from "../functions/src/memory.js";
+import { getMemory, writeMemory, memoryHistory, MAX_MEMORY_CHARS, MEMORY_VERSIONS_KEPT } from "../functions/src/memory.js";
 import { createProject, deleteProject, openBoard, listRosters, liveBoards } from "../functions/src/projects.js";
 import { pollMachine, updateMachine, listMachines, reportReadiness, requestSetup, machineMe, reportRequest } from "../functions/src/machines.js";
 import { handleMcp } from "../functions/src/mcp.js";
@@ -438,6 +440,9 @@ const guarded = [
   ["/board/roster/draft", (c) => draftRoster(ctx(c), { project_id: "team" })],
   ["/board/roster/submit", (c) => submitRoster(ctx(c), { duty_id: held, roles: custom })],
   ["/board/memory/write", (c) => writeMemory(ctx(c), { project_id: "team", body: "no", based_on: 0 })],
+  ["/board/memory/history", (c) => memoryHistory(ctx(c), { project_id: "team" })],
+  ["/board/roster/retro", (c) => retroRoster(ctx(c), { project_id: "team" })],
+  ["/duty/usage", (c) => reportUsage(ctx(c), { duty_id: held, ms: 1000 })],
 ];
 for (const [who, caller] of outsiders) {
   for (const [path, attempt] of guarded) await assert.rejects(() => attempt(caller), undefined, `${path} answered ${who}`);
@@ -466,8 +471,279 @@ await rejects(() => liveBoards(liveCtx(owner), { project_ids: [] }), /at least o
 await rejects(() => liveBoards(liveCtx(owner), { project_ids: Array.from({ length: 41 }, (_, i) => `b${i}`) }), /at most 40/);
 await rejects(() => liveBoards(ctx(owner), { project_ids: ["team"] }), /not configured/);
 
+// =================================================================================================
+// What keeps a team honest and cheap: bounds on circling and on time, review that follows risk,
+// recurring work that remembers its route, split work checked as a whole, and learning from send-backs.
+// =================================================================================================
+const clearTeam = async () => {
+  for (const d of [...table("duties").values()].filter((d) => d.project_id === "team" && UNFINISHED.includes(d.status))) await store.delete("duties", [d.key]);
+  for (const a of [...table("agents").values()]) await store.putOne("agents", a.key, { ...a, active_duty_id: null });
+};
+await clearTeam();
+/** One role's turn: take the duty, pass it on. */
+const turn = async (id, agent, to, extra = {}, caller = token(agent)) => {
+  await claimDuty(ctx(caller), { duty_id: id, agent_id: agent });
+  return handoffDuty(ctx(caller), { duty_id: id, agent_id: agent, to_role: to, note: `Over to ${to}.`, ...extra });
+};
+const file = (title, brief = "b") => enqueueDuty(ctx(), { project_id: "team", title, brief });
+
+// --- settings ----------------------------------------------------------------------------------
+assert.deepEqual((await getRoster(ctx(), { project_id: "team" })).settings, { plan_approval: false, max_bounces: 3, max_handoffs: 12, independent_review: true, sensitive_paths: [] });
+await rejects(() => setRoster(ctx(), { project_id: "team", settings: { max_handoffs: "lots" } }), /max_handoffs/);
+await setRoster(ctx(), { project_id: "team", settings: { max_handoffs: 1 } });
+assert.equal((await getRoster(ctx(), { project_id: "team" })).settings.max_handoffs, 4, "held to a floor: a team needs room to route, build, review and send back");
+await rejects(() => setRoster(ctx(), { project_id: "team", settings: { sensitive_paths: ["/etc/passwd"] } }), /inside the project/);
+await rejects(() => setRoster(ctx(), { project_id: "team", settings: { sensitive_paths: Array.from({ length: 21 }, (_, i) => `p${i}/**`) } }), /at most 20/);
+await rejects(() => setRoster(ctx(), { project_id: "team", settings: { independent_review: "yes" } }), /boolean/);
+
+// --- a duty passed round and round goes to a person, whichever roles are doing it ----------------
+await setRoster(ctx(), { project_id: "team", settings: { max_handoffs: 4, sensitive_paths: ["auth/**"] } });
+const circle = await file("Circle");
+for (const [agent, to] of [["a1", "architect"], ["p1", "duty-officer"], ["a1", "architect"]]) assert.equal((await turn(circle.duty_id, agent, to)).status, "queued");
+const fourth = await turn(circle.duty_id, "p1", "duty-officer");
+assert.equal(fourth.status, "needs_decision");
+assert.match(fourth.message, /what should happen to it/);
+assert.match(table("duties").get(circle.duty_id).last_question, /handed from role to role 4 times/);
+assert.equal(table("duties").get(circle.duty_id).bounces, 0, "nobody sent work back: this is the other kind of circle");
+await failDuty(ctx(), { duty_id: circle.duty_id, reason: "test over" });
+await setRoster(ctx(), { project_id: "team", settings: { max_handoffs: 12 } });
+
+// --- how careful the review is follows the duty's risk -------------------------------------------
+assert.equal(levelFor({ level: "senior", reviews: true }, { risk: "low" }), "standard");
+assert.equal(levelFor({ level: "senior", reviews: true }, { risk: "high" }), "principal");
+assert.equal(levelFor({ level: "senior", reviews: true }, {}), "senior");
+assert.equal(levelFor({ level: "principal", reviews: true }, { risk: "high" }), "principal", "there is nothing above the top");
+assert.equal(levelFor({ level: "standard", reviewed: true }, { risk: "high" }), "standard", "risk moves the reviewer, not the builder");
+const codexX = { agent: "codex", model: "gpt-x", effort: "xhigh" };
+assert.deepEqual(optionsForLevel([...all, codexX], "senior"), [opusX, codexX, fable, opus, haiku]);
+assert.deepEqual(optionsForLevel([...all, codexX], "senior", { agent: "claude-code", model: "claude-opus-5-5" }), [codexX, opusX, fable, opus, haiku], "a reviewer on another model than the builder, where the level has one");
+await store.putOne("machines", "mk", { ...table("machines").get("mk"), agent_options: [...all, codexX] });
+
+const risky = await file("Risky");
+await claimDuty(ctx(token("a1")), { duty_id: risky.duty_id, agent_id: "a1" });
+await rejects(() => handoffDuty(ctx(token("a1")), { duty_id: risky.duty_id, to_role: "engineer", note: "x", risk: "dire" }), /risk/);
+assert.equal((await handoffDuty(ctx(token("a1")), { duty_id: risky.duty_id, to_role: "engineer", note: "Wording only.", risk: "low" })).risk, "low", "the role that reads it first says");
+const lowBuild = await claimDuty(ctx(token("b1")), { duty_id: risky.duty_id, agent_id: "b1" });
+assert.equal(lowBuild.roster.risk, "low");
+assert.equal(lowBuild.duty.risk, "low");
+// A builder raises it. And what only a machine can know is not taken from anything else.
+const raised = await handoffDuty(ctx(token("b1")), {
+  duty_id: risky.duty_id, to_role: "qa", note: "Built.", risk: "normal",
+  sensitive: true, worked_with: { agent: "claude-code", model: "claude-opus-5-5" }, checks: { passed: true, command: "npm test", commit: "abc" },
+});
+assert.equal(raised.risk, "normal");
+row = table("duties").get(risky.duty_id);
+assert.equal(row.handoff.worked_with, undefined, "a token does not say which model worked");
+assert.equal(row.handoff.checks, undefined, "nor that the checks passed");
+// A reviewer cannot make its own review lighter.
+await claimDuty(ctx(token("q1")), { duty_id: risky.duty_id, agent_id: "q1" });
+assert.equal((await handoffDuty(ctx(token("q1")), { duty_id: risky.duty_id, to_role: "engineer", note: "1. Wrong word.", risk: "low" })).risk, "normal");
+// The machine that ran the builder: it saw a sensitive path change, ran the checks, and knows the model.
+await claimDuty(ctx(machine()), { duty_id: risky.duty_id, agent_id: "laptop/1" });
+const attested = await handoffDuty(ctx(machine()), {
+  duty_id: risky.duty_id, agent_id: "laptop/1", to_role: "qa", note: "Fixed.",
+  sensitive: true, worked_with: { agent: "claude-code", model: "claude-opus-5-5" }, checks: { passed: true, command: "npm test", commit: "abc123" },
+});
+assert.equal(attested.risk, "high", "a change to a sensitive path is high-risk whatever anyone said");
+row = table("duties").get(risky.duty_id);
+assert.deepEqual(row.handoff.worked_with, { agent: "claude-code", model: "claude-opus-5-5" });
+assert.equal(row.handoff.checks.command, "npm test");
+assert.equal(row.handoff.checks.commit, "abc123");
+assert.ok(row.handoff.checks.at);
+offered = (await pollMachine(ctx(machine()), {})).boards[0].runnable.find((r) => r.duty_id === risky.duty_id);
+assert.deepEqual(offered.agent_options, [fable, codexX, opusX, opus, haiku], "high risk: the most capable reviewer, then one that did not build it");
+assert.equal(offered.risk, "high");
+const review = await claimDuty(ctx(machine()), { duty_id: risky.duty_id, agent_id: "laptop/1" });
+assert.equal(review.roster.risk, "high");
+assert.equal(review.roster.handoff.checks.commit, "abc123", "the reviewer is told the suite already passed, and on what");
+await setRoster(ctx(), { project_id: "team", settings: { independent_review: false } });
+assert.deepEqual((await getDuty(ctx(machine()), { duty_id: risky.duty_id })).duty.agent_options, [fable, opusX, codexX, opus, haiku], "off: the machine's own order");
+await setRoster(ctx(), { project_id: "team", settings: { independent_review: true } });
+await completeDuty(ctx(machine()), { duty_id: risky.duty_id, agent_id: "laptop/1", outcome_summary: "Verified." });
+await store.putOne("machines", "mk", { ...table("machines").get("mk"), agent_options: all });
+
+// --- a duty that has used its allowance of agent time asks before using more ---------------------
+const boardRow = () => table("projects").get("team");
+const setMinutes = (duty_minutes) => store.putOne("projects", "team", { ...boardRow(), runner: { ...(boardRow().runner || {}), duty_minutes } });
+await setMinutes(1);
+const long = await file("Long");
+await claimDuty(ctx(machine()), { duty_id: long.duty_id, agent_id: "laptop/1" });
+await rejects(() => reportUsage(ctx(token("a1")), { duty_id: long.duty_id, ms: 5 }), /only the machine/);
+await rejects(() => reportUsage(ctx(), { duty_id: long.duty_id, ms: 5 }), /only the machine/);
+assert.equal((await reportUsage(ctx(machine()), { duty_id: long.duty_id, ms: 40000 })).ms, 40000);
+const used = await reportUsage(ctx(machine()), { duty_id: long.duty_id, ms: 21000 });
+assert.deepEqual([used.ms, used.sessions], [61000, 2]);
+assert.equal(table("duties").get(long.duty_id).status, "active", "reporting time never touches the duty's own row");
+await handoffDuty(ctx(machine()), { duty_id: long.duty_id, agent_id: "laptop/1", to_role: "engineer", note: "Go." });
+await rejects(() => claimDuty(ctx(machine()), { duty_id: long.duty_id, agent_id: "laptop/1" }), /over its board's limit of agent time/);
+row = table("duties").get(long.duty_id);
+assert.equal(row.status, "needs_decision");
+assert.match(row.last_question, /session time on this duty/);
+assert.equal(row.role, "engineer", "it stays with the role it was going to");
+assert.deepEqual((await getDuty(ctx(), { duty_id: long.duty_id })).duty.usage, { ms: 61000, sessions: 2 });
+await resolveDuty(ctx(), { duty_id: long.duty_id, resolution_text: "Go on." });
+assert.equal(table("duties").get(long.duty_id).budget_extra_ms, 60000, "the answer grants the same allowance again");
+assert.equal((await claimDuty(ctx(machine()), { duty_id: long.duty_id, agent_id: "laptop/1" })).roster.role.id, "engineer");
+await reportUsage(ctx(machine()), { duty_id: long.duty_id, ms: 120000 });
+await handoffDuty(ctx(machine()), { duty_id: long.duty_id, agent_id: "laptop/1", to_role: "qa", note: "Built." });
+await setMinutes(0);
+assert.equal((await claimDuty(ctx(machine()), { duty_id: long.duty_id, agent_id: "laptop/1" })).roster.role.id, "qa", "0 is no limit");
+await completeDuty(ctx(machine()), { duty_id: long.duty_id, agent_id: "laptop/1", outcome_summary: "Verified." });
+// Sent back by a person, its allowance counts from here.
+await setMinutes(1);
+await reopenDuty(ctx(), { duty_id: long.duty_id, note: "Still wrong." });
+assert.equal(table("duties").get(long.duty_id).budget_extra_ms, 181000);
+await claimDuty(ctx(machine()), { duty_id: long.duty_id, agent_id: "laptop/1" });
+await failDuty(ctx(), { duty_id: long.duty_id, reason: "test over" });
+const { duty_minutes: _unset, ...runnerBefore } = boardRow().runner;
+await store.putOne("projects", "team", { ...boardRow(), runner: runnerBefore });
+
+// --- the memory's earlier versions, and putting one back -----------------------------------------
+await rejects(() => memoryHistory(ctx(token()), {}), /people on the board/);
+const before = (await getMemory(ctx(), { project_id: "team" })).version;
+for (const body of ["one", "two", "three"]) await writeMemory(ctx(), { project_id: "team", body });
+let history = await memoryHistory(ctx(member), { project_id: "team" });
+assert.equal(history.version, before + 3);
+assert.deepEqual(history.versions.slice(0, 2).map((v) => [v.version, v.body]), [[before + 2, "two"], [before + 1, "one"]], "newest first, without the one in force");
+assert.ok(history.versions.some((v) => /npm test/.test(v.body) && v.updated_by.role === "duty-officer"), "and who wrote each");
+const restored = await writeMemory(ctx(), { project_id: "team", body: history.versions[1].body, based_on: history.version });
+assert.equal(restored.body, "one");
+for (let i = 0; i < MEMORY_VERSIONS_KEPT + 4; i++) await writeMemory(ctx(), { project_id: "team", body: `write ${i}` });
+history = await memoryHistory(ctx(), { project_id: "team" });
+assert.equal(history.versions.length, MEMORY_VERSIONS_KEPT);
+assert.equal([...table("memory_history").values()].filter((h) => h.project_id === "team").length, MEMORY_VERSIONS_KEPT, "older ones are dropped, not kept for ever");
+
+// --- a recurring duty goes straight to where its last run was routed -----------------------------
+const weekly = (await createSchedule(ctx(), { project_id: "team", title: "Weekly report", brief: "Summarise the week's orders.", cron: "0 9 * * 1", tz: "UTC" })).schedule;
+assert.equal(weekly.route, null);
+const runNow = async () => {
+  await updateSchedule(ctx(), { schedule_id: weekly.schedule_id, next_due_at: Date.now() - 1000 });
+  await runDueSchedules(ctx(), { projectKey: "team" });
+  return table("schedules").get(weekly.schedule_id).last_duty_id;
+};
+const run1 = await runNow();
+assert.equal((await claimDuty(ctx(token("a1")), { duty_id: run1, agent_id: "a1" })).roster.role.id, "duty-officer", "the first run is read and routed like any duty");
+await handoffDuty(ctx(token("a1")), { duty_id: run1, to_role: "engineer", note: "A report: no design needed.", risk: "low" });
+assert.deepEqual({ ...table("schedules").get(weekly.schedule_id).route, at: 0 }, { role: "engineer", risk: "low", at: 0 });
+await failDuty(ctx(), { duty_id: run1, reason: "test over" });
+const run2 = await runNow();
+row = table("duties").get(run2);
+assert.deepEqual([row.role, row.risk, row.routed], ["engineer", "low", true]);
+const routedClaim = await claimDuty(ctx(token("b1")), { duty_id: run2, agent_id: "b1" });
+assert.equal(routedClaim.roster.role.id, "engineer", "no second routing session");
+assert.equal(routedClaim.roster.handoff, null);
+// The builder passing it on is not routing, and changes nothing about where runs start.
+await handoffDuty(ctx(token("b1")), { duty_id: run2, to_role: "qa", note: "Written." });
+assert.equal(table("schedules").get(weekly.schedule_id).route.role, "engineer");
+await failDuty(ctx(), { duty_id: run2, reason: "test over" });
+// A different ask is routed afresh.
+assert.equal((await updateSchedule(ctx(), { schedule_id: weekly.schedule_id, enabled: true })).schedule.route.role, "engineer");
+assert.equal((await updateSchedule(ctx(), { schedule_id: weekly.schedule_id, brief: "Redesign the weekly report." })).schedule.route, null);
+// And a route to a role the team no longer has falls back to whoever reads duties first.
+await store.putOne("schedules", weekly.schedule_id, { ...table("schedules").get(weekly.schedule_id), route: { role: "retired", risk: "normal" } });
+const run3 = await runNow();
+assert.equal((await claimDuty(ctx(token("a1")), { duty_id: run3, agent_id: "a1" })).roster.role.id, "duty-officer");
+await failDuty(ctx(), { duty_id: run3, reason: "test over" });
+await updateSchedule(ctx(), { schedule_id: weekly.schedule_id, enabled: false });
+
+// --- split work is checked once more, as a whole -------------------------------------------------
+const wholeOf = (parent) => [...table("duties").values()].filter((d) => d.acceptance_of === parent);
+const build = async (id) => {
+  await turn(id, "b1", "qa");
+  await claimDuty(ctx(token("q1")), { duty_id: id, agent_id: "q1" });
+  return completeDuty(ctx(token("q1")), { duty_id: id, outcome_summary: `Verified ${id}.` });
+};
+const big = await file("Billing v2", "Invoices, and a page to see them.");
+await turn(big.duty_id, "a1", "architect");
+await claimDuty(ctx(token("p1")), { duty_id: big.duty_id, agent_id: "p1" });
+const pieceA = await enqueueDuty(ctx(token("p1")), { title: "Invoices table", brief: "Schema and migration.", role: "engineer", spawned_by: big.duty_id });
+const pieceB = await enqueueDuty(ctx(token("p1")), { title: "Invoices page", brief: "List and detail.", role: "engineer", spawned_by: big.duty_id });
+assert.equal(table("duties").get(pieceA.duty_id).split_from, big.duty_id);
+assert.equal(table("duties").get((await file("Unrelated")).duty_id).split_from, null, "a duty a person files is nobody's piece");
+await completeDuty(ctx(token("p1")), { duty_id: big.duty_id, outcome_summary: "Split into two pieces." });
+await build(pieceA.duty_id);
+assert.equal(wholeOf(big.duty_id).length, 0, "not while a piece is unfinished");
+events.length = 0;
+await build(pieceB.duty_id);
+const [whole] = wholeOf(big.duty_id);
+assert.ok(whole, "the last piece files the check");
+assert.equal(whole.title, "Check the whole: Billing v2");
+assert.equal(whole.role, "qa", "a reviewer's");
+assert.equal(whole.risk, "high");
+for (const must of [/Invoices, and a page to see them\./, /Invoices table/, /Invoices page/, /do not review each piece again/]) assert.match(whole.brief, must);
+assert.equal(table("duties").get(big.duty_id).acceptance_duty_id, whole.key);
+assert.ok(events.some((e) => e.id === whole.key && e.status === "queued"), "and the board hears about it");
+assert.equal((await getDuty(ctx(), { duty_id: whole.key })).duty.acceptance_of, big.duty_id);
+// A piece sent back and finished again does not file a second check; nor does the check itself.
+await reopenDuty(ctx(), { duty_id: pieceB.duty_id, note: "Detail page 404s." });
+await claimDuty(ctx(token("a1")), { duty_id: pieceB.duty_id, agent_id: "a1" });
+await completeDuty(ctx(token("a1")), { duty_id: pieceB.duty_id, outcome_summary: "Fixed the route." });
+assert.equal(wholeOf(big.duty_id).length, 1);
+assert.equal((await claimDuty(ctx(token("q1")), { duty_id: whole.key, agent_id: "q1" })).roster.role.id, "qa");
+const followUp = await enqueueDuty(ctx(token("q1")), { title: "Link the page from the nav", brief: "Nothing links to /invoices.", role: "engineer" });
+await completeDuty(ctx(token("q1")), { duty_id: whole.key, outcome_summary: "Works together; filed the missing nav link." });
+await build(followUp.duty_id);
+assert.equal(wholeOf(whole.key).length, 0, "a check of the whole is not itself checked as a whole");
+// Nothing delivered, nothing to check.
+const dud = await file("Dud");
+await turn(dud.duty_id, "a1", "architect");
+await claimDuty(ctx(token("p1")), { duty_id: dud.duty_id, agent_id: "p1" });
+const dudPiece = await enqueueDuty(ctx(token("p1")), { title: "Dud piece", brief: "b", role: "engineer" });
+await completeDuty(ctx(token("p1")), { duty_id: dud.duty_id, outcome_summary: "Split." });
+await failDuty(ctx(), { duty_id: dudPiece.duty_id, reason: "Not wanted." });
+assert.equal(wholeOf(dud.duty_id).length, 0);
+await clearTeam();
+
+// --- what reviewers keep sending back becomes a proposal to change the charters and the rules ----
+const rosterRow = () => table("rosters").get("team");
+assert.ok(rosterRow().sent_backs.length >= 1 && rosterRow().sent_backs.every((b) => b.title && b.note && b.from === "QA"), "the board has been keeping them");
+const retros = () => [...table("duties").values()].filter((d) => d.project_id === "team" && d.kind === "retro");
+assert.equal(retros().length, 0);
+for (let i = 0; rosterRow().sent_back_since_retro !== 0 || i === 0; i++) {
+  assert.ok(i < RETRO_EVERY + 1, "a retro is filed every RETRO_EVERY send-backs");
+  const d = await file(`Sent back ${i}`);
+  await turn(d.duty_id, "a1", "engineer");
+  await turn(d.duty_id, "b1", "qa");
+  await turn(d.duty_id, "q1", "engineer", { note: `${i}. No ownership check on the read.` });
+  await failDuty(ctx(), { duty_id: d.duty_id, reason: "test over" });
+}
+const [retro] = retros();
+assert.ok(retro && retro.status === "queued", "filed by the board itself");
+assert.match(retro.brief, /QA sent it back to Engineer — \d+\. No ownership check/);
+assert.match(retro.brief, /board_roster_submit.*board_rules_submit/s);
+assert.ok(rosterRow().sent_backs.length <= SENT_BACKS_KEPT);
+assert.equal((await retroRoster(ctx(), { project_id: "team" })).existing, true, "one at a time");
+await rejects(() => retroRoster(ctx(member), { project_id: "team" }), /owner/);
+const retroClaim = await claimDuty(ctx(token("r9")), { duty_id: retro.key, agent_id: "r9" });
+assert.equal(retroClaim.roster, undefined, "housekeeping, not a role's work");
+const whole5 = (await getRoster(ctx(token("r9")), { charters: true })).roles;
+assert.ok(whole5.every((r) => r.charter), "it reads every charter whole");
+const edited = whole5.map((r) => (r.id === "engineer" ? { ...r, charter: `${r.charter}\n- Every read checks that the caller owns the row.` } : r));
+await rejects(() => submitRoster(ctx(token("b1")), { duty_id: retro.key, roles: edited }), /held by 'r9'/);
+const proposedTeam = await submitRoster(ctx(token("r9")), { duty_id: retro.key, roles: edited, note: "QA found a missing ownership check ten times." });
+assert.equal(proposedTeam.roles, 5);
+assert.match(rosterRow().draft.roles.find((r) => r.id === "engineer").charter, /owns the row/);
+assert.ok(!/owns the row/.test(rosterRow().roles.find((r) => r.id === "engineer").charter), "a draft: nothing in force changed");
+await submitRules(ctx(token("r9")), { duty_id: retro.key, body: "# Rules\n- Every read checks ownership." });
+assert.equal(table("rules").get("team").draft.duty_id, retro.key);
+await completeDuty(ctx(token("r9")), { duty_id: retro.key, outcome_summary: "Proposed one charter line and one rule." });
+const ordinary = await file("Ordinary");
+await claimDuty(ctx(token("a1")), { duty_id: ordinary.duty_id, agent_id: "a1" });
+await rejects(() => submitRules(ctx(token("a1")), { duty_id: ordinary.duty_id, body: "# Mine" }), /not an active rules or retro duty/);
+await rejects(() => submitRoster(ctx(token("a1")), { duty_id: ordinary.duty_id, roles: edited }), /not an active roster or retro duty/);
+const kept = rosterRow().sent_backs.length;
+await setRoster(ctx(), { project_id: "team", discard_draft: true });
+assert.equal(rosterRow().sent_backs.length, kept, "changing the team does not forget what was sent back");
+const asked = await retroRoster(ctx(), { project_id: "team" });
+assert.equal(asked.existing, false, "and the owner can ask for one at any time");
+assert.equal(table("duties").get(asked.duty_id).kind, "retro");
+const seenByOwner = await getRoster(ctx(), { project_id: "team" });
+assert.equal(seenByOwner.sent_backs.length, kept);
+assert.equal(seenByOwner.retro_every, RETRO_EVERY);
+await clearTeam();
+
 // --- every new route is in the table the cross-tenant suite is derived from ----------------------
-for (const path of ["/projects/rosters", "/live/boards", "/duty/handoff", "/board/roster", "/board/roster/set", "/board/roster/accept", "/board/roster/submit", "/board/roster/draft", "/board/memory", "/board/memory/write"]) {
+for (const path of ["/projects/rosters", "/live/boards", "/duty/handoff", "/board/roster", "/board/roster/set", "/board/roster/accept", "/board/roster/submit", "/board/roster/draft", "/board/memory", "/board/memory/write", "/board/memory/history", "/board/roster/retro", "/duty/usage"]) {
   assert.ok(ROUTE_PATHS.includes(path), path);
 }
 
@@ -477,7 +753,8 @@ const gone = await deleteProject({ ...ctx(), env: {} }, { project_id: "team", co
 if (!(gone instanceof Error)) {
   assert.equal(table("rosters").has("team"), false);
   assert.equal(table("memories").has("team"), false);
+  for (const kept of ["memory_history", "duty_usage"]) assert.equal([...table(kept).values()].filter((e) => e.project_id === "team").length, 0, kept);
   assert.equal([...table("role_events").values()].filter((e) => e.project_id === "team").length, 0);
 }
 
-console.log("Team: presets, validation, levels, intake, handoff, the review gate, send-backs, plan approval, drafting and accepting, memory, machine levels, sealed secrets and the tools all passed.");
+console.log("Team: presets, validation, levels, intake, handoff, the review gate, send-backs, plan approval, drafting and accepting, memory and its history, machine levels, sealed secrets, the tools, the handoff and time limits, risk, schedule routes, the whole-split check and retros all passed.");

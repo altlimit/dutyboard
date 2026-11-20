@@ -15,6 +15,13 @@ import { resolveProject, checkAgentId } from "./identity.js";
 
 /** About 1,500 tokens: enough for what a project's next session must know, cheap in every prompt. */
 export const MAX_MEMORY_CHARS = 6000;
+/**
+ * Earlier versions kept. The memory is replaced whole, by agents, without anyone asking — so one bad
+ * write could cost everything the team had learned. These are what the owner restores from.
+ */
+export const MEMORY_VERSIONS_KEPT = 10;
+
+const historyKey = (projectKey, version) => `${projectKey}:${String(version).padStart(8, "0")}`;
 
 const withoutMeta = ({ key, _created, _updated, ...data }) => data;
 
@@ -98,7 +105,39 @@ export async function writeMemory(ctx, body) {
     updated_by: by,
     updated_at: now,
   };
+  // What is being replaced is kept first: if this stops half-way there is a spare copy, never a gap.
+  if (row && row.body) {
+    await ctx.store.putOne("memory_history", historyKey(project.key, current), {
+      project_id: project.key,
+      owner_uid: project.owner_uid,
+      version: current,
+      body: row.body,
+      updated_by: row.updated_by || null,
+      updated_at: row.updated_at || null,
+      replaced_at: now,
+    });
+    if (current > MEMORY_VERSIONS_KEPT) await ctx.store.delete("memory_history", [historyKey(project.key, current - MEMORY_VERSIONS_KEPT)]).catch(() => 0);
+  }
   await ctx.store.putOne("memories", project.key, next);
   await ctx.publish(project.key, null, { t: "board", what: "memory" });
   return { ok: true, ...memoryView(project.key, next) };
+}
+
+/**
+ * `POST /board/memory/history` — the versions before the current one, newest first, for a person to
+ * read and restore from. Restoring is writing an old body back, which makes it the newest version.
+ */
+export async function memoryHistory(ctx, body) {
+  if (ctx.caller.kind !== "human") throw forbidden("the memory's earlier versions are for the people on the board");
+  const project = await resolveProject(ctx.caller, body.project_id, ctx.store);
+  const row = await ctx.store.get("memories", project.key);
+  const current = (row && row.version) || 0;
+  const keys = [];
+  for (let v = current - 1; v >= 1 && keys.length < MEMORY_VERSIONS_KEPT; v--) keys.push(historyKey(project.key, v));
+  const found = await ctx.store.getMany("memory_history", keys);
+  const versions = keys
+    .map((k) => found.get(k))
+    .filter(Boolean)
+    .map((h) => ({ version: h.version, body: h.body, chars: h.body.length, updated_by: h.updated_by || null, updated_at: h.updated_at || null }));
+  return { project_id: project.key, version: current, versions };
 }

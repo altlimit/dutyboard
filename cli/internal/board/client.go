@@ -662,15 +662,44 @@ type Team struct {
 	Settings struct {
 		PlanApproval bool `json:"plan_approval"`
 		MaxBounces   int  `json:"max_bounces"`
+		// SensitivePaths are globs; a change touching one gets a high-risk review whatever anyone said.
+		SensitivePaths []string `json:"sensitive_paths"`
 	} `json:"settings"`
 	// Handoff is what the last role said when it passed the duty on.
-	Handoff *struct {
-		From     string `json:"from"`
-		FromName string `json:"from_name"`
-		Note     string `json:"note"`
-		SentBack bool   `json:"sent_back"`
-	} `json:"handoff"`
-	Bounces int `json:"bounces"`
+	Handoff *Handoff `json:"handoff"`
+	Bounces int      `json:"bounces"`
+	// Risk is how careful this duty's review should be: low, normal or high.
+	Risk string `json:"risk"`
+}
+
+// Handoff is how the last role left a duty for the next.
+type Handoff struct {
+	From     string `json:"from"`
+	FromName string `json:"from_name"`
+	Note     string `json:"note"`
+	SentBack bool   `json:"sent_back"`
+	// Checks is set when the machine that ran the last role saw the project's test command pass on
+	// what was handed over — the machine's word, not the agent's.
+	Checks *Checks `json:"checks"`
+}
+
+// Checks is a test run a machine saw pass on a commit.
+type Checks struct {
+	Command string `json:"command"`
+	Commit  string `json:"commit"`
+}
+
+// Other answers the role with this id among the others on the team, and whether there is one.
+func (t *Team) Other(id string) (Role, bool) {
+	if t == nil {
+		return Role{}, false
+	}
+	for _, r := range t.Others {
+		if r.ID == id {
+			return r, true
+		}
+	}
+	return Role{}, false
 }
 
 // Reviewers are the roles a builder hands its work to.
@@ -744,6 +773,12 @@ func (c *Client) Checkpoint(ctx context.Context, board, dutyID, agentID, kind, m
 		body["affinity"] = true
 	}
 	return c.Call(ctx, "/duty/checkpoint", board, body, nil)
+}
+
+// ReportUsage tells the board how long a session this machine ran on a duty lasted. The board adds
+// them up, and asks a person before a duty uses more than its allowance.
+func (c *Client) ReportUsage(ctx context.Context, board, dutyID string, d time.Duration) error {
+	return c.Call(ctx, "/duty/usage", board, map[string]any{"duty_id": dutyID, "ms": d.Milliseconds()}, nil)
 }
 
 // Quiet drops a scheduled duty whose check found nothing to do.

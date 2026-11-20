@@ -114,6 +114,13 @@
     {
       "fields": [
         "project_id",
+        "split_from"
+      ],
+      "for": "the function: the pieces one duty was split into, to tell when the last of them has finished"
+    },
+    {
+      "fields": [
+        "project_id",
         "kind",
         "status"
       ],

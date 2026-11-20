@@ -48,10 +48,11 @@ import {
   listChanges,
   cancelDuty,
   handoffDuty,
+  reportUsage,
   sweepOldRoleEvents,
 } from "./duties.js";
-import { getRoster, setRoster, acceptRoster, submitRoster, draftRoster } from "./roster.js";
-import { getMemory, writeMemory } from "./memory.js";
+import { getRoster, setRoster, acceptRoster, submitRoster, draftRoster, retroRoster } from "./roster.js";
+import { getMemory, writeMemory, memoryHistory } from "./memory.js";
 import { handleMcp, callLinkedBoard } from "./mcp.js";
 import { addMember, listMembers, removeMember, setMemberAgents, syncAccess } from "./members.js";
 import { reindexBoard, searchConfigured, searchDuties } from "./searching.js";
@@ -148,6 +149,7 @@ const ROUTES = {
   "/duty/changes": listChanges,
   "/duty/cancel": cancelDuty,
   "/duty/handoff": handoffDuty,
+  "/duty/usage": reportUsage,
   "/duty/search": searchDuties,
   "/duty/attach": attachToDuty,
   "/duty/attachments": listAttachments,
@@ -170,8 +172,10 @@ const ROUTES = {
   "/board/roster/accept": acceptRoster,
   "/board/roster/submit": submitRoster,
   "/board/roster/draft": draftRoster,
+  "/board/roster/retro": retroRoster,
   "/board/memory": getMemory,
   "/board/memory/write": writeMemory,
+  "/board/memory/history": memoryHistory,
   "/schedules/list": listSchedules,
   "/schedules/create": createSchedule,
   "/schedules/update": updateSchedule,

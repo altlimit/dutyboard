@@ -84,6 +84,18 @@ type RunRecord struct {
 	// Role is the role on the board's team the last session worked the duty as. A different role
 	// starts a conversation of its own, in the same worktree.
 	Role string `json:"role,omitempty"`
+	// Sessions are the conversations of the roles that worked the duty before the current one, by
+	// role. A role the duty comes back to — a builder whose work was sent back — picks its own up
+	// again, rather than reading its own work as a stranger would.
+	Sessions map[string]RoleSession `json:"sessions,omitempty"`
+}
+
+// RoleSession is one role's conversation on a duty, and what it was held with.
+type RoleSession struct {
+	Session string `json:"session"`
+	Agent   string `json:"agent,omitempty"`
+	Model   string `json:"model,omitempty"`
+	Effort  string `json:"effort,omitempty"`
 }
 
 var runsMu sync.Mutex

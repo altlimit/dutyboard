@@ -6,7 +6,11 @@
 // first routes each one. An agent can draft a team for the board; like the rules, what it drafts is
 // not in force until the owner accepts it.
 //
-// The memory is the agents' own notebook for the project. The owner can read, correct or clear it.
+// The memory is the agents' own notebook for the project. The owner can read, correct or clear it,
+// and put back one of its earlier versions when an agent's rewrite lost something.
+//
+// What the reviewers keep sending back is kept too: every so often — or when the owner asks — a retro
+// duty reads it and proposes changes to the charters and the rules, as drafts to accept here.
 import { computed, ref, watch } from "vue";
 import { api } from "../lib/altengine.js";
 import { ago } from "../lib/duties.js";
@@ -35,8 +39,11 @@ const draftNote = ref("");
 const askingDraft = ref(false);
 const draftDutyId = ref("");
 const editing = ref(null); // a copy of the role being edited, with `at` its index
-const settings = ref({ plan_approval: false, max_bounces: 3 });
+const settings = ref({ plan_approval: false, max_bounces: 3, max_handoffs: 12, independent_review: true, sensitive_paths: [] });
+const sensitiveText = ref(""); // the sensitive paths as typed, one per line
 const memoryEdit = ref(null); // the text being edited, or null
+const history = ref(null); // the memory's earlier versions, once asked for
+const retroDutyId = ref("");
 
 const roles = computed(() => (roster.value && roster.value.roles) || []);
 const inForce = computed(() => !!(roster.value && roster.value.in_force));
@@ -45,9 +52,20 @@ const presets = computed(() => {
   const suggested = roster.value && roster.value.suggested_preset;
   return [...all].sort((a, b) => Number(b.id === suggested) - Number(a.id === suggested));
 });
-const settingsChanged = computed(
-  () => roster.value && (settings.value.plan_approval !== roster.value.settings.plan_approval || Number(settings.value.max_bounces) !== roster.value.settings.max_bounces),
-);
+const typedPaths = computed(() => sensitiveText.value.split("\n").map((l) => l.trim()).filter(Boolean));
+const wanted = computed(() => ({
+  plan_approval: settings.value.plan_approval,
+  max_bounces: Number(settings.value.max_bounces),
+  max_handoffs: Number(settings.value.max_handoffs),
+  independent_review: settings.value.independent_review,
+  sensitive_paths: typedPaths.value,
+}));
+const settingsChanged = computed(() => {
+  if (!roster.value) return false;
+  const have = roster.value.settings;
+  return Object.entries(wanted.value).some(([k, v]) => JSON.stringify(v) !== JSON.stringify(have[k] ?? (k === "sensitive_paths" ? [] : null)));
+});
+const sentBacks = computed(() => [...((roster.value && roster.value.sent_backs) || [])].reverse());
 const memoryBy = computed(() => {
   const by = memory.value && memory.value.updated_by;
   if (!by) return "";
@@ -61,6 +79,8 @@ async function load() {
     roster.value = r;
     memory.value = m;
     settings.value = { ...r.settings };
+    sensitiveText.value = (r.settings.sensitive_paths || []).join("\n");
+    if (history.value) loadHistory();
     if (!chosenPreset.value) chosenPreset.value = r.suggested_preset || (r.presets[0] && r.presets[0].id) || "";
     emit("draft", !!r.draft);
   } catch (err) {
@@ -120,7 +140,39 @@ async function requestDraft() {
 
 const acceptDraft = () => act(() => api("/board/roster/accept", { project_id: props.projectId }), "The drafted team is in force.");
 const discardDraft = () => set({ discard_draft: true }, "The draft was discarded.");
-const saveSettings = () => set({ settings: { plan_approval: settings.value.plan_approval, max_bounces: Number(settings.value.max_bounces) } }, "Saved.");
+const saveSettings = () => set({ settings: wanted.value }, "Saved.");
+
+async function askRetro() {
+  busy.value = true;
+  error.value = "";
+  try {
+    const res = await api("/board/roster/retro", { project_id: props.projectId });
+    retroDutyId.value = res.duty_id;
+    notice.value = res.existing
+      ? "A look back is already under way on this board."
+      : "A duty to look at what keeps being sent back is in the queue. What it proposes waits here and in the rules for you to accept.";
+  } catch (err) {
+    error.value = err.message;
+  } finally {
+    busy.value = false;
+  }
+}
+
+async function loadHistory() {
+  try {
+    history.value = (await api("/board/memory/history", { project_id: props.projectId })).versions;
+  } catch (err) {
+    error.value = err.message;
+  }
+}
+const toggleHistory = (event) => {
+  if (event.target.open && !history.value) loadHistory();
+};
+const versionBy = (v) => (v.updated_by ? (v.updated_by.agent_id ? `${v.updated_by.agent_id}${v.updated_by.role ? ` as ${v.updated_by.role}` : ""}` : v.updated_by.name || "the owner") : "");
+function restore(v) {
+  if (!confirm(`Put version ${v.version} back? What is there now is kept as an earlier version, so this can be undone.`)) return;
+  act(() => api("/board/memory/write", { project_id: props.projectId, body: v.body, based_on: memory.value.version }), `Version ${v.version} is back.`);
+}
 
 const startEdit = (role, at) => (editing.value = { ...role, at });
 async function saveRole() {
@@ -143,7 +195,7 @@ const saveMemory = async () => {
     <p v-if="error" class="notice notice--error" role="alert">{{ error }}</p>
     <p v-if="notice" class="notice" role="status">
       {{ notice }}
-      <router-link v-if="draftDutyId" :to="{ name: 'duty', params: { projectId, dutyId: draftDutyId } }">See the duty</router-link>
+      <router-link v-if="draftDutyId || retroDutyId" :to="{ name: 'duty', params: { projectId, dutyId: retroDutyId || draftDutyId } }">See the duty</router-link>
     </p>
 
     <p v-if="unsupported" class="notice">
@@ -247,6 +299,26 @@ const saveMemory = async () => {
               <label for="team-bounces">Ask me after a reviewer has sent the same work back this many times</label>
               <input id="team-bounces" v-model.number="settings.max_bounces" type="number" min="1" max="10" style="max-width: 6rem" />
             </div>
+            <div class="field">
+              <label for="team-handoffs">Ask me after a duty has been handed on this many times without being finished</label>
+              <input id="team-handoffs" v-model.number="settings.max_handoffs" type="number" min="4" max="50" style="max-width: 6rem" />
+              <p class="hint">Catches two roles each sure the duty is the other's, which the send-back limit does not.</p>
+            </div>
+            <label class="choice choice--block">
+              <input v-model="settings.independent_review" type="checkbox" />
+              <span>
+                Review on a different model than the one that built it
+                <span class="hint" style="display: block; margin: 0">When a machine has another model at the reviewer's level, the reviewer runs on it, so it does not share the builder's blind spots.</span>
+              </span>
+            </label>
+            <div class="field">
+              <label for="team-sensitive">Always review these paths as high risk <span class="muted">(optional)</span></label>
+              <textarea id="team-sensitive" v-model="sensitiveText" rows="3" class="mono" placeholder="auth/**&#10;**/payments/*&#10;*.sql" />
+              <p class="hint">
+                One pattern per line, from the repository's root: <code>*</code> within a folder, <code>**</code> across folders. When a change touches one, the
+                machine marks the duty high risk, and its review is done line by line on a more capable model.
+              </p>
+            </div>
             <div><button type="submit" :disabled="busy || !settingsChanged">Save</button></div>
           </form>
         </template>
@@ -270,6 +342,28 @@ const saveMemory = async () => {
             <button v-if="inForce" type="button" class="link" @click="turnOff">Turn the team off</button>
           </div>
         </fieldset>
+
+        <div v-if="inForce" class="stack team__settings">
+          <h3 style="margin: 0">What reviewers send back</h3>
+          <p class="muted small" style="margin: 0">
+            Work sent back is a standard nobody was told, or one too vague to follow. Every {{ roster.retro_every }} send-backs an agent looks at
+            what they have in common and proposes changes to the charters and the rules — drafts you accept here and under Rules.
+            <template v-if="roster.sent_back_since_retro">{{ roster.sent_back_since_retro }} since the last look.</template>
+          </p>
+          <details v-if="sentBacks.length">
+            <summary class="small">The last {{ sentBacks.length }}</summary>
+            <ul class="feed small">
+              <li v-for="b in sentBacks" :key="`${b.duty_id}-${b.at}`" class="stack" style="gap: 0.15rem">
+                <span>
+                  <router-link :to="{ name: 'duty', params: { projectId, dutyId: b.duty_id } }">{{ b.title }}</router-link>
+                  <span class="muted"> — {{ b.from }} to {{ b.to }}, {{ ago(b.at) }}</span>
+                </span>
+                <span class="muted">{{ b.note }}</span>
+              </li>
+            </ul>
+          </details>
+          <div v-if="isOwner"><button type="button" :disabled="busy" @click="askRetro">Look back now</button></div>
+        </div>
 
         <form v-if="isOwner && askingDraft" class="stack" @submit.prevent="requestDraft">
           <div class="field">
@@ -301,6 +395,23 @@ const saveMemory = async () => {
             {{ memory.chars }} of {{ memory.max_chars }} characters<template v-if="memory.updated_at"> · updated {{ ago(memory.updated_at) }} by {{ memoryBy }}</template>.
           </p>
           <div v-if="isOwner"><button type="button" :disabled="busy" @click="memoryEdit = memory.body">Edit</button></div>
+          <details v-if="memory.version > 1" @toggle="toggleHistory">
+            <summary class="small">Earlier versions</summary>
+            <p v-if="!history" class="muted small" role="status">Loading…</p>
+            <p v-else-if="!history.length" class="muted small">None kept.</p>
+            <ul v-else class="team">
+              <li v-for="v in history" :key="v.version" class="team__role stack" style="gap: 0.4rem">
+                <div class="row row--between">
+                  <span class="small"><strong>Version {{ v.version }}</strong><span class="muted"> · {{ v.chars }} characters<template v-if="v.updated_at"> · {{ ago(v.updated_at) }}</template><template v-if="versionBy(v)"> by {{ versionBy(v) }}</template></span></span>
+                  <button v-if="isOwner" type="button" class="link small" :disabled="busy" @click="restore(v)">Put this back<span class="sr-only"> (version {{ v.version }})</span></button>
+                </div>
+                <details>
+                  <summary class="small">Read it</summary>
+                  <div class="md team__memory" v-html="markdown(v.body)"></div>
+                </details>
+              </li>
+            </ul>
+          </details>
         </template>
         <form v-else class="stack" @submit.prevent="saveMemory">
           <div class="field">

@@ -45,6 +45,9 @@ type Spec struct {
 	// needs that git does not carry, like an .env.
 	Copy     []string
 	CopyFrom string
+	// PrepLater makes the worktree without running prep: for a session that only reads the duty and
+	// passes it on. Prep runs when a session that builds takes the worktree, or before anything lands.
+	PrepLater bool
 }
 
 // Branch is the duty's branch.
@@ -236,7 +239,7 @@ func (m *Manager) prepIfNeeded(ctx context.Context, s Spec, path string, fresh b
 			_ = json.Unmarshal(b, &have)
 		}
 	}
-	if have.PrepHash == want {
+	if have.PrepHash == want || s.PrepLater {
 		return nil
 	}
 	m.logf("prep: %s", s.Prep)
@@ -425,4 +428,50 @@ func tail(s string, n int) string {
 		return s
 	}
 	return "…" + s[len(s)-n:]
+}
+
+// Handing is what a duty's worktree holds at the moment one role passes it to the next.
+type Handing struct {
+	Dirty   string   // `git status --porcelain`: what is not committed, "" when clean
+	Commit  string   // HEAD
+	Changed []string // every file the duty has changed against where it started, committed or not
+}
+
+// Handing reads the state of a duty's worktree for a handoff.
+func (m *Manager) Handing(ctx context.Context, s Spec) (Handing, error) {
+	path := m.PathOf(s)
+	if !m.Exists(s) {
+		return Handing{}, fmt.Errorf("duty %s has no worktree", s.DutyID)
+	}
+	var h Handing
+	h.Dirty, _ = git(ctx, path, "status", "--porcelain")
+	h.Commit, _ = git(ctx, path, "rev-parse", "HEAD")
+	remote := Remote(ctx, s.Repo)
+	base := s.Base
+	if base == "" {
+		base = DefaultBranch(ctx, s.Repo, remote)
+	}
+	if remote != "" {
+		base = remote + "/" + base
+	}
+	// Against the point the duty's branch left the base, so what others landed since is not counted.
+	if fork, err := git(ctx, path, "merge-base", base, "HEAD"); err == nil && fork != "" {
+		if out, err := git(ctx, path, "diff", "--name-only", fork); err == nil && out != "" {
+			h.Changed = strings.Split(out, "\n")
+		}
+	}
+	for _, line := range strings.Split(h.Dirty, "\n") {
+		// Untracked files are in the status and not in the diff.
+		if strings.HasPrefix(line, "?? ") {
+			h.Changed = append(h.Changed, strings.Trim(strings.TrimPrefix(line, "?? "), `"`))
+		}
+	}
+	return h, ctx.Err()
+}
+
+// Test runs a project command in a duty's worktree with the environment the board's commands get,
+// answering the tail of its output.
+func (m *Manager) Test(ctx context.Context, s Spec, command string) (string, error) {
+	out, err := Shell(ctx, m.PathOf(s), command, m.env())
+	return tail(out, 4000), err
 }

@@ -286,6 +286,14 @@ const removeServer = (i) => {
       <input :id="`${idPrefix}-minutes`" v-model.number="draft.session_minutes" type="number" min="5" max="600" />
     </div>
     <div class="field">
+      <label :for="`${idPrefix}-duty-hours`">Agent time one duty may use before you are asked, in hours</label>
+      <input :id="`${idPrefix}-duty-hours`" v-model.number="draft.duty_hours" type="number" min="0" max="100" step="0.5" />
+      <p class="hint">
+        Every session on the duty, by every role, added up. Past it the duty waits in Needs you; answering lets it go on for as long again.
+        0 is no limit.
+      </p>
+    </div>
+    <div class="field">
       <label :for="`${idPrefix}-instr`">Anything else agents should always know <span class="muted">(optional)</span></label>
       <textarea :id="`${idPrefix}-instr`" v-model="draft.instructions" maxlength="4000" placeholder="Deploy only after the owner says so. Screens must fit a 320px phone." />
     </div>

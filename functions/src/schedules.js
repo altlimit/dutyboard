@@ -241,6 +241,9 @@ export function scheduleView(row, now = Date.now()) {
     check: row.check || null,
     quiet_runs: row.quiet_runs || 0,
     last_quiet_at: row.last_quiet_at || null,
+    // Where the role that reads duties first sent the last run, on a board with a team: later runs
+    // start there. Forgotten when what the schedule asks for changes.
+    route: row.route || null,
     cron: row.cron,
     tz: row.tz,
     offset_min: row.offset_min || 0,
@@ -328,6 +331,8 @@ export async function updateSchedule(ctx, body) {
   };
   const fields = scheduleFields(ctx, wanted, now);
   Object.assign(next, fields.data, { updated_at: now });
+  // A different ask may be different work: the role that reads duties first routes the next run again.
+  if (fields.data.title !== row.title || fields.data.brief !== row.brief || body.route === null) next.route = null;
   if (has(body, "enabled")) next.enabled = !!body.enabled;
   // Moving the next run by hand: "not this Monday, tomorrow", or — with a time already gone —
   // "file it now", which the next tick does. A person's to set; an agent follows the clock.
@@ -750,6 +755,9 @@ async function fireSchedule(ctx, row, now) {
         expire_after_days: row.expire_after_days || 0,
         expires_at: null,
         check: row.check || null,
+        // Straight to the role the last run was routed to. A role the team no longer has falls back
+        // to the one that reads duties first, when the duty is claimed.
+        ...(row.route ? { role: row.route.role, risk: row.route.risk || "normal", routed: true } : {}),
       },
     },
   );
@@ -805,6 +813,15 @@ function recurringBrief(row, due, runs) {
  * Called when a duty completes; a no-op unless a schedule filed it. Kept here rather than in
  * duties.js so everything a schedule knows about itself is written in one file.
  */
+/** Record where a recurring duty's run was routed, for the runs after it. */
+export async function rememberRoute(ctx, scheduleId, projectKey, route) {
+  const row = await ctx.store.get("schedules", scheduleId);
+  if (!row || row.project_id !== projectKey) return;
+  if (row.route && row.route.role === route.role && row.route.risk === route.risk) return;
+  await ctx.store.putOne("schedules", row.key, { ...strip(row), route });
+  await ctx.publish(projectKey, null, { t: "board", what: "schedules" });
+}
+
 export async function noteScheduleOutcome(ctx, duty, outcome) {
   if (!duty || !outcome) return;
   try {

@@ -17,7 +17,7 @@
 // worktree, then lands it or, for a [bounce] duty, sends it back once.
 
 import { spawn, execFileSync } from "node:child_process";
-import { appendFileSync, existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { createInterface } from "node:readline";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -297,6 +297,10 @@ if (role) {
     hasMemory: instructions.includes("# The team's memory"),
     handedBy: (prompt.match(/\*\*(.+?) (?:handed this to you|reviewed this and sent it back)\.\*\*/) || [])[1] || "",
     sentBack: prompt.includes("reviewed this and sent it back"),
+    riskHigh: prompt.includes("**This duty is high risk.**"),
+    checksPassed: prompt.includes("Do not run the whole suite again"),
+    slim: !instructions.includes("# Linked boards"),
+    endsWithWhere: /# Where you are working\n[\s\S]*$/.test(instructions) && !/# Where you are working[\s\S]*\n# /.test(instructions),
   };
   const handOn = async (to, note) => {
     const r = await tool("duty_handoff", { duty_id: dutyId, to_role: to, note });
@@ -322,9 +326,24 @@ if (role) {
     const landed = await tool("duty_integrate");
     const completed = await tool("duty_complete", { duty_id: dutyId, outcome_summary: "trying to finish my own work" });
     const fixing = seen.sentBack;
-    writeFileSync(fixing ? `fix-${dutyId}.txt` : `built-${dutyId}.txt`, `${fixing ? "fixed" : "built"} by ${role}\n`);
+    const where = title.includes("[secure]") ? "secure/" : "";
+    if (where) mkdirSync(where, { recursive: true });
+    writeFileSync(`${where}${fixing ? `fix-${dutyId}.txt` : `built-${dutyId}.txt`}`, `${fixing ? "fixed" : "built"} by ${role}\n`);
     git("add", "-A");
     git("commit", "--quiet", "-m", `${fixing ? "fix" : "build"} for ${dutyId}`);
+    if (title.includes("[red]") && !fixing) {
+      // Work that breaks the project's tests: the machine refuses to wake the reviewer for it, and
+      // this session fixes it and tries again, as a real one would.
+      writeFileSync("broken.txt", "this makes the tests fail\n");
+      writeFileSync("uncommitted.txt", "not committed yet\n");
+      const dirty = await tool("duty_handoff", { duty_id: dutyId, to_role: "qa", note: "Built it." });
+      git("add", "-A");
+      git("commit", "--quiet", "-m", `break the tests for ${dutyId}`);
+      const red = await tool("duty_handoff", { duty_id: dutyId, to_role: "qa", note: "Built it." });
+      git("rm", "--quiet", "broken.txt");
+      git("commit", "--quiet", "-m", `fix the tests for ${dutyId}`);
+      record({ ...seen, event: "team-red", dirtyRefused: dirty.isError && /not committed/.test(dirty.text), redRefused: red.isError && /tests .* fail/.test(red.text), redText: red.text });
+    }
     const memory = await tool("board_memory");
     const wrote = await tool("board_memory_write", { body: `${memory.data?.body ? memory.data.body + "\n" : "## Notes\n"}- ${role} worked ${dutyId}.`, based_on: memory.data?.version ?? 0 });
     record({ ...seen, event: "team-build", refused: { integrate: landed.isError && /duty_handoff/.test(landed.text), complete: completed.isError && /duty_handoff/.test(completed.text) }, memoryError: wrote.isError ? wrote.text : null });

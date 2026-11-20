@@ -246,12 +246,7 @@ func TestRolePrompts(t *testing.T) {
 
 	builder := base
 	builder.Duty.Team = teamAs("engineer")
-	builder.Duty.Team.Handoff = &struct {
-		From     string `json:"from"`
-		FromName string `json:"from_name"`
-		Note     string `json:"note"`
-		SentBack bool   `json:"sent_back"`
-	}{From: "duty-officer", FromName: "Duty Officer", Note: "Goal: a download button on /orders."}
+	builder.Duty.Team.Handoff = &board.Handoff{From: "duty-officer", FromName: "Duty Officer", Note: "Goal: a download button on /orders."}
 	sys, task = render(builder)
 	mustSay("the Engineer's system prompt", sys,
 		"# Your role: Engineer", "Validate every external input.", "**QA** (`qa`) — Verifies the work. It verifies work, lands it and completes the duty.",
@@ -263,12 +258,7 @@ func TestRolePrompts(t *testing.T) {
 
 	sentBack := builder
 	sentBack.Duty.Team = teamAs("engineer")
-	sentBack.Duty.Team.Handoff = &struct {
-		From     string `json:"from"`
-		FromName string `json:"from_name"`
-		Note     string `json:"note"`
-		SentBack bool   `json:"sent_back"`
-	}{From: "qa", FromName: "QA", Note: "1. orders.js:40 has no ownership check.", SentBack: true}
+	sentBack.Duty.Team.Handoff = &board.Handoff{From: "qa", FromName: "QA", Note: "1. orders.js:40 has no ownership check.", SentBack: true}
 	_, task = render(sentBack)
 	mustSay("work that was sent back", task, "**QA reviewed this and sent it back.**", "every one", "no ownership check")
 
@@ -348,6 +338,120 @@ func TestRosterDutyPrompt(t *testing.T) {
 	for _, want := range []string{"**draft this board's team.**", "**Exactly one** role with `intake: true`", "`reviewed: true`", "`reviews: true`", "`board_roster_submit`", "`duty_integrate` will report nothing to integrate", "Read what this board is for."} {
 		if !strings.Contains(task, want) {
 			t.Errorf("the roster duty does not say %q:\n%s", want, task)
+		}
+	}
+}
+
+// What changes from one duty to the next comes last in the system prompt, so the part before it is the
+// same for every duty a role works on a board and can be reused between sessions rather than paid
+// for again.
+func TestSystemPromptPutsWhatChangesLast(t *testing.T) {
+	in := func(id, worktree string, memory string) Input {
+		team := teamAs("engineer")
+		return Input{
+			Duty:  board.Duty{ID: id, Title: "T " + id, Brief: "B", Kind: "work", Team: team},
+			Board: board.BoardView{Profile: &board.Profile{Type: "webapp", TestCommand: "npm test"}},
+			Rules: "- Keep it small.", RulesAt: 3, Branch: "duty/" + id, Worktree: worktree, Mode: "push",
+			Tools: "- node 22", Memory: &board.Memory{Body: memory, Version: 2, MaxChars: 6000},
+			Repos: []Repo{{Name: "api", URL: "git@example.com:api.git", Path: worktree + "-api"}},
+		}
+	}
+	one, err := System(in("duty_1", "/w/duty_1", "- one thing"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	two, _ := System(in("duty_2", "/w/duty_2", "- one thing\n- and another"))
+	shared := 0
+	for shared < len(one) && shared < len(two) && one[shared] == two[shared] {
+		shared++
+	}
+	for _, stable := range []string{"# The project's rules", "Keep it small.", "# Tools on this machine", "# Your role: Engineer", "## Passing the duty on", "# Linked boards"} {
+		if i := strings.Index(one, stable); i < 0 || i >= shared {
+			t.Errorf("%q is not in the part two duties share (it ends at %d of %d)", stable, shared, len(one))
+		}
+	}
+	for _, changing := range []string{"/w/duty_1", "duty/duty_1", "- one thing"} {
+		if i := strings.Index(one, changing); i+len(changing) <= shared {
+			t.Errorf("%q is in the shared part, at %d", changing, i)
+		}
+	}
+	if !strings.HasSuffix(strings.TrimSpace(one), "- Branch: `duty/duty_1`") {
+		t.Errorf("the prompt does not end with where the session works:\n%s", one[len(one)-300:])
+	}
+}
+
+// The role that routes duties is given what routing needs, and pointed at the rest.
+func TestRoutingPromptIsSlim(t *testing.T) {
+	in := Input{
+		Duty:  board.Duty{ID: "duty_1", Title: "T", Brief: "B", Kind: "work", Team: teamAs("duty-officer")},
+		Board: board.BoardView{Profile: &board.Profile{Type: "webapp"}},
+		Rules: "- A long rule nobody routing needs.", RulesAt: 5, Branch: "duty/duty_1", Worktree: "/w", Mode: "push",
+		Tools: "- node 22", Memory: &board.Memory{Body: "- routing hint", Version: 1, MaxChars: 6000},
+	}
+	full, _ := System(in)
+	in.Slim = true
+	slim, _ := System(in)
+	for _, gone := range []string{"A long rule nobody routing needs.", "# Linked boards", "# Notes and runner handoffs", "# Tools on this machine"} {
+		if !strings.Contains(full, gone) {
+			t.Errorf("the full prompt lacks %q", gone)
+		}
+		if strings.Contains(slim, gone) {
+			t.Errorf("the routing prompt still has %q", gone)
+		}
+	}
+	for _, kept := range []string{"Rules (version 5) are in force", "`board_rules`", "**You read this duty first.**", "`risk` on `duty_handoff`", "- routing hint", "# Your role: Duty Officer"} {
+		if !strings.Contains(slim, kept) {
+			t.Errorf("the routing prompt lacks %q", kept)
+		}
+	}
+	// Here the rules are one line; on a real board they, and the tools, are most of what is saved.
+	if len(full)-len(slim) < 1500 {
+		t.Errorf("the routing prompt is %d characters, the full one %d", len(slim), len(full))
+	}
+}
+
+// A reviewer is told how careful to be, and when the machine has already seen the tests pass.
+func TestReviewerIsToldRiskAndChecks(t *testing.T) {
+	in := Input{
+		Duty:   board.Duty{ID: "duty_1", Title: "T", Brief: "B", Kind: "work", Team: teamAs("qa")},
+		Board:  board.BoardView{Profile: &board.Profile{Type: "webapp"}},
+		Branch: "duty/duty_1", Worktree: "/w", Mode: "push",
+	}
+	in.Duty.Team.Handoff = &board.Handoff{From: "engineer", FromName: "Engineer", Note: "Built.", Checks: &board.Checks{Command: "npm test", Commit: "abc123"}}
+	in.Duty.Team.Risk = "high"
+	task, _ := Duty(in)
+	for _, want := range []string{"**This duty is high risk.**", "line by line", "(`npm test`) on commit `abc123`", "Do not run the whole suite again"} {
+		if !strings.Contains(task, want) {
+			t.Errorf("the high-risk review does not say %q:\n%s", want, task)
+		}
+	}
+	in.Duty.Team.Risk, in.Duty.Team.Handoff.Checks = "low", nil
+	task, _ = Duty(in)
+	if !strings.Contains(task, "This duty is low risk") || strings.Contains(task, "Do not run the whole suite") {
+		t.Errorf("the low-risk review:\n%s", task)
+	}
+	// The builder is told nothing about how its work will be reviewed.
+	in.Duty.Team = teamAs("engineer")
+	in.Duty.Team.Risk = "high"
+	if task, _ = Duty(in); strings.Contains(task, "high risk") {
+		t.Error("the builder was given the reviewer's instructions")
+	}
+}
+
+// A retro duty is told where to put what it finds, and that nothing changes until a person accepts.
+func TestRetroDutyPrompt(t *testing.T) {
+	in := Input{
+		Duty:   board.Duty{ID: "duty_x", Title: "Look at what keeps being sent back", Brief: "- “Export” (`d1`): QA sent it back to Engineer — 1. No ownership check.", Kind: "retro"},
+		Board:  board.BoardView{Profile: &board.Profile{Type: "webapp"}},
+		Branch: "duty/duty_x", Worktree: "/w", Mode: "push",
+	}
+	task, err := Duty(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"`board_roster_submit`", "`board_rules_submit`", "`board_memory_write`", "`charters: true`", "never weaken a standard", "No ownership check", "nothing repeats"} {
+		if !strings.Contains(task, want) {
+			t.Errorf("the retro duty does not say %q:\n%s", want, task)
 		}
 	}
 }

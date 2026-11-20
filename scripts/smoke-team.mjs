@@ -16,7 +16,12 @@
 //   - what a role writes in the team's memory is in the next session's prompt;
 //   - an agent drafts a team, and nothing changes until its owner accepts;
 //   - secrets typed in the console reach the machine's keyring, sealed, and are never stored readable;
-//   - the team's record is there for the console to read.
+//   - the team's record is there for the console to read;
+//   - the machine runs the project's tests before waking a reviewer, refuses uncommitted or failing work,
+//     and tells the reviewer what passed; a change to a sensitive path is reviewed as high risk;
+//   - a builder whose work comes back picks up its own conversation;
+//   - the role that reads duties first gets a slimmer prompt, and every prompt ends with where it works;
+//   - the machine reports how long each session ran.
 
 import { execFileSync, spawn } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, writeFileSync, chmodSync, copyFileSync } from "node:fs";
@@ -123,6 +128,7 @@ async function main() {
       profile: {
         type: "webapp",
         default_branch: "main",
+        test_command: "test ! -e broken.txt",
         repo_url: `file://${remote}`,
         git: { author_name: "Team Bot", author_email: "team-bot@example.com" },
         mcp_servers: [{ name: "helper", command: "node", args: ["-e", "0"], secrets: ["HELPER_TOKEN"], note: "A helper for the smoke test" }],
@@ -134,6 +140,7 @@ async function main() {
   check("a board that asks for a team starts with the one that fits it", created.roster === "software", created);
   const team = await call("/board/roster", { project_id: boardId }, human);
   check("in force from the start, with a role that reads duties first", team.in_force && team.roles.filter((r) => r.intake).length === 1 && team.roles.length === 5, team.roles?.map((r) => r.id));
+  await call("/board/roster/set", { project_id: boardId, settings: { sensitive_paths: ["secure/**"] } }, human);
 
   const started = await call("/connect/start", { name: "team-smoke", os: "linux", arch: "amd64", cli_version: "smoke" });
   await call("/connect/approve", { user_code: started.user_code }, human);
@@ -247,6 +254,14 @@ async function main() {
       [officer, built, review].map((e) => `${e.role}: ${e.agent} ${e.model}`),
     );
     check("the reviewer landed it", review.verdict === "passed" && review.integrate?.ok && !review.completeError, review);
+    check("the machine ran the tests before waking the reviewer, and told it so", review.checksPassed && !built.handoffError, { checksPassed: review.checksPassed, handoffError: built.handoffError });
+    check("the Duty Officer's prompt is the slim one; the others are not", officer.slim && !built.slim && !review.slim, [officer, built, review].map((e) => [e.role, e.slim]));
+    check("every prompt ends with where the session works", [officer, built, review].every((e) => e.endsWithWhere));
+    check("and a normal-risk duty gets a normal review", !review.riskHigh);
+    const timed = await get(greeting.duty_id);
+    check("the machine reported how long its sessions ran", timed.usage && timed.usage.sessions >= 3 && timed.usage.ms > 0, timed.usage);
+    const handed = (await call("/duty/thread", { duty_id: greeting.duty_id }, human)).entries.find((t) => t.metadata?.handoff?.to === "qa");
+    check("the handoff to review records the tests and the model, as the machine saw them", handed?.metadata.handoff.checks?.command === "test ! -e broken.txt" && handed.metadata.handoff.worked_with?.model === "backup-model", handed?.metadata);
     check("and only then was it on the main branch", onMain(`built-${greeting.duty_id}.txt`));
     const row = (await ds("duties", "documents/get", { keys: [greeting.duty_id] }, human)).json.documents?.[0]?.data || {};
     check("the duty remembers the roles it passed through", JSON.stringify(row.role_trail) === JSON.stringify(["duty-officer", "engineer", "qa"]) && row.handoffs === 2 && !row.bounces, { trail: row.role_trail, handoffs: row.handoffs, bounces: row.bounces });
@@ -270,9 +285,29 @@ async function main() {
     check("the builder was told it came back, and by whom", builds.length === 2 && !builds[0].sentBack && builds[1].sentBack && builds[1].handedBy === "QA", builds.map((e) => [e.sentBack, e.handedBy]));
     check("nothing was on the main branch while it was being sent back", reviews[0] && !reviews[0].integrate && onMain(`fix-${footer.duty_id}.txt`) && onMain(`built-${footer.duty_id}.txt`));
     check("the same worktree, start to finish", new Set(footerSeen.map((e) => e.cwd)).size === 1, footerSeen.map((e) => e.cwd));
+    check("the builder picked up its own conversation when the work came back", builds[1].resumed && builds[1].session === builds[0].session, builds.map((e) => [e.session, e.resumed]));
+    check("and the reviewer's second look is a conversation of its own", reviews.length === 2 && reviews[1].session !== builds[1].session, reviews.map((e) => [e.session, e.resumed]));
     check("the next session's prompt carried what the last one wrote down", builds[0].hasMemory && events(log).some((e) => e.event === "start" && e.dutyId === footer.duty_id && e.instructions.includes(`Engineer worked ${greeting.duty_id}`)));
     const footerRow = (await ds("duties", "documents/get", { keys: [footer.duty_id] }, human)).json.documents?.[0]?.data || {};
     check("the duty counts the send-back", footerRow.bounces === 1 && footerRow.handoffs === 4, { bounces: footerRow.bounces, handoffs: footerRow.handoffs });
+
+    // --- work that fails the tests never reaches the reviewer -----------------------------------
+    const red = await call("/duty/enqueue", { project_id: boardId, title: "[red] Add a flaky feature", brief: "It breaks the tests at first." }, human);
+    const redDone = await until("the red duty done", async () => (await get(red.duty_id)).status === "done");
+    await until("the red reviewer's record", () => teamEvents(red.duty_id).some((e) => e.event === "team-review"), 10_000);
+    const redEvent = teamEvents(red.duty_id).find((e) => e.event === "team-red");
+    check("uncommitted work is refused before review", redEvent && redEvent.dirtyRefused, redEvent);
+    check("so is work the tests fail on, with their output", redEvent && redEvent.redRefused, redEvent?.redText);
+    check("fixed in the same session, it is reviewed once and lands", !!redDone && teamEvents(red.duty_id).filter((e) => e.event === "team-review").length === 1 && !onMain("broken.txt"));
+
+    // --- a change to a sensitive path is reviewed as high risk ----------------------------------
+    const secure = await call("/duty/enqueue", { project_id: boardId, title: "[secure] Rotate the session key", brief: "Under secure/." }, human);
+    const secureDone = await until("the secure duty done", async () => (await get(secure.duty_id)).status === "done");
+    await until("the secure reviewer's record", () => teamEvents(secure.duty_id).some((e) => e.event === "team-review"), 10_000);
+    const secureReview = teamEvents(secure.duty_id).find((e) => e.event === "team-review");
+    const secureRow = await get(secure.duty_id);
+    check("the machine saw the sensitive path, and the duty became high risk", !!secureDone && secureRow.risk === "high", secureRow.risk);
+    check("its reviewer was told to review it line by line", secureReview && secureReview.riskHigh, secureReview);
 
     // --- a trivial duty is finished by the role that read it ------------------------------------
     const typo = await call("/duty/enqueue", { project_id: boardId, title: "[trivial] Fix a typo", brief: "'recieve' in the README." }, human);
@@ -288,10 +323,14 @@ async function main() {
     check("the console can read the team's record", agg.status === 200 && record.length >= 3, agg);
     check(
       "which says what each role did and how it held up",
-      of("engineer").passed === 2 && of("engineer").first_pass === 1 && of("engineer").sent_back === 1 && of("qa").done === 2 && of("duty-officer").done === 1 && of("duty-officer").handoffs === 2,
+      of("engineer").passed === 4 && of("engineer").first_pass === 3 && of("engineer").sent_back === 1 && of("qa").done === 4 && of("duty-officer").done === 1 && of("duty-officer").handoffs === 4,
       record.map(({ role, stints, handoffs, done, passed, first_pass, sent_back }) => ({ role, stints, handoffs, done, passed, first_pass, sent_back })),
     );
-    check("and ranks nothing on too few duties", topRoles(record).every((r) => !r.ranked), topRoles(record).map((r) => [r.role, r.judged, r.ranked]));
+    check(
+      "and ranks a role only on enough duties",
+      topRoles(record).every((r) => r.ranked === r.judged >= 3) && of("engineer").ranked && !of("duty-officer").ranked && topRoles(record)[0].ranked,
+      topRoles(record).map((r) => [r.role, r.judged, r.ranked]),
+    );
     const theirs = await ds("role_events", "aggregate", roleRecordRequest(), stranger);
     check("someone else reads none of it", theirs.status === 200 && (theirs.json.groups || []).length === 0, theirs);
 

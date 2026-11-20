@@ -47,7 +47,8 @@ type Run struct {
 
 	mu         sync.Mutex
 	st, det    string
-	team       *board.Team // who this session is on the board's team; nil on a board with none
+	team       *board.Team       // who this session is on the board's team; nil on a board with none
+	choice     board.AgentOption // the agent, model and effort the current session runs with
 	integrated *worktree.Result
 	opened     []string // the board's other repositories this duty has a worktree of
 	cancel     context.CancelFunc
@@ -81,6 +82,19 @@ func (r *Run) setTeam(t *board.Team) {
 	r.mu.Lock()
 	r.team = t
 	r.mu.Unlock()
+}
+
+func (r *Run) setChoice(c board.AgentOption) {
+	r.mu.Lock()
+	r.choice = c
+	r.mu.Unlock()
+}
+
+// Choice is the agent, model and effort the current session runs with.
+func (r *Run) Choice() board.AgentOption {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.choice
 }
 
 // Team is who this session is on the board's team for its duty, or nil on a board with none.
@@ -197,6 +211,9 @@ func (d *Daemon) execute(dctx, rctx context.Context, run *Run, duty *board.Duty,
 		}
 	}
 	spec := d.specFor(dctx, run.Board, run.DutyID, v)
+	// The role that reads duties first mostly reads and passes on: it does not wait for the project to
+	// install. Whoever builds gets a prepared worktree, and nothing lands unprepared (see prepared).
+	spec.PrepLater = routesOnly(duty)
 	run.Spec, run.Files, run.Service = spec, v.Folder(), v.Service()
 	run.set("working", "preparing its worktree")
 	d.report(dctx, run.Board)
@@ -277,8 +294,10 @@ func (d *Daemon) execute(dctx, rctx context.Context, run *Run, duty *board.Duty,
 	}
 	if created {
 		rec.Attempts = 0
+		rec.Sessions = nil // conversations about a worktree that is gone
 	}
-	resume = prepareRole(&rec, roleID(duty), resume)
+	var newRole bool
+	resume, newRole = prepareRole(&rec, roleID(duty), resume)
 
 	for {
 		if rctx.Err() != nil {
@@ -306,6 +325,11 @@ func (d *Daemon) execute(dctx, rctx context.Context, run *Run, duty *board.Duty,
 		v = withChoice(policy, choice)
 		var switched bool
 		resume, switched = prepareChoice(&rec, choice, resume)
+		if newRole {
+			// A role starting its own conversation is not one continuing on another model.
+			switched, newRole = false, false
+		}
+		run.setChoice(choice)
 		rulesAt, rules := d.rulesFor(dctx, run.Board)
 		run.setTeam(duty.Team)
 		in := prompt.Input{
@@ -313,6 +337,7 @@ func (d *Daemon) execute(dctx, rctx context.Context, run *Run, duty *board.Duty,
 			Mode: string(modeFor(dctx, v, spec)), Resuming: resume || switched, Attempt: rec.Attempts,
 			ProjectRoot: spec.Repo, LocalDir: spec.CopyFrom, Tools: d.tools.Describe(), PrepFailed: prepFailed,
 			Repos: d.promptRepos(dctx, run, v), Check: rec.Check, Memory: d.memoryFor(rctx, run.Board),
+			Slim: routesOnly(duty),
 		}
 		if run.Files {
 			in.Files = &files
@@ -373,10 +398,12 @@ func (d *Daemon) execute(dctx, rctx context.Context, run *Run, duty *board.Duty,
 			d.park(dctx, run, v, "The runner on this machine could not start this duty: "+err.Error())
 			return
 		}
+		started := time.Now()
 		outcome := agent.Run(rctx, job)
 		if logFile != nil {
 			logFile.Close()
 		}
+		d.reportUsage(dctx, run, time.Since(started))
 		rec.Repos = run.openRepos()
 		if len(outcome.Denied) > 0 {
 			// Refused tools are the runner's business, so they are said here, where its owner looks —
@@ -471,17 +498,56 @@ func (d *Daemon) execute(dctx, rctx context.Context, run *Run, duty *board.Duty,
 
 // prepareRole keeps one role's conversation from being resumed by another. A different role on the
 // board's team has its own charter, usually its own model, and must read the work rather than
-// remember making it — so it starts a session of its own, with its own count of attempts. The
-// worktree, and everything the earlier roles left in it, stays. It answers whether to resume.
-func prepareRole(rec *state.RunRecord, role string, resume bool) bool {
+// remember making it — so it gets a session of its own, with its own count of attempts. The
+// worktree, and everything the earlier roles left in it, stays.
+//
+// A role the duty comes back to picks up its own conversation: a builder whose work was sent back
+// remembers building it, and reads the findings against that instead of the whole change afresh.
+// prepareChoice then starts a new one anyway if this session runs on a different agent or model.
+//
+// It answers whether to resume, and whether this is a role starting a conversation of its own.
+func prepareRole(rec *state.RunRecord, role string, resume bool) (bool, bool) {
 	if role == rec.Role {
-		return resume
+		return resume, false
 	}
-	if rec.Role != "" || resume {
-		rec.Session, rec.Attempts, resume = newSessionID(), 0, false
+	if rec.Role != "" && rec.Session != "" {
+		if rec.Sessions == nil {
+			rec.Sessions = map[string]state.RoleSession{}
+		}
+		rec.Sessions[rec.Role] = state.RoleSession{Session: rec.Session, Agent: rec.ExecutionAgent, Model: rec.ExecutionModel, Effort: rec.ExecutionEffort}
 	}
-	rec.Role = role
-	return resume
+	previous := rec.Role
+	rec.Role, rec.Attempts = role, 0
+	if kept, ok := rec.Sessions[role]; ok && kept.Session != "" {
+		rec.Session, rec.ExecutionAgent, rec.ExecutionModel, rec.ExecutionEffort = kept.Session, kept.Agent, kept.Model, kept.Effort
+		delete(rec.Sessions, role)
+		return true, false
+	}
+	if previous == "" && !resume {
+		return false, false // the duty's first session, on a board that has a team
+	}
+	rec.Session, rec.ExecutionAgent, rec.ExecutionModel, rec.ExecutionEffort = newSessionID(), "", "", ""
+	return false, true
+}
+
+// routesOnly reports whether a duty's session is the role that reads duties first, which mostly
+// reads the duty and passes it on.
+func routesOnly(duty *board.Duty) bool {
+	return duty.Team != nil && duty.Team.Role.Intake && (duty.Kind == "" || duty.Kind == "work")
+}
+
+// reportUsage tells the board how long a session ran, which it adds up against the duty's allowance.
+// Best effort: a board too old to keep count is not asked again by this session, and a failure costs
+// only the count.
+func (d *Daemon) reportUsage(ctx context.Context, run *Run, took time.Duration) {
+	if took <= 0 || run.Kind == "note_review" {
+		return
+	}
+	report, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	if err := d.api.ReportUsage(report, run.Board, run.DutyID, took); err != nil && !board.IsStatus(err, 404) && ctx.Err() == nil {
+		d.log.Printf("reporting %s of session time on %s: %v", took.Round(time.Second), run.DutyID, err)
+	}
 }
 
 // roleID is the role on the board's team a duty is being worked as, "" on a board with none.

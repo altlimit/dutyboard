@@ -962,6 +962,7 @@ export async function pollMachine(ctx, body) {
           duty_id: d.key,
           agent_options: dutyOptions(ctx, roster, d),
           role: role(d),
+          risk: d.risk || "normal",
           title: d.title,
           priority: d.priority,
           kind: d.kind || "work",

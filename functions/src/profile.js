@@ -62,6 +62,9 @@ const RUNNER_DEFAULTS = Object.freeze({
   permission_mode: "acceptEdits",
   allowed_tools: [],
   session_minutes: 180,
+  // Agent session time one duty may use, across every session and role, before a person is asked
+  // whether it goes on. 0 is no limit.
+  duty_minutes: 600,
   parallel: 1,
 });
 
@@ -379,6 +382,7 @@ export function mergeRunner(stored, input) {
   if (has(r, "permission_mode")) next.permission_mode = oneOf(r.permission_mode, "runner.permission_mode", PERMISSION_MODES);
   if (has(r, "allowed_tools")) next.allowed_tools = list(r.allowed_tools, "runner.allowed_tools", { max: 50, item: plain(200) });
   if (has(r, "session_minutes")) next.session_minutes = intIn(r.session_minutes, "runner.session_minutes", 5, 600, 180);
+  if (has(r, "duty_minutes")) next.duty_minutes = intIn(r.duty_minutes, "runner.duty_minutes", 0, 6000, 600);
   if (has(r, "parallel")) next.parallel = intIn(r.parallel, "runner.parallel", 1, MAX_PARALLEL, 1);
   return next;
 }
@@ -490,11 +494,12 @@ export async function acceptRules(ctx, body) {
 }
 
 /**
- * `POST /board/rules/submit` — a rules duty hands in its draft. The agent must be holding an active
- * rules duty on this board; a second submission replaces the first.
+ * `POST /board/rules/submit` — a rules duty hands in its draft, or a retro duty the changes it
+ * proposes. The agent must be holding one, active, on this board; a second submission replaces the
+ * first.
  */
 export async function submitRules(ctx, body) {
-  const { duty, project } = await heldDutyOfKind(ctx, body, "rules");
+  const { duty, project } = await heldDutyOfKind(ctx, body, ["rules", "retro"]);
   const text = str(body.body, "body", { required: true, max: MAX_RULES_CHARS });
   const row = await ctx.store.get("rules", project.key);
   const now = Date.now();
@@ -533,18 +538,20 @@ async function writeRules(ctx, project, row, { body, draft, source }) {
 
 /** The duty in `body.duty_id`, which must be an active duty of `kind` held by the calling agent. */
 export async function heldDutyOfKind(ctx, body, kind) {
-  if (ctx.caller.kind !== "agent") throw forbidden(`only the agent holding a ${kind} duty can do this`);
+  const kinds = [].concat(kind);
+  const named = kinds.join(" or ");
+  if (ctx.caller.kind !== "agent") throw forbidden(`only the agent holding a ${named} duty can do this`);
   const duty = await loadDuty(ctx, body.duty_id);
   const project = await projectOfDuty(ctx.caller, duty, ctx.store);
-  if ((duty.kind || "work") !== kind || duty.status !== "active") {
-    throw conflict(`duty '${duty.key}' is not an active ${kind} duty`, { kind: duty.kind || "work", status: duty.status });
+  if (!kinds.includes(duty.kind || "work") || duty.status !== "active") {
+    throw conflict(`duty '${duty.key}' is not an active ${named} duty`, { kind: duty.kind || "work", status: duty.status });
   }
   // A machine's session names its own lane; a call that names none is the machine, and any of its
   // lanes holding the duty will do. A project token is held to the id it names or defaults to.
   const holder = duty.assigned_agent_id || "";
-  const named = checkAgentId(ctx.caller, str(body.agent_id, "agent_id", { max: 64 }));
-  const heldByCaller = named
-    ? holder === named
+  const lane = checkAgentId(ctx.caller, str(body.agent_id, "agent_id", { max: 64 }));
+  const heldByCaller = lane
+    ? holder === lane
     : ctx.caller.machineId
       ? holder === ctx.caller.agentPrefix || holder.startsWith(ctx.caller.agentPrefix + "/")
       : !ctx.defaultAgentId || holder === ctx.defaultAgentId;

@@ -191,6 +191,15 @@ func (d *Daemon) MCP(ctx context.Context, runToken, cwd string, raw json.RawMess
 		if takesAgent[p.Name] {
 			p.Arguments["agent_id"] = s.agent
 		}
+		if p.Name == "duty_handoff" && s.run != nil {
+			// What the board takes only from the machine is said by the machine, never passed through.
+			for _, k := range []string{"checks", "sensitive", "worked_with"} {
+				delete(p.Arguments, k)
+			}
+			if refusal := d.beforeHandoff(ctx, s.run, p.Arguments); refusal != "" {
+				return toolText(msg.ID, refusal, true), nil
+			}
+		}
 		if s.run != nil {
 			if p.Name == "board_call" {
 				p.Arguments["source_duty_id"] = s.run.DutyID
@@ -240,8 +249,8 @@ func guard(s *session, name string, args map[string]any) string {
 	if name == "duty_handoff" && team == nil {
 		return "this duty is not being worked by a team, so there is no role to hand it to: finish it yourself, or put a question on the board"
 	}
-	if name == "board_roster_submit" && s.run.Kind != "roster" {
-		return "only a duty that drafts the board's team hands one in"
+	if name == "board_roster_submit" && !proposesTeam(s.run.Kind) {
+		return "only a duty that drafts the board's team, or proposes changes to it, hands one in"
 	}
 	if team.MustHandOff() && (name == "duty_integrate" || name == "duty_complete" || strings.HasPrefix(name, "altengine_deploy_")) {
 		return fmt.Sprintf("as %s you do not land, deploy or complete this duty: its work is verified first. Commit it, then duty_handoff to %s with what changed, how you tested it and what to look at. Nothing is landed until they have seen it work.",
@@ -340,7 +349,7 @@ func (d *Daemon) filterTools(reply json.RawMessage, s *session) (json.RawMessage
 		}
 		// What a session cannot use is not offered: a duty with no team has nobody to hand it to, only a
 		// roster duty hands a team in, and a role whose work is reviewed does not complete it.
-		if s.run != nil && (name == "duty_handoff" && team == nil || name == "board_roster_submit" && s.run.Kind != "roster" || name == "duty_complete" && team.MustHandOff()) {
+		if s.run != nil && (name == "duty_handoff" && team == nil || name == "board_roster_submit" && !proposesTeam(s.run.Kind) || name == "duty_complete" && team.MustHandOff()) {
 			continue
 		}
 		if name == "duty_handoff" && team != nil {
@@ -406,6 +415,10 @@ func (d *Daemon) localTool(ctx context.Context, s *session, id json.RawMessage, 
 		v := d.view(run.Board)
 		run.set("integrating", "")
 		d.report(ctx, run.Board)
+		if failed := d.prepared(ctx, run); failed != "" {
+			run.set("working", "")
+			return toolText(id, "this worktree was not prepared yet, and preparing it failed, so nothing was landed — get it ready (the board's prep command below), then integrate again:\n\n"+failed, true), true
+		}
 		main, all, err := d.integrateAll(ctx, run, v)
 		run.set("working", "")
 		if err != nil {

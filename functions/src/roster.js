@@ -18,7 +18,7 @@ import { badRequest, conflict, str, oneOf, intIn } from "./http.js";
 import { resolveProject, requireHuman } from "./identity.js";
 import { putOp } from "./store.js";
 import { heldDutyOfKind, LEVELS } from "./profile.js";
-import { seedDuty, UNFINISHED } from "./duties.js";
+import { seedDuty, retroDuty, UNFINISHED } from "./duties.js";
 import { PRESETS, presetFor, DRAFTING_STANDARD } from "./charters.js";
 
 /** How capable a role's model should be. A machine maps each to the combinations it has enabled. */
@@ -29,6 +29,18 @@ export const MAX_ROLES = 8;
 export const MAX_CHARTER_CHARS = 6000;
 /** Send-backs from a reviewer before a person is asked what should change. */
 export const DEFAULT_MAX_BOUNCES = 3;
+/**
+ * Handoffs of any kind before a person is asked. The send-back limit only catches a reviewer and a
+ * builder; this catches every other circle — two roles each sure the duty is the other's.
+ */
+export const DEFAULT_MAX_HANDOFFS = 12;
+/** How careful a duty's review should be. The role that reads it first says; anyone may raise it. */
+export const RISKS = ["low", "normal", "high"];
+/** Send-backs on a board before it is asked to look at what keeps coming back (a retro duty). */
+export const RETRO_EVERY = 10;
+/** The send-backs a board remembers for its next retro. */
+export const SENT_BACKS_KEPT = 15;
+const MAX_SENSITIVE_PATHS = 20;
 /** The first `dutyboard` whose sessions know their role, hand duties on and keep the team's memory. */
 export const ROSTER_MIN_RELEASE = "2.36.0";
 
@@ -77,7 +89,16 @@ export function rolesFrom(value, field = "roles") {
 }
 
 export function settingsFrom(stored, input) {
-  const next = { plan_approval: false, max_bounces: DEFAULT_MAX_BOUNCES, ...(stored || {}) };
+  const next = {
+    plan_approval: false,
+    max_bounces: DEFAULT_MAX_BOUNCES,
+    max_handoffs: DEFAULT_MAX_HANDOFFS,
+    // A reviewer runs on a different model than the builder did, where the machine has one at the level.
+    independent_review: true,
+    // Paths whose changes always get a high-risk review, as globs: `auth/**`, `**/payments/*`.
+    sensitive_paths: [],
+    ...(stored || {}),
+  };
   if (input == null) return next;
   if (typeof input !== "object" || Array.isArray(input)) throw badRequest("'settings' must be an object");
   if (has(input, "plan_approval")) {
@@ -85,6 +106,21 @@ export function settingsFrom(stored, input) {
     next.plan_approval = input.plan_approval;
   }
   if (has(input, "max_bounces")) next.max_bounces = intIn(input.max_bounces, "settings.max_bounces", 1, 10, DEFAULT_MAX_BOUNCES);
+  if (has(input, "max_handoffs")) next.max_handoffs = intIn(input.max_handoffs, "settings.max_handoffs", 4, 50, DEFAULT_MAX_HANDOFFS);
+  if (has(input, "independent_review")) {
+    if (typeof input.independent_review !== "boolean") throw badRequest("'settings.independent_review' must be a boolean");
+    next.independent_review = input.independent_review;
+  }
+  if (has(input, "sensitive_paths")) {
+    if (!Array.isArray(input.sensitive_paths) || input.sensitive_paths.length > MAX_SENSITIVE_PATHS) {
+      throw badRequest(`'settings.sensitive_paths' must be a list of at most ${MAX_SENSITIVE_PATHS} path patterns`);
+    }
+    next.sensitive_paths = input.sensitive_paths.map((p, i) => {
+      const glob = str(p, `settings.sensitive_paths[${i}]`, { required: true, max: 120 });
+      if (glob.startsWith("/") || glob.includes("\\") || /[\0\n\r]/.test(glob)) throw badRequest(`'settings.sensitive_paths[${i}]' must be a path pattern inside the project, like 'auth/**'`);
+      return glob;
+    });
+  }
   return next;
 }
 
@@ -133,6 +169,8 @@ export function roleContext(roster, duty) {
     settings: settingsFrom(roster.settings),
     handoff: duty.handoff || null,
     bounces: duty.bounces || 0,
+    // How careful its review should be, as the role that read it first said — or as its changes did.
+    risk: duty.risk || "normal",
   };
 }
 
@@ -169,18 +207,33 @@ export function levelOf(option) {
  * duty rather than leaving it queued for ever. Null for a machine that has never chosen its
  * combinations: it has no list to order, and runs the board's own setting.
  */
-export function optionsForLevel(machineOptions, level) {
+export function optionsForLevel(machineOptions, level, avoid = null) {
   if (!Array.isArray(machineOptions)) return null;
   const want = LEVELS.indexOf(level);
   const distance = (o) => {
     const at = LEVELS.indexOf(levelOf(o));
     return at === want ? 0 : at > want ? at - want : LEVELS.length + (want - at);
   };
+  // `avoid` is the model the work was built with: among combinations equally near the level, one on a
+  // different model goes first, so the reviewer does not share the builder's blind spots.
+  const same = (o) => (avoid && (o.model || "") === (avoid.model || "") && (o.model || o.agent === avoid.agent) ? 1 : 0);
   return machineOptions
     .filter((o) => !o.disabled)
-    .map((o, i) => ({ o, i, d: distance(o) }))
-    .sort((a, b) => a.d - b.d || a.i - b.i)
+    .map((o, i) => ({ o, i, d: distance(o), s: same(o) }))
+    .sort((a, b) => a.d - b.d || a.s - b.s || a.i - b.i)
     .map(({ o }) => ({ agent: o.agent, model: o.model || "", effort: o.effort || "" }));
+}
+
+/**
+ * The level a role works one duty at. A reviewer's follows the duty's risk: a step lighter for work
+ * marked low-risk, a step more capable for high — which is how a one-line wording change and a change
+ * to sign-in stop costing the same review.
+ */
+export function levelFor(role, duty) {
+  const at = LEVELS.indexOf(role.level);
+  if (!role.reviews || at < 0) return role.level;
+  const step = duty.risk === "high" ? 1 : duty.risk === "low" ? -1 : 0;
+  return LEVELS[Math.min(LEVELS.length - 1, Math.max(0, at + step))];
 }
 
 /**
@@ -191,7 +244,8 @@ export function dutyOptions(ctx, roster, duty) {
   if (duty.agent_options != null) return duty.agent_options;
   const role = ctx.caller && ctx.caller.machineId ? roleFor(roster, duty) : null;
   if (!role) return null;
-  return optionsForLevel(ctx.caller.machineRow && ctx.caller.machineRow.agent_options, role.level);
+  const builtWith = role.reviews && settingsFrom(roster.settings).independent_review && duty.handoff ? duty.handoff.worked_with || null : null;
+  return optionsForLevel(ctx.caller.machineRow && ctx.caller.machineRow.agent_options, levelFor(role, duty), builtWith);
 }
 
 // --- routes -----------------------------------------------------------------------------
@@ -214,11 +268,25 @@ export async function getRoster(ctx, body) {
     updated_at: (row && row.updated_at) || null,
   };
   if (ctx.caller.kind === "human") {
-    return { ...base, roles, source: (row && row.source) || null, draft: (row && row.draft) || null, presets: presetCards(), suggested_preset: presetFor(project.profile) };
+    return {
+      ...base,
+      roles,
+      source: (row && row.source) || null,
+      draft: (row && row.draft) || null,
+      presets: presetCards(),
+      suggested_preset: presetFor(project.profile),
+      // What reviewers have sent back lately, which is what a retro reads.
+      sent_backs: (row && row.sent_backs) || [],
+      sent_back_since_retro: (row && row.sent_back_since_retro) || 0,
+      retro_every: RETRO_EVERY,
+    };
   }
   const wanted = str(body.role, "role", { max: 32 });
   const one = wanted && roles.find((r) => r.id === wanted);
   if (wanted && !one) throw badRequest(`this board has no role '${wanted}' — its roles are: ${roles.map((r) => r.id).join(", ") || "none"}`);
+  // `charters` answers every role whole, flags and charter: what a session proposing changes to the
+  // team edits and hands back.
+  if (body.charters === true) return { ...base, roles, has_draft: !!(row && row.draft) };
   return { ...base, roles: roles.map(roleCard), ...(one ? { role: { ...roleCard(one), charter: one.charter } } : {}), has_draft: !!(row && row.draft) };
 }
 
@@ -259,11 +327,12 @@ export async function acceptRoster(ctx, body) {
 }
 
 /**
- * `POST /board/roster/submit` — a roster duty hands in the team it drafted. A second submission
- * replaces the first. Nothing changes on the board until its owner accepts.
+ * `POST /board/roster/submit` — a roster duty hands in the team it drafted, or a retro duty the team
+ * with the charters it proposes changing. A second submission replaces the first. Nothing changes on
+ * the board until its owner accepts.
  */
 export async function submitRoster(ctx, body) {
-  const { duty, project } = await heldDutyOfKind(ctx, body, "roster");
+  const { duty, project } = await heldDutyOfKind(ctx, body, ["roster", "retro"]);
   const roles = rolesFrom(body.roles);
   const row = await ctx.store.get("rosters", project.key);
   const now = Date.now();
@@ -300,6 +369,9 @@ async function writeRoster(ctx, project, row, { roles, settings, draft, source }
     settings: settingsFrom(settings),
     draft,
     source,
+    // What the board remembers for its next retro outlives a change of team.
+    sent_backs: (row && row.sent_backs) || [],
+    sent_back_since_retro: (row && row.sent_back_since_retro) || 0,
     updated_by: ctx.caller.uid,
     updated_at: now,
   };
@@ -376,6 +448,32 @@ export async function draftRoster(ctx, body) {
     kind: "roster",
   });
   await ctx.store.transaction([op]);
+  await ctx.publish(project.key, id, { t: "duty", id, status: "queued" });
+  return { ok: true, project_id: project.key, duty_id: id, existing: false };
+}
+
+/**
+ * `POST /board/roster/retro` — the owner asks for a look at what the team's reviewers keep sending
+ * back. Files a retro duty, which proposes changes to charters and rules as drafts. The board files
+ * one itself every `RETRO_EVERY` send-backs; this is the same thing, asked for now.
+ */
+export async function retroRoster(ctx, body) {
+  requireHuman(ctx.caller);
+  const project = await resolveProject(ctx.caller, body.project_id, ctx.store, { ownerOnly: true });
+  const row = await ctx.store.get("rosters", project.key);
+  if (!row || !(row.roles || []).length) throw conflict("this board has no team to look back on");
+  const { rows } = await ctx.store.query("duties", {
+    where: [
+      { field: "project_id", op: "=", value: project.key },
+      { field: "kind", op: "=", value: "retro" },
+      { field: "status", op: "in", value: UNFINISHED },
+    ],
+    limit: 1,
+  });
+  if (rows.length) return { ok: true, project_id: project.key, duty_id: rows[0].key, existing: true };
+  const now = Date.now();
+  const { id, op } = seedDuty(project, { ...retroDuty(row.sent_backs || []), kind: "retro", now });
+  await ctx.store.transaction([op, putOp("rosters", project.key, { ...withoutMeta(row), sent_back_since_retro: 0 })]);
   await ctx.publish(project.key, id, { t: "duty", id, status: "queued" });
   return { ok: true, project_id: project.key, duty_id: id, existing: false };
 }

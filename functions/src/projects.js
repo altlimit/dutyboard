@@ -307,6 +307,8 @@ export async function deleteProject(ctx, body) {
     schedules: await sweep(ctx, "schedules", project.key),
     finishes: await sweep(ctx, "finishes", project.key),
     role_events: await sweep(ctx, "role_events", project.key),
+    duty_usage: await sweep(ctx, "duty_usage", project.key),
+    memory_history: await sweep(ctx, "memory_history", project.key),
     // The team and what it wrote down, each one row keyed by the board.
     roster: await ctx.store.delete("rosters", [project.key]).catch(() => 0),
     memory: await ctx.store.delete("memories", [project.key]).catch(() => 0),

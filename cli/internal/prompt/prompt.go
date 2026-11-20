@@ -47,6 +47,9 @@ type Input struct {
 	// Memory is what the board's agents have written down for whoever works here next; nil when the
 	// board is too old to keep one. Who the session is on the board's team is on the duty (Duty.Team).
 	Memory *board.Memory
+	// Slim is a session that only reads the duty and routes it: the sections only work needs (the
+	// rules in full, linked boards, notes, the machine's tools) are left to be looked up if wanted.
+	Slim bool
 }
 
 // MustHandOff reports whether this session's role hands its work to a reviewer instead of landing
@@ -85,6 +88,8 @@ func Duty(in Input) (string, error) {
 		return render("rules.md", in)
 	case "roster":
 		return render("roster.md", in)
+	case "retro":
+		return render("retro.md", in)
 	default:
 		return render("work.md", in)
 	}

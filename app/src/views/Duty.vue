@@ -4,7 +4,7 @@ import BoardNav from "../components/BoardNav.vue";
 import { computed, onUnmounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { api, getDocs, query, subscribeLive } from "../lib/altengine.js";
-import { dutyRoleId, roleNameFromId } from "../lib/team.js";
+import { dutyRoleId, roleNameFromId, duration } from "../lib/team.js";
 import { ALL_STATUSES, PRIORITIES, THREAD_KIND_LABELS, ago, exactTime, expiryChoices, originLabel, priorityLabel, statusLabel } from "../lib/duties.js";
 import { activityByDuty, activityLine, optionLabel } from "../lib/runners.js";
 import NoteActions from "../components/NoteActions.vue";
@@ -343,6 +343,8 @@ onUnmounted(() => {
           <span v-if="roleLabel" class="badge badge--role" :title="duty.status === 'active' ? `${roleLabel} is working it` : `It is with ${roleLabel}, the role on this board's team that takes it next`">
             {{ duty.status === "active" ? "" : "with " }}{{ roleLabel }}
           </span>
+          <span v-if="duty.risk === 'high'" class="badge badge--needs_decision" title="Reviewed line by line, on a more capable model: it touches something that must not break">high risk</span>
+          <span v-else-if="duty.risk === 'low'" class="badge" title="A lighter review: a change nothing a user depends on can break through">low risk</span>
           <span v-if="duty.bounces" class="badge" :title="`A reviewer has sent this work back ${duty.bounces} time${duty.bounces === 1 ? '' : 's'}`">sent back ×{{ duty.bounces }}</span>
           <span v-if="duty.reserved_for" class="badge" :title="`Only ${duty.reserved_for} can work this`">for {{ duty.reserved_for }}</span>
           <span v-if="duty.affinity && duty.status !== 'active'" class="badge" :title="`Its half-finished work is on ${duty.affinity.machine_name || duty.affinity.machine_id}, which resumes it`">
@@ -481,6 +483,21 @@ onUnmounted(() => {
         </div>
       </form>
 
+      <p v-if="duty.split_from" class="small muted rel">
+        A piece of
+        <router-link :to="{ name: 'duty', params: { projectId, dutyId: duty.split_from } }">a larger duty</router-link>; when every piece is finished, they are checked together.
+      </p>
+      <p v-if="duty.acceptance_of" class="small muted rel">
+        Checks that the pieces of
+        <router-link :to="{ name: 'duty', params: { projectId, dutyId: duty.acceptance_of } }">a split duty</router-link> work together.
+      </p>
+      <p v-if="duty.acceptance_duty_id" class="small muted rel">
+        Its pieces are
+        <router-link :to="{ name: 'duty', params: { projectId, dutyId: duty.acceptance_duty_id } }">checked together</router-link>.
+      </p>
+      <p v-if="duty.usage && duty.usage.ms >= 60000" class="small muted rel" :title="`${duty.usage.sessions} session${duty.usage.sessions === 1 ? '' : 's'}, as the machines that ran them reported`">
+        Agents have spent {{ duration(duty.usage.ms) }} on it, over {{ duty.usage.sessions }} session{{ duty.usage.sessions === 1 ? "" : "s" }}.
+      </p>
       <p v-if="duty.schedule_id" class="small muted rel">
         Filed by a recurring duty on this board — it comes round again on its own.
         <router-link :to="{ name: 'settings', params: { projectId } }">See what repeats here</router-link>.
@@ -551,6 +568,8 @@ onUnmounted(() => {
               <span v-if="e.metadata && e.metadata.handoff" class="badge" :class="e.metadata.handoff.sent_back ? 'badge--needs_decision' : 'badge--active'">
                 {{ e.metadata.handoff.from_name }} {{ e.metadata.handoff.sent_back ? "sent it back to" : "handed it to" }} {{ e.metadata.handoff.to_name }}
               </span>
+              <span v-if="e.metadata && e.metadata.handoff && e.metadata.handoff.checks" class="badge badge--done" :title="`The machine ran ${e.metadata.handoff.checks.command} on ${e.metadata.handoff.checks.commit.slice(0, 12)} before handing it on`">tests passed</span>
+              <span v-if="e.metadata && e.metadata.handoff && e.metadata.handoff.worked_with" class="muted small">{{ e.metadata.handoff.worked_with.model || e.metadata.handoff.worked_with.agent }}</span>
               <span v-else class="badge">{{ THREAD_KIND_LABELS[e.kind] || e.kind }}</span>
               <span class="muted small" :title="exactTime(e.created_at)">{{ ago(e.created_at) }}</span>
             </div>

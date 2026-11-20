@@ -106,13 +106,28 @@ duty_handoff(
 - Work too big for one duty is split: `duty_enqueue` each piece with **`role`** set to the role
   that should work it, then finish your duty with the plan as its outcome. `role` is accepted only
   for a piece split out of the duty you hold.
-- A reviewer that has sent the same work back as many times as the board allows, and — on a board
-  that asks to approve plans — a planning role's handoff, go to a person first. The answer to your
-  `duty_handoff` says so; stop either way.
+- A reviewer that has sent the same work back as many times as the board allows, a duty handed on
+  as many times as the board allows without being finished, and — on a board that asks to approve
+  plans — a planning role's handoff, go to a person first. The answer to your `duty_handoff` says so;
+  stop either way.
+- **Risk.** A duty is `low`, `normal` or `high` risk, and its review's depth — and the model it runs
+  on — follows it. Set it with `risk` on `duty_handoff` when you route or plan the work: low for what
+  nothing a user depends on can break through, high for sign-in, permissions, payments, secrets,
+  stored data, migrations or a public interface. Any other role may only raise it. A machine that sees
+  the change touch one of the board's sensitive paths makes it high.
+- **Before a reviewer is woken**, a `dutyboard` machine refuses the handoff if anything is
+  uncommitted, and runs the board's test command; failing, the handoff is refused with the output.
+  Fix it in the same session and hand on again. Passing, the reviewer is told the commit it passed on.
+- When every piece of a duty you split is finished, the board files a duty to check the pieces
+  together. A duty uses an allowance of agent time (the board's setting); past it, a person is asked
+  whether it goes on.
 
-`board_roster` shows the team, and one role's charter when you pass `role`. A duty of kind `roster`
-asks you to draft the board's team: hand it in with `board_roster_submit`, and a person accepts it
-before it takes effect.
+`board_roster` shows the team, and one role's charter when you pass `role` (or every role whole with
+`charters: true`). A duty of kind `roster` asks you to draft the board's team: hand it in with
+`board_roster_submit`, and a person accepts it before it takes effect. A duty of kind `retro` asks
+you to read what reviewers keep sending back and propose the smallest changes that would have
+prevented it — to charters with `board_roster_submit` (the whole team), to the rules with
+`board_rules_submit` (the whole rules) — and a person decides on each.
 
 ## The team's memory
 
@@ -127,6 +142,7 @@ lives. If it is not written there, the next session does not know it.
 - It is replaced whole, not appended to. Read it, keep what is still true, cut what is stale, merge
   what repeats, and send the full text with `based_on` set to the version you read.
 - It holds 6,000 characters. A write that would pass that is refused; curate it.
+- The board keeps its last ten versions, which the owner can put back.
 - If another session wrote meanwhile, yours is refused with the current text: merge and write again.
 - Only while you hold an active duty. A note review reads it and writes nothing.
 - Never a secret, a credential or personal data. Nothing that is only about the duty in hand — that

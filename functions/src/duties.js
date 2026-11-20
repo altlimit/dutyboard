@@ -45,14 +45,14 @@ import { olderRelease } from "./version.js";
 import { notifyNeedsYou } from "./notify.js";
 import { badRequest, conflict, forbidden, notFound, str, oneOf, intIn, clip } from "./http.js";
 import { dutyId, threadId, ulid } from "./ids.js";
-import { rosterInForce, hasRoster, roleFor, roleContext, dutyOptions, intakeOf, settingsFrom, ROSTER_MIN_RELEASE } from "./roster.js";
+import { rosterInForce, hasRoster, roleFor, roleContext, dutyOptions, intakeOf, settingsFrom, ROSTER_MIN_RELEASE, RISKS, RETRO_EVERY, SENT_BACKS_KEPT } from "./roster.js";
 import { memoryOf } from "./memory.js";
 import { putOp } from "./store.js";
 import { resolveProject, projectOfDuty, requireHuman, requireAgent, authorOf, checkAgentId } from "./identity.js";
 import { sweepAttachments, MAX_ATTACHMENTS } from "./attachments.js";
 import { indexFinished, unindexDuties } from "./searching.js";
 import { machinesPresent } from "./live.js";
-import { noteScheduleOutcome, noteQuietRun } from "./schedules.js";
+import { noteScheduleOutcome, noteQuietRun, rememberRoute } from "./schedules.js";
 import { runnerPrefixes } from "./tokens.js";
 
 export const STATUSES = ["note", "queued", "active", "needs_decision", "blocked", "done", "failed"];
@@ -62,10 +62,19 @@ export const THREAD_KINDS = ["question", "resolution", "checkpoint", "note"];
 /**
  * What a duty is for. `work` is everything a person files. `setup` and `rules` are how a daemon sets
  * a project up, and they change what every other duty on the board runs against — the toolchain,
- * the rules — which is why they are exclusive (invariant 3). `roster` drafts the board's team; what
- * it hands in changes nothing until a person accepts it, so it runs alongside everything else.
+ * the rules — which is why they are exclusive (invariant 3). `roster` drafts the board's team, and
+ * `retro` reads what reviewers keep sending back and drafts changes to the team's charters and the
+ * rules; what either hands in changes nothing until a person accepts it, so both run alongside
+ * everything else.
  */
-export const KINDS = ["work", "setup", "rules", "roster"];
+export const KINDS = ["work", "setup", "rules", "roster", "retro"];
+
+/**
+ * Agent session time one duty may use before a person is asked whether to go on, in minutes, when its
+ * board does not say (`runner.duty_minutes`; 0 there means no limit). Time an agent's process actually
+ * ran, as machines report it — not time waiting in a queue or on a usage limit.
+ */
+export const DEFAULT_DUTY_MINUTES = 600;
 
 /**
  * How long a finished duty stays on the board, in days — for work nobody needs the record of once it
@@ -442,6 +451,13 @@ export async function getDuty(ctx, body) {
       // Set when a schedule filed this duty: the console says so rather than leaving a duty that
       // appeared at 9am on Monday looking like one nobody can account for.
       schedule_id: duty.schedule_id || null,
+      // The duty this one was split out of, the duty that checks its pieces together, or the duty
+      // whose pieces this one checks.
+      split_from: duty.split_from || null,
+      acceptance_duty_id: duty.acceptance_duty_id || null,
+      acceptance_of: duty.acceptance_of || null,
+      // How long agents' sessions have run on it, as their machines reported.
+      usage: usageView(await ctx.store.get("duty_usage", duty.key)),
       external_ref: duty.external_ref || null,
       metadata: duty.metadata || null,
       created_by_name: duty.created_by_name || null,
@@ -450,6 +466,8 @@ export async function getDuty(ctx, body) {
     },
   };
 }
+
+const usageView = (row) => ({ ms: (row && row.ms) || 0, sessions: (row && row.sessions) || 0 });
 
 /** Read a page of any lane without polling or touching an agent's state. */
 export async function listDuties(ctx, body) {
@@ -559,6 +577,7 @@ export async function claimDuty(ctx, body) {
     throw conflict("a machine's setup has the board to itself until it finishes", { waiting_for: "setup" });
   }
 
+  await withinBudget(ctx, duty, board, project, now);
   const [active, roster] = await Promise.all([activeDuties(ctx, project.key), hasRoster(board) ? rosterInForce(ctx, project.key) : null]);
   const lane = pickLane(duty, board, active, project.key);
   // The role this claim works as. A duty filed before the board had a team, or naming a role the team
@@ -955,6 +974,9 @@ export async function enqueueDuty(ctx, body, internal = {}) {
     agent_options: dutyAgentOptions(body.agent_options),
     // Who on the board's team has it. Null on a board with none.
     role,
+    // A piece an agent split out of the duty it held, naming who works it. When every piece of one
+    // duty is finished, the whole is checked once more (see `acceptanceOps`).
+    split_from: role && body.role && held ? held.key : null,
     priority,
     prio_rank: RANK[priority],
     origin_board_id: ctx.caller.crossBoard?.source || null,
@@ -1332,13 +1354,28 @@ export async function handoffDuty(ctx, body) {
   const settings = settingsFrom(roster.settings);
   const sentBack = !!from.reviews && !!to.reviewed;
   const bounces = (duty.bounces || 0) + (sentBack ? 1 : 0);
+  const handoffs = (duty.handoffs || 0) + 1;
   const stuck = sentBack && bounces % settings.max_bounces === 0;
   const plan = settings.plan_approval && !!from.plans && !to.plans;
+  // Passed around without ever being finished: any two roles can do this, not only a reviewer and a builder.
+  const circling = !stuck && !plan && handoffs % settings.max_handoffs === 0;
   const question = stuck
     ? `${from.name} has sent this back to ${to.name} ${bounces} times. The latest findings:\n\n${note}\n\nWhat should change before ${to.name} tries again?`
     : plan
       ? `${from.name} proposes this plan for ${to.name} to build:\n\n${note}\n\nApprove it, or say what to change.`
-      : null;
+      : circling
+        ? `This duty has been handed from role to role ${handoffs} times without being finished. ${from.name}'s latest note, for ${to.name}:\n\n${note}\n\nWhat should happen to it?`
+        : null;
+  const machine = !!ctx.caller.machineId;
+  const risk = riskAfter(duty, from, body, machine);
+  // What only the machine that ran the session can say, and so is taken only from one: which model
+  // did the work, and that the project's checks passed on what is being handed over.
+  const workedWith = machine && body.worked_with && typeof body.worked_with === "object"
+    ? { agent: str(body.worked_with.agent, "worked_with.agent", { max: 40 }), model: str(body.worked_with.model, "worked_with.model", { max: 160 }) }
+    : null;
+  const checks = machine && body.checks && typeof body.checks === "object" && body.checks.passed === true
+    ? { command: str(body.checks.command, "checks.command", { max: 500 }), commit: str(body.checks.commit, "checks.commit", { max: 64 }), at: now }
+    : null;
   const status = question ? "needs_decision" : "queued";
   const base = RANK[duty.priority] ?? RANK.next;
 
@@ -1346,9 +1383,10 @@ export async function handoffDuty(ctx, body) {
     ...stripMeta(duty),
     status,
     role: to.id,
-    handoff: { from: from.id, from_name: from.name, to: to.id, note, sent_back: sentBack, at: now },
-    handoffs: (duty.handoffs || 0) + 1,
+    handoff: { from: from.id, from_name: from.name, to: to.id, note, sent_back: sentBack, at: now, ...(workedWith ? { worked_with: workedWith } : {}), ...(checks ? { checks } : {}) },
+    handoffs,
     bounces,
+    risk,
     // Ahead of fresh work at the same priority, behind anything more urgent.
     prio_rank: Math.min(duty.prio_rank ?? base, base - 0.5),
     holder: null,
@@ -1369,12 +1407,21 @@ export async function handoffDuty(ctx, body) {
       ...authorOf(ctx.caller, agentId),
       kind: "checkpoint",
       message: note,
-      metadata: { handoff: { from: from.id, from_name: from.name, to: to.id, to_name: to.name, sent_back: sentBack } },
+      metadata: {
+        handoff: {
+          from: from.id, from_name: from.name, to: to.id, to_name: to.name, sent_back: sentBack, risk,
+          // What the machine said for itself: the model that did the work, and the tests it saw pass.
+          ...(workedWith ? { worked_with: workedWith } : {}),
+          ...(checks ? { checks: { command: checks.command, commit: checks.commit } } : {}),
+        },
+      },
       created_at: now,
     }),
     roleEventOp(project, duty, from, now, { stints: 1, ms: stintMs(duty, now), handoffs: 1 }),
   ];
   if (sentBack) ops.push(roleEventOp(project, duty, to, now, { sent_back: 1 }));
+  // And the board remembers what its reviewers send back, for the next look at why (a retro duty).
+  const retro = sentBack ? await noteSentBack(ctx, project, roster, duty, from, to, note, now, ops) : null;
   if (question) {
     ops.push(putOp("threads", threadId(), {
       duty_id: duty.key,
@@ -1385,8 +1432,10 @@ export async function handoffDuty(ctx, body) {
       kind: "question",
       message: stuck
         ? `${from.name} and ${to.name} have passed this back and forth ${bounces} times. What should change before it is tried again?`
-        : `Approve ${from.name}'s plan before ${to.name} builds it?`,
-      metadata: stuck ? null : { suggested_options: ["Approve the plan"] },
+        : plan
+          ? `Approve ${from.name}'s plan before ${to.name} builds it?`
+          : `This duty has been handed on ${handoffs} times without being finished. What should happen to it?`,
+      metadata: plan ? { suggested_options: ["Approve the plan"] } : null,
       created_at: now + 1,
     }));
   }
@@ -1403,6 +1452,12 @@ export async function handoffDuty(ctx, body) {
     ag: agentEvent(agentId, null, now),
   });
   if (question) await notifyNeedsYou(ctx, project, duty, question);
+  if (retro) await ctx.publish(project.key, retro, { t: "duty", id: retro, status: "queued" });
+  // A recurring duty remembers where the role that reads duties first sent it, so the next run goes
+  // straight there instead of being read and routed again. After the handoff, and unable to fail it.
+  if (duty.schedule_id && from.intake && !question) {
+    await rememberRoute(ctx, duty.schedule_id, project.key, { role: to.id, risk, at: now }).catch((err) => console.log("remembering a schedule's route:", err && err.message));
+  }
 
   return {
     ok: true,
@@ -1410,10 +1465,153 @@ export async function handoffDuty(ctx, body) {
     status,
     role: to.id,
     bounces,
+    risk,
     message: question
-      ? `Not handed on yet: a person is asked first${stuck ? " what should change" : " to approve the plan"}. Stop this session now; ${to.name} takes it once they answer.`
+      ? `Not handed on yet: a person is asked first${stuck ? " what should change" : plan ? " to approve the plan" : " what should happen to it"}. Stop this session now; ${to.name} takes it once they answer.`
       : `Handed to ${to.name}. It is no longer yours: stop this session now.`,
   };
+}
+
+const riskRank = (r) => Math.max(0, RISKS.indexOf(r || "normal"));
+
+/**
+ * How careful a duty's review should be after this handoff. The role that reads duties first, or one
+ * that plans, sets it either way — they are the ones deciding what the work is. Anyone else may only
+ * raise it. And a machine that saw the change touch one of the board's sensitive paths makes it high,
+ * whatever anyone said.
+ */
+function riskAfter(duty, from, body, machine) {
+  const current = duty.risk || "normal";
+  if (machine && body.sensitive === true) return "high";
+  if (body.risk == null || body.risk === "") return current;
+  const wanted = oneOf(body.risk, "risk", RISKS);
+  return from.intake || from.plans || riskRank(wanted) > riskRank(current) ? wanted : current;
+}
+
+/**
+ * Remember a send-back on the board's roster row, as an op for the caller's transaction, and — every
+ * `RETRO_EVERY` of them — file a retro duty to look at what keeps coming back. Answers the retro
+ * duty's id when it filed one.
+ */
+async function noteSentBack(ctx, project, roster, duty, from, to, note, now, ops) {
+  const recent = [...(roster.sent_backs || []), { duty_id: duty.key, title: duty.title, from: from.name, to: to.name, note: clip(note, 600), at: now }].slice(-SENT_BACKS_KEPT);
+  let since = (roster.sent_back_since_retro || 0) + 1;
+  let filed = null;
+  if (since >= RETRO_EVERY && !(await hasUnfinished(ctx, project.key, [{ field: "kind", op: "=", value: "retro" }]))) {
+    const seeded = seedDuty(project, { ...retroDuty(recent), kind: "retro", now });
+    ops.push(seeded.op);
+    filed = seeded.id;
+    since = 0;
+  }
+  ops.push(putOp("rosters", project.key, { ...stripMeta(roster), sent_backs: recent, sent_back_since_retro: since }));
+  return filed;
+}
+
+/** What a retro duty is asked: the send-backs it is about are in its brief, so it starts from them. */
+export function retroDuty(sentBacks) {
+  const listed = sentBacks.length
+    ? sentBacks.map((b) => `- “${b.title}” (\`${b.duty_id}\`): ${b.from} sent it back to ${b.to} — ${b.note}`).join("\n")
+    : "- none recorded yet: read the board's recent duties for work that was sent back or reopened.";
+  return {
+    title: "Look at what keeps being sent back",
+    brief:
+      "Reviewers on this board have sent work back these times lately:\n\n" +
+      listed +
+      "\n\nFind what they have in common — the same kind of finding more than once is a standard nobody was told, or one that is too vague to follow. " +
+      "Read the duties' threads for the full findings (duty_thread), and any duty a person reopened. " +
+      "Then propose the smallest changes that would have prevented them: to a role's charter (board_roster_submit, with the whole team), " +
+      "to the project's rules (board_rules_submit, with the whole rules), or both. A person accepts each before it takes effect. " +
+      "If nothing repeats, say so and change nothing.",
+  };
+}
+
+/**
+ * Refuse a claim on a duty that has used its board's allowance of agent session time, and ask a
+ * person whether to go on. The duty parks with the question; answering it grants the same allowance
+ * again. A bound on the bill, in the spirit of MAX_OPEN_DUTIES: hitting it means something is looping.
+ */
+async function withinBudget(ctx, duty, board, project, now) {
+  const minutes = board && board.runner && board.runner.duty_minutes != null ? board.runner.duty_minutes : DEFAULT_DUTY_MINUTES;
+  if (!minutes || (duty.kind || "work") !== "work") return;
+  const usage = await ctx.store.get("duty_usage", duty.key);
+  const used = (usage && usage.ms) || 0;
+  const allowed = minutes * 60000 + (duty.budget_extra_ms || 0);
+  if (used < allowed) return;
+  const hours = (ms) => `${Math.round(ms / 360000) / 10}h`;
+  const question = `Agents have spent ${hours(used)} of session time on this duty, over this board's limit of ${hours(allowed)} for one duty. Answer to let it go on for as long again — or cancel it, or say what should change.`;
+  await ctx.store.transaction([
+    putOp("duties", duty.key, { ...stripMeta(duty), status: "needs_decision", last_question: question, last_resolution: null, budget_asked_ms: minutes * 60000, holder: null, lane: null, updated_at: now }),
+    putOp("threads", threadId(), { duty_id: duty.key, project_id: project.key, owner_uid: project.owner_uid, author_type: "agent", author_id: "DutyBoard", kind: "question", message: question, metadata: null, created_at: now }),
+  ]);
+  await ctx.publish(project.key, duty.key, { t: "duty", id: duty.key, status: "needs_decision" });
+  await notifyNeedsYou(ctx, project, duty, question);
+  throw conflict(`duty '${duty.key}' is over its board's limit of agent time and is waiting for a person to say whether it goes on`, { used_ms: used, allowed_ms: allowed });
+}
+
+/**
+ * `POST /duty/usage` — `{ duty_id, ms }`. A machine says how long a session it ran on a duty lasted.
+ *
+ * Kept in a row of its own, never on the duty: the report arrives after the session, when the duty
+ * may already be claimed by someone else, and a late write of the whole duty row would undo that.
+ */
+export async function reportUsage(ctx, body) {
+  if (!ctx.caller.machineId) throw forbidden("only the machine that ran a session reports its time");
+  const duty = await loadDuty(ctx, body.duty_id);
+  const project = await projectOfDuty(ctx.caller, duty, ctx.store);
+  const ms = intIn(body.ms, "ms", 0, 24 * 60 * 60 * 1000, 0);
+  const row = await ctx.store.get("duty_usage", duty.key);
+  const next = { project_id: project.key, owner_uid: project.owner_uid, duty_id: duty.key, ms: ((row && row.ms) || 0) + ms, sessions: ((row && row.sessions) || 0) + 1, updated_at: Date.now() };
+  await ctx.store.putOne("duty_usage", duty.key, next);
+  return { ok: true, duty_id: duty.key, ms: next.ms, sessions: next.sessions };
+}
+
+/**
+ * When the last piece of a split duty finishes, file one more: check the pieces together.
+ *
+ * A role that splits a duty finishes its own with the plan, and each piece is then built and
+ * reviewed on its own — so nothing ever asked whether the pieces, together, did what the original
+ * asked for. This asks it once, of a reviewer, when `finishing` is the last of them (or is the split
+ * duty itself, finishing after all its pieces). Answers ops for the caller's transaction, and the new
+ * duty's id.
+ */
+async function acceptanceOps(ctx, project, finishing, roster, now) {
+  const parentKey = finishing.split_from || finishing.key;
+  const parent = finishing.split_from ? await ctx.store.get("duties", finishing.split_from) : finishing;
+  // Checked once; and a check of the whole that itself files follow-ups is not checked again in turn.
+  if (!parent || parent.acceptance_duty_id || parent.acceptance_of) return { ops: [], id: null };
+  // The split duty has to be finished too: while its role is still filing pieces, the count is not final.
+  if (finishing.split_from && parent.status !== "done" && parent.status !== "failed") return { ops: [], id: null };
+  const { rows } = await ctx.store.query("duties", {
+    where: [{ field: "project_id", op: "=", value: project.key }, { field: "split_from", op: "=", value: parentKey }],
+    limit: 50,
+  });
+  const pieces = rows.map((d) => (d.key === finishing.key ? finishing : d));
+  if (!pieces.length || pieces.some((d) => d.key !== finishing.key && UNFINISHED.includes(d.status))) return { ops: [], id: null };
+  const stateOf = (d) => (d.key === finishing.key ? finishing.outcome_status : d.status);
+  // Nothing was delivered — every piece failed or was cancelled — so there is no whole to check.
+  if (!pieces.some((d) => stateOf(d) === "done")) return { ops: [], id: null };
+
+  const reviewer = roster && (roster.roles.find((r) => r.reviews) || intakeOf(roster));
+  const listed = pieces
+    .map((d) => `- “${d.title}” (\`${d.key}\`, ${stateOf(d)}): ${clip(d.key === finishing.key ? finishing.outcome_text : d.outcome_summary || "no outcome recorded", 300)}`)
+    .join("\n");
+  const seeded = seedDuty(project, {
+    title: clip(`Check the whole: ${parent.title}`, 200),
+    brief: clip(
+      `“${parent.title}” was split into ${pieces.length} ${pieces.length === 1 ? "piece" : "pieces"}, and the last of them has now finished. Each was built and reviewed on its own. ` +
+        "Check what nobody has yet: that together they deliver what was originally asked. Use it the way the person who asked would, on what has actually landed; do not review each piece again.\n\n" +
+        `**Originally asked**\n\n${parent.brief}\n\n**The pieces**\n\n${listed}\n\n` +
+        "If it holds together, complete this duty saying what you checked. If something is missing or the pieces do not fit, file what is needed with duty_enqueue — saying what and why — and name it in your outcome.",
+      4000,
+    ),
+    kind: "work",
+    now,
+    fields: { role: reviewer ? reviewer.id : null, acceptance_of: parentKey, risk: "high", agent_options: null },
+  });
+  const ops = [seeded.op];
+  // Marked on the split duty, so a piece reopened and finished again does not file a second check.
+  if (parent.key !== finishing.key) ops.push(putOp("duties", parent.key, { ...stripMeta(parent), acceptance_duty_id: seeded.id }));
+  return { ops, id: seeded.id, onSelf: parent.key === finishing.key };
 }
 
 /** `POST /duty/complete` — active → done, with the summary that outlives the run. */
@@ -1528,6 +1726,14 @@ async function finishDuty(ctx, body, terminal, { duty: held, cancelled = false }
     }
   }
 
+  // The last piece of a split duty: one more duty, to check the pieces together. Only a board with a
+  // team splits work between roles, so only a duty that has a role is looked at.
+  const whole = roster && !duty.acceptance_of
+    ? await acceptanceOps(ctx, project, { ...duty, outcome_status: terminal, outcome_text: summary }, roster, now)
+    : { ops: [], id: null };
+  ops.push(...whole.ops);
+  if (whole.onSelf) ops[0].data.acceptance_duty_id = whole.id;
+
   const holder = agentId || duty.assigned_agent_id;
   let freed = null;
   if (holder) {
@@ -1556,6 +1762,7 @@ async function finishDuty(ctx, body, terminal, { duty: held, cancelled = false }
   });
   if (parent) await ctx.publish(project.key, parent, { t: "duty", id: parent, status: "queued" });
   for (const id of waiting) await ctx.publish(project.key, id, { t: "duty", id, status: "queued" });
+  if (whole.id) await ctx.publish(project.key, whole.id, { t: "duty", id: whole.id, status: "queued" });
 
   // After the transaction, never inside it: making a duty findable must not be able to fail
   // finishing one. This is the moment the outcome summary exists, which is the whole reason
@@ -1698,6 +1905,8 @@ export async function reopenDuty(ctx, body) {
   // Work a person sent back starts again with whoever reads new duties first, who has the note saying
   // why and decides who should take it — and it counts against every role it had passed through.
   const roster = duty.role && (duty.kind || "work") === "work" ? await rosterInForce(ctx, project.key) : null;
+  const usage = await ctx.store.get("duty_usage", duty.key);
+  const usedMs = (usage && usage.ms) || 0;
 
   const ops = [
     putOp("threads", threadId(), {
@@ -1728,6 +1937,10 @@ export async function reopenDuty(ctx, body) {
       // paying attention by definition — but a duty that keeps coming back is worth being
       // able to see is coming back, on the duty and in the thread.
       reopen_count: (duty.reopen_count || 0) + 1,
+      // A person asking for it again is a person saying it is worth more time: the allowance of
+      // agent time counts from here, not from the first attempt.
+      budget_extra_ms: usedMs,
+      budget_asked_ms: 0,
       holder: null,
       lane: null,
       // Redone from scratch, in a fresh worktree: whatever the last one left is the old attempt.
@@ -1793,6 +2006,8 @@ export async function resolveDuty(ctx, body) {
       last_resolution: text,
       approval_required: false,
       ...(duty.approval_required ? { approved_by: ctx.caller.uid, approved_at: now } : {}),
+      // Asked whether a duty over its time limit should go on: the answer grants the same allowance again.
+      ...(duty.budget_asked_ms ? { budget_extra_ms: (duty.budget_extra_ms || 0) + duty.budget_asked_ms, budget_asked_ms: 0 } : {}),
       resolved_at: now,
       holder: null,
       lane: null,
@@ -1909,6 +2124,8 @@ async function removeDuty(ctx, duty, projectKey) {
   // rows that named them are gone, so nothing would ever list them again.
   await sweepAttachments(ctx, { field: "duty_id", value: duty.key });
   await unindexDuties(ctx, [duty.key]);
+  // The time its sessions took, kept in a row of its own (see reportUsage).
+  await ctx.store.delete("duty_usage", [duty.key]);
   await ctx.store.delete("duties", [duty.key]);
   // Deleting a setup a board was waiting on lets the board go again.
   const released = [];
@@ -2150,6 +2367,7 @@ function briefOf(duty, { full = false } = {}) {
   if (duty.reserved_for) out.reserved_for = duty.reserved_for;
   // Who on the board's team has it, and what the last role said when handing it on.
   if (duty.role) out.role = duty.role;
+  if (duty.risk && duty.risk !== "normal") out.risk = duty.risk;
   // The note is the next role's brief, so the duty in hand carries it whole; the queue only says a
   // handoff happened, like the clipped brief beside it.
   if (duty.handoff) out.handoff = full ? duty.handoff : { from: duty.handoff.from, to: duty.handoff.to, sent_back: !!duty.handoff.sent_back };

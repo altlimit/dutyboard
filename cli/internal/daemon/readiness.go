@@ -45,6 +45,7 @@ func (d *Daemon) checkReadiness(ctx context.Context) {
 	go func() {
 		defer d.wg.Done()
 		rep := readiness.Check(ctx, links, enabled)
+		rep.Items = fitForBoard(rep.Items)
 		body, _ := json.Marshal(rep.Items)
 
 		d.mu.Lock()
@@ -75,4 +76,31 @@ func (d *Daemon) checkReadiness(ctx context.Context) {
 			d.log.Printf("reporting what this machine needs: %v", err)
 		}
 	}()
+}
+
+// What the board keeps of one checklist item. It refuses a whole report with an item over these, and
+// a path or an error message can run long on a real machine (a missing agent's full search path).
+const (
+	maxItemLabel  = 60
+	maxItemDetail = 400
+	maxItemFix    = 300
+)
+
+// fitForBoard shortens what is too long for the board to keep, on whole characters, rather than have
+// the board refuse the machine's whole checklist for one long line.
+func fitForBoard(items []readiness.Item) []readiness.Item {
+	for i := range items {
+		items[i].Label = shorten(items[i].Label, maxItemLabel)
+		items[i].Detail = shorten(items[i].Detail, maxItemDetail)
+		items[i].Fix = shorten(items[i].Fix, maxItemFix)
+	}
+	return items
+}
+
+func shorten(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n-1]) + "…"
 }

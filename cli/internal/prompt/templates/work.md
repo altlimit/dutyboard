@@ -31,6 +31,19 @@ Read the note before the brief, and `duty_thread` before you change anything.
 {{.Note}}
 
 The earlier roles' work is already in this {{if $.Files}}folder{{else}}worktree{{end}}. Look at what is there{{if not $.Files}} (`git log` and the diff against the main branch){{end}} and at `duty_thread` before changing anything; do not start over.
+{{- with .Checks}}
+
+This machine ran the project's tests (`{{.Command}}`) on commit `{{.Commit}}` as it was handed to you, and they passed. Do not run the whole suite again unless the work changes after that commit: spend the time on what tests cannot tell you. Landing runs them once more after rebasing.
+{{- end}}
+{{- end}}
+{{- if .Role.Reviews}}
+{{- if eq .Risk "high"}}
+
+**This duty is high risk.** Review it line by line, not by sampling: who may call each changed path and what stops everyone else, every input from outside, what happens to stored data when it fails half-way, secrets, and the paths nobody tested. Exercise it end to end yourself.
+{{- else if eq .Risk "low"}}
+
+This duty is low risk: check that it does what was asked and breaks nothing next to it. Do not audit beyond the change.
+{{- end}}
 {{- end}}{{end}}
 
 {{- if or .Duty.SourceNoteIDs .Duty.SourceNoteID}}
