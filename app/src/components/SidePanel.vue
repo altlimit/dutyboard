@@ -76,5 +76,11 @@ defineExpose({ close, toTop });
 .side__label { font-size: 0.9rem; }
 .side__actions { margin-left: auto; font-size: 0.85rem; }
 .side__close { padding: 0.3rem 0.6rem; line-height: 1; }
+/* An icon in the bar's actions — "open as its own page" — sized and spaced like the close button. */
+.side__actions :slotted(.side__icon) {
+  display: inline-flex; align-items: center; justify-content: center;
+  padding: 0.35rem; border-radius: 6px; color: var(--text-dim);
+}
+.side__actions :slotted(.side__icon:hover), .side__actions :slotted(.side__icon:focus-visible) { color: var(--text); background: var(--surface-2); }
 .side__body { padding: 1rem var(--gutter) 2rem; }
 </style>
