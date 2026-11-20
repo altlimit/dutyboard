@@ -83,6 +83,18 @@ let socket = null;
 let dutyTimer = null;
 let runnerTimer = null;
 
+/** The board's next scheduled duty, for whoever is on call for it. Asked again every few minutes:
+ *  a run that fires moves it on, and a schedule added in settings should show without a reload. */
+const next = ref({});
+async function loadNext() {
+  try {
+    next.value = (await api("/projects/upcoming", { project_ids: [props.projectId] })).next || {};
+  } catch {
+    // A DutyBoard too old to say: nobody is shown on call.
+  }
+}
+const nextTimer = setInterval(loadNext, 3 * 60 * 1000);
+
 async function open() {
   loading.value = true;
   error.value = "";
@@ -90,7 +102,7 @@ async function open() {
     const res = await api("/board/open", { project_id: props.projectId });
     board.value = res.project || null;
     runners.value = res.runners || [];
-    await Promise.all([loadTeam(), loadDuties()]);
+    await Promise.all([loadTeam(), loadDuties(), loadNext()]);
     connect(res.live || null);
   } catch (err) {
     error.value = err.message;
@@ -138,6 +150,7 @@ watch(
   { immediate: true },
 );
 onUnmounted(() => {
+  clearInterval(nextTimer);
   if (socket) socket.close();
   if (dutyTimer) clearTimeout(dutyTimer);
   if (runnerTimer) clearTimeout(runnerTimer);
@@ -178,7 +191,7 @@ const dutyLink = (d) => ({ name: "duty", params: { projectId: props.projectId, d
       <div class="office">
         <section aria-labelledby="floor-h" style="min-width: 0">
           <h2 id="floor-h" class="sr-only">The team</h2>
-          <OfficeBuilding :boards="rooms" :duties="duties" :recent="done" :activity="activity" single @ask="(key) => waiting && waiting.open(key)" />
+          <OfficeBuilding :boards="rooms" :duties="duties" :recent="done" :next="next" :activity="activity" single @ask="(key) => waiting && waiting.open(key)" />
         </section>
 
         <aside class="rooms">

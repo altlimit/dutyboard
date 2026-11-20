@@ -127,6 +127,18 @@ const offTeam = buildingFloor({ boards: [{ ...shop, roster: { intake: null, role
 assert.equal(offTeam.rooms[0].teamed, false, "a team that was turned off draws as none");
 assert.deepEqual(buildingFloor({ boards: [], duties: inShop }), { rooms: [], breakroom: [], working: 0 });
 
+// A board with a scheduled duty coming keeps whoever picks it up in their seat, on call.
+const due = { at: Date.UTC(2026, 10, 20, 9), title: "Weekly sales report" };
+const calm = buildingFloor({ boards: [shop, blog], duties: [], next: { shop: due, blog: due } });
+assert.deepEqual(calm.rooms[0].desks.find((d) => d.role.id === "duty-officer").onCall, due, "the role that reads new duties first, which is who a scheduled duty goes to");
+assert.equal(calm.rooms[0].desks.filter((d) => d.onCall).length, 1, "and nobody else");
+assert.deepEqual(calm.rooms[1].desks[0].onCall, due, "on a board with no team, its one agent");
+assert.ok(!calm.breakroom.some((p) => p.key === "shop:duty-officer" || p.key === "blog:"), "so they are not on a break");
+assert.equal(calm.breakroom.length, 4);
+const busyFront = buildingFloor({ boards: [shop], duties: [{ key: "x", project_id: "shop", kind: "work", status: "active", role: null }], next: { shop: due } });
+assert.equal(busyFront.rooms[0].desks[0].onCall, null, "a desk already working is working, not on call");
+assert.deepEqual(floorMoves(buildingFloor({ boards: [shop], duties: [] }), calm).walks.find((w) => w.key === "shop:duty-officer"), { key: "shop:duty-officer", to: "desk" }, "and walks back to it when a schedule appears");
+
 // What moves between two readings of the floor.
 const later = buildingFloor({
   boards: [shop, blog],

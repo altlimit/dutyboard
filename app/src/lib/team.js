@@ -143,13 +143,10 @@ export function hashOf(text) {
 }
 
 /**
- * How long people stay where they are when they have nothing to do: at their desk dozing, or in a
- * particular corner of the breakroom. Long enough not to fidget, short enough that the office lives.
+ * How long people stay in one corner of the breakroom before drifting to another. Long enough not to
+ * fidget, short enough that the office lives.
  */
 export const WANDER_MS = 4 * 60 * 1000;
-
-/** Whether a role with nothing to do is dozing at its desk this stretch, rather than on a break. */
-export const dozing = (key, stretch) => hashOf(`${key}|doze|${stretch}`) % 3 === 0;
 
 const HANGOUTS = ["chat", "chat", "game", "coffee", "couch"];
 
@@ -191,8 +188,12 @@ const SOLO = { id: "", name: "Agent", summary: "Whoever claims a duty works it s
  * at its cubicle; one with nothing in hand is in the breakroom, with whatever is waiting for it
  * stacked in its tray. A role that asked a person something stays at its desk with the question
  * (`asking`) — that is the one thing on the floor waiting for whoever is looking.
+ *
+ * `next` is each board's next scheduled duty, `{ project_id → { at, title } }`. A board with one
+ * coming keeps whoever will pick it up — the role that reads new duties first — in their seat, on
+ * call for it (`onCall`), rather than on a break.
  */
-export function buildingFloor({ boards, duties, activity = {} }) {
+export function buildingFloor({ boards, duties, activity = {}, next = {} }) {
   const byBoard = new Map();
   for (const d of duties || []) {
     if (d.kind === "note" || d.status === "note") continue;
@@ -205,7 +206,7 @@ export function buildingFloor({ boards, duties, activity = {} }) {
     const pointer = b.roster && b.roster.intake ? b.roster : null;
     const teamed = !!(pointer && pointer.roles && pointer.roles.length);
     const roles = teamed ? pointer.roles : [SOLO];
-    const desks = roles.map((role) => ({ key: `${b.project_id}:${role.id}`, role, working: [], asking: [], tray: [] }));
+    const desks = roles.map((role) => ({ key: `${b.project_id}:${role.id}`, role, working: [], asking: [], tray: [], onCall: null }));
     const deskOf = new Map(desks.map((d) => [d.role.id, d]));
     const front = (teamed && deskOf.get(pointer.intake)) || desks[0];
     const room = { board: b, color: boardColor(b.project_id), teamed, desks, needsYou: [], blocked: 0 };
@@ -223,11 +224,13 @@ export function buildingFloor({ boards, duties, activity = {} }) {
     for (const d of desks) d.tray.sort(queueOrder);
     room.needsYou.sort((a, c) => (a.updated_at || 0) - (c.updated_at || 0));
     for (const d of desks) d.asking.sort((a, c) => (a.updated_at || 0) - (c.updated_at || 0));
+    const scheduled = next[b.project_id];
+    if (scheduled && scheduled.at && !atDesk(front)) front.onCall = { at: scheduled.at, title: scheduled.title || "" };
     return room;
   });
 
   const breakroom = rooms.flatMap((room) =>
-    room.desks.filter((d) => !atDesk(d)).map((d) => ({ key: d.key, role: d.role, board: room.board, color: room.color, waiting: d.tray.length })),
+    room.desks.filter((d) => !atDesk(d) && !d.onCall).map((d) => ({ key: d.key, role: d.role, board: room.board, color: room.color, waiting: d.tray.length })),
   );
   return { rooms, breakroom, working: rooms.reduce((n, r) => n + r.desks.filter((d) => d.working.length).length, 0) };
 }
@@ -244,7 +247,7 @@ export const atDesk = (desk) => desk.working.length > 0 || desk.asking.length > 
  */
 export function floorMoves(before, after) {
   if (!before || !after) return { walks: [], handoffs: [], left: [] };
-  const present = (floor) => new Set(floor.rooms.flatMap((r) => r.desks.filter(atDesk).map((d) => d.key)));
+  const present = (floor) => new Set(floor.rooms.flatMap((r) => r.desks.filter((d) => atDesk(d) || d.onCall).map((d) => d.key)));
   const deskOfDuty = (floor) => {
     const out = new Map();
     for (const r of floor.rooms) {

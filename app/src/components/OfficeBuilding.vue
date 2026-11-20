@@ -4,19 +4,20 @@
 //
 //   working   a speech bubble with the duty's title, the screen lit, typing;
 //   asking    an amber "?" bubble with the duty waiting on a person — they stay at their desk;
-//   just done a short while at the desk after handing a duty on ("→ QA"), having it sent back
-//             ("↩ Engineer") or finishing it ("✓"), then a walk to the breakroom;
-//   idle      dozing at the desk ("z z"), or in the breakroom — chatting, at the arcade, by the
-//             coffee, on the couch — their tray at the desk stacked with whatever waits for them.
-//
-// Who is where when idle is a stable draw that changes every few minutes, so people wander between
-// desk and breakroom without fidgeting. Every duty in it is a link to the duty; the same is said in words for a
+//   just done a while at the desk — a different while for each, so they do not all get up at once —
+//             after handing a duty on ("→ QA"), having it sent back ("↩ Engineer") or finishing it
+//             ("✓"), then a walk to the breakroom;
+//   on call   whoever picks up a board's next scheduled duty stays in their seat with a clock and
+//             what is coming ("Weekly report · in 3h");
+//   idle      in the breakroom — chatting, at the arcade, by the coffee, on the couch — their tray
+//             at the desk stacked with whatever waits for them. The groups drift every few minutes. Every duty in it is a link to the duty; the same is said in words for a
 // screen reader, and in the strip under the building on hover or focus.
 import { computed, nextTick, onUnmounted, reactive, ref, watch } from "vue";
 import PixelPerson from "./PixelPerson.vue";
 import PixelSprite from "./PixelSprite.vue";
 import { activityLine } from "../lib/runners.js";
-import { SEATS, TRAY_SHOWN, WANDER_MS, atDesk, buildingFloor, dozing, floorMoves, hangoutGroups, levelLabel } from "../lib/team.js";
+import { until } from "../lib/duties.js";
+import { SEATS, TRAY_SHOWN, WANDER_MS, atDesk, buildingFloor, floorMoves, hangoutGroups, levelLabel } from "../lib/team.js";
 
 const props = defineProps({
   // `[{ project_id, name, roster }]`; `roster` is `{ intake, roles }`, or null for a board with no team.
@@ -27,6 +28,8 @@ const props = defineProps({
   activity: { type: Object, default: () => ({}) },
   // Duties finished lately, so one that leaves a desk can be shown as done rather than just gone.
   recent: { type: Array, default: () => [] },
+  // Each board's next scheduled duty, `{ project_id → { at, title } }`.
+  next: { type: Object, default: () => ({}) },
   // One board's own office: its name is the heading, not a link.
   single: { type: Boolean, default: false },
 });
@@ -36,10 +39,12 @@ const emit = defineEmits(["ask"]);
 
 /** People drawn in the breakroom before the rest are a number. */
 const BREAK_SHOWN = 40;
-/** How long a role stays at its desk after handing a duty on or finishing it, saying so. */
-const LINGER_MS = 20_000;
+/** How long a role stays at its desk after handing a duty on or finishing it, saying so: a different
+ *  while for each, between these, so a team that finishes together does not stand up together. */
+const LINGER_MIN_MS = 8_000;
+const LINGER_MAX_MS = 40_000;
 
-const floor = computed(() => buildingFloor({ boards: props.boards, duties: props.duties, activity: props.activity }));
+const floor = computed(() => buildingFloor({ boards: props.boards, duties: props.duties, activity: props.activity, next: props.next }));
 /** The cubicle being pointed at or focused, whose details the strip under the building shows. */
 const pointed = ref(null);
 const pointedRoom = computed(() => pointed.value && floor.value.rooms.find((r) => r.desks.some((d) => d.key === pointed.value)));
@@ -47,10 +52,11 @@ const pointedDesk = computed(() => pointedRoom.value && pointedRoom.value.desks.
 
 /** Roles still at their desk a moment after their duty moved on: desk key → { kind, mark, title, duty }. */
 const linger = reactive({});
-/** Which few-minute stretch it is: who dozes at a desk and who hangs out where is drawn per stretch. */
+/** Which few-minute stretch it is: who hangs out where in the breakroom is drawn per stretch. */
 const stretch = ref(Math.floor(Date.now() / WANDER_MS));
-const dozes = (key) => !linger[key] && dozing(key, stretch.value);
-const inBreak = computed(() => floor.value.breakroom.filter((p) => !linger[p.key] && !dozing(p.key, stretch.value)));
+/** The clock the "in 3h" on a desk that is on call reads from, moved on every half minute. */
+const now = ref(Date.now());
+const inBreak = computed(() => floor.value.breakroom.filter((p) => !linger[p.key]));
 /** The breakroom's people in little groups, by what each group is doing. */
 const groups = computed(() => {
   const out = { chat: [], game: [], coffee: [], couch: [] };
@@ -98,7 +104,8 @@ function bubbleOf(desk) {
   if (desk.working.length) return { kind: "work", mark: "", title: desk.working[0].duty.title, more: desk.working.length - 1 };
   const l = linger[desk.key];
   if (l) return { kind: l.kind, mark: l.mark, title: l.title, more: 0 };
-  if (dozes(desk.key)) return { kind: "doze", mark: "z z", title: "", more: 0 };
+  // The time first: on a narrow desk the title is what gets cut, and "in 3h" is the news.
+  if (desk.onCall) return { kind: "clock", mark: until(desk.onCall.at, now.value).replace(/^in /, ""), title: desk.onCall.title, more: 0 };
   return null;
 }
 
@@ -111,7 +118,7 @@ function deskSays(desk) {
   }
   if (!desk.asking.length && !desk.working.length) {
     const l = linger[desk.key];
-    parts.push(l ? `${l.said} “${l.title}”` : dozes(desk.key) ? "idle at the desk" : "on a break");
+    parts.push(l ? `${l.said} “${l.title}”` : desk.onCall ? `on call for “${desk.onCall.title}”, ${until(desk.onCall.at, now.value)}` : "on a break");
   }
   if (desk.tray.length) parts.push(`${desk.tray.length} waiting in the tray`);
   return parts.join(": ").replace(/: (?=[^:]*$)/, ", ");
@@ -125,8 +132,8 @@ const papers = ref([]); // [{ id, title, from, to }]
 const arriving = reactive({}); // person key → true while they walk there
 /** At its desk and working — not just given the work while it is still walking over. */
 const seated = (desk) => desk.working.length > 0 && !arriving[desk.key];
-/** At its desk for any reason: working, waiting on you, wrapping up what it just passed on, or dozing. */
-const present = (desk) => atDesk(desk) || !!linger[desk.key] || dozing(desk.key, stretch.value);
+/** At its desk for any reason: working, waiting on you, wrapping up what it just passed on, or on call. */
+const present = (desk) => atDesk(desk) || !!linger[desk.key] || !!desk.onCall;
 let nextId = 0;
 const reducedMotion = typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)");
 
@@ -171,7 +178,7 @@ const timers = new Map();
 function stay(key, value) {
   clearTimeout(timers.get(key));
   linger[key] = value;
-  timers.set(key, setTimeout(() => leave(key), LINGER_MS));
+  timers.set(key, setTimeout(() => leave(key), LINGER_MIN_MS + Math.random() * (LINGER_MAX_MS - LINGER_MIN_MS)));
 }
 /** The wrap-up is over: back to the breakroom, unless there is work at the desk by now. */
 function leave(key) {
@@ -180,14 +187,11 @@ function leave(key) {
   delete linger[key];
   travel(before, presentKeys(floor.value));
 }
-// A new stretch: some of the idle get up from their desks, others sit down to doze.
+// The breakroom's groups drift every few minutes, and an "in 3h" stays true.
 const wander = setInterval(() => {
-  const next = Math.floor(Date.now() / WANDER_MS);
-  if (next === stretch.value) return;
-  const before = presentKeys(floor.value);
-  stretch.value = next;
-  travel(before, presentKeys(floor.value));
-}, 15_000);
+  now.value = Date.now();
+  stretch.value = Math.floor(now.value / WANDER_MS);
+}, 30_000);
 onUnmounted(() => {
   timers.forEach(clearTimeout);
   clearInterval(wander);
@@ -373,6 +377,7 @@ function animate(el, item, kind) {
             </span>
             <span class="cube__label" aria-hidden="true">{{ desk.role.name }}</span>
             <span v-if="bubbleOf(desk)" class="cube__bubble" aria-hidden="true">
+              <PixelSprite v-if="bubbleOf(desk).kind === 'clock'" class="cube__clock" name="clock" :scale="1.25" />
               <b v-if="bubbleOf(desk).mark" class="cube__mark">{{ bubbleOf(desk).mark }}</b>
               <span class="cube__title">{{ bubbleOf(desk).title }}</span>
               <span v-if="bubbleOf(desk).more" class="cube__also">+{{ bubbleOf(desk).more }}</span>
@@ -399,7 +404,13 @@ function animate(el, item, kind) {
           <template v-for="(w, i) in pointedDesk.working" :key="w.duty.key">{{ i ? " · " : "" }}{{ w.duty.title }}<em v-if="w.activity"> — {{ activityLine(w.activity) }}</em></template>
         </span>
         <span v-else-if="!pointedDesk.asking.length" class="info__line">
-          {{ linger[pointedDesk.key] ? `Just ${linger[pointedDesk.key].said} ${linger[pointedDesk.key].title}` : `On a break${pointedDesk.tray.length ? "" : ", nothing waiting"}` }}
+          {{
+            linger[pointedDesk.key]
+              ? `Just ${linger[pointedDesk.key].said} ${linger[pointedDesk.key].title}`
+              : pointedDesk.onCall
+                ? `On call: “${pointedDesk.onCall.title}” is due ${until(pointedDesk.onCall.at, now)}`
+                : `On a break${pointedDesk.tray.length ? "" : ", nothing waiting"}`
+          }}
         </span>
         <span v-if="pointedDesk.tray.length" class="info__line info__line--dim">
           In the tray: {{ pointedDesk.tray.slice(0, TRAY_SHOWN).map((d) => d.title).join(" · ") }}{{ pointedDesk.tray.length > TRAY_SHOWN ? ` · and ${pointedDesk.tray.length - TRAY_SHOWN} more` : "" }}
@@ -647,17 +658,11 @@ button.cube:hover:not(:disabled) { background: color-mix(in srgb, var(--room) 16
 .cube--done .cube__bubble { background: var(--ok-soft); border-color: var(--ok); }
 .cube--done .cube__bubble::after { border-top-color: var(--ok); }
 .cube--done .cube__mark { color: var(--ok); }
-/* Dozing is small and quiet, so the bubbles that say something stand out. */
-.cube--doze .cube__bubble { left: auto; right: 6px; color: var(--text-dim); border-style: dashed; font-size: 0.6rem; }
-.cube--doze .cube__bubble::after { left: 25%; }
-.cube--doze .cube__mark { font-family: var(--mono); letter-spacing: 1px; }
-@media (prefers-reduced-motion: no-preference) {
-  .cube--doze .cube__mark { animation: doze 2.2s ease-in-out infinite; }
-}
-@keyframes doze {
-  0%, 100% { opacity: 0.45; }
-  50% { opacity: 1; }
-}
+/* On call for the board's next scheduled duty. */
+.cube--clock .cube__bubble { border-color: var(--accent); border-style: dashed; color: var(--text-dim); }
+.cube--clock .cube__bubble::after { border-top-color: var(--accent); }
+.cube__clock { align-self: center; }
+.cube--clock .cube__mark { color: var(--accent); }
 /* Waiting on you is the one thing on the floor that is waiting for whoever is looking. */
 .cube--ask { border-color: var(--warn); }
 @media (prefers-reduced-motion: no-preference) {

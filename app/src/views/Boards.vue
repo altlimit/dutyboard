@@ -359,7 +359,7 @@ watch(
         </p>
         <p v-if="!officeLoaded" class="muted" role="status">Opening the office…</p>
         <template v-else>
-          <OfficeBuilding :boards="officeBoards" :duties="officeDuties" :recent="officeDone" :activity="activity" @ask="(key) => waiting && waiting.open(key)" />
+          <OfficeBuilding :boards="officeBoards" :duties="officeDuties" :recent="officeDone" :next="upcoming ? upcoming.next : {}" :activity="activity" @ask="(key) => waiting && waiting.open(key)" />
           <WaitingOnYou ref="waiting" :duties="asking" :boards="boardsById" @answered="loadOfficeDuties" />
         </template>
       </template>

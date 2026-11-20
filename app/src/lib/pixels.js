@@ -147,6 +147,19 @@ export const SPRITES = {
     ],
     palette: { O: "#d0783a", L: "#e8975a" },
   },
+  clock: {
+    rows: [
+      "..KKKK..",
+      ".KWWWWK.",
+      "KWWKWWWK",
+      "KWWKWWWK",
+      "KWWKKKWK",
+      "KWWWWWWK",
+      ".KWWWWK.",
+      "..KKKK..",
+    ],
+    palette: { K: "#3b6fd8", W: "#f4f6fb" },
+  },
   mug: {
     rows: ["WWW.", "WWWW", "WWW.", ".W.."],
     palette: { W: "#f2efe8" },
