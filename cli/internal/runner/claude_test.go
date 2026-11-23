@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -109,5 +110,74 @@ func TestAgents(t *testing.T) {
 	}
 	if _, err := For("nobody"); err == nil || !strings.Contains(err.Error(), "claude-code") {
 		t.Fatalf("an unknown agent should say which are known: %v", err)
+	}
+}
+
+func TestClaudeHookSettings(t *testing.T) {
+	dir := t.TempDir()
+	j := Job{Dir: dir, Prompt: "do it", SessionDir: filepath.Join(dir, "session"), Hook: []string{"/opt/my tools/dutyboard", "hook"}}
+	args, err := claudeArgs(j)
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(args, " ")
+	p := filepath.Join(j.SessionDir, "settings.json")
+	if !strings.Contains(joined, "--settings "+p) {
+		t.Fatalf("no --settings in %q", joined)
+	}
+	b, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var s struct {
+		Hooks map[string][]struct {
+			Matcher string `json:"matcher"`
+			Hooks   []struct {
+				Type, Command string
+				Timeout       int
+			} `json:"hooks"`
+		} `json:"hooks"`
+	}
+	if err := json.Unmarshal(b, &s); err != nil {
+		t.Fatal(err)
+	}
+	for _, event := range []string{"PostToolUse", "Stop"} {
+		h := s.Hooks[event]
+		if len(h) != 1 || len(h[0].Hooks) != 1 || h[0].Hooks[0].Type != "command" || h[0].Hooks[0].Command != `"/opt/my tools/dutyboard" "hook"` {
+			t.Fatalf("%s hook: %s", event, b)
+		}
+	}
+	if s.Hooks["PostToolUse"][0].Matcher != "*" {
+		t.Fatalf("PostToolUse must run after every tool: %s", b)
+	}
+
+	j.Hook = nil
+	if args, _ := claudeArgs(j); strings.Contains(strings.Join(args, " "), "--settings") {
+		t.Fatal("no hook, no settings")
+	}
+}
+
+func TestShellCommandQuotes(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows paths are passed with forward slashes and hold no quotes")
+	}
+	if got := shellCommand([]string{`/a/$HOME/"x"`, "hook"}); got != `"/a/\$HOME/\"x\"" "hook"` {
+		t.Fatalf("shellCommand = %s", got)
+	}
+}
+
+func TestHookReply(t *testing.T) {
+	if HookReply("PostToolUse", "") != nil {
+		t.Fatal("nothing to say prints nothing")
+	}
+	var after struct {
+		Out struct{ HookEventName, AdditionalContext string } `json:"hookSpecificOutput"`
+	}
+	if err := json.Unmarshal(HookReply("PostToolUse", "A person wrote"), &after); err != nil || after.Out.HookEventName != "PostToolUse" || after.Out.AdditionalContext != "A person wrote" {
+		t.Fatalf("after a tool: %+v %v", after, err)
+	}
+	var stop struct{ Decision, Reason string }
+	if err := json.Unmarshal(HookReply("Stop", "A person wrote"), &stop); err != nil || stop.Decision != "block" || stop.Reason != "A person wrote" {
+		t.Fatalf("at a stop: %+v %v", stop, err)
 	}
 }

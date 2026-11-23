@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -118,6 +119,13 @@ func claudeArgs(j Job) ([]string, error) {
 		// board's, and a session should reach nothing a board's owner did not put on it.
 		args = append(args, "--mcp-config", p, "--strict-mcp-config")
 	}
+	if len(j.Hook) > 0 && j.SessionDir != "" {
+		p, err := writeClaudeSettings(j)
+		if err != nil {
+			return nil, err
+		}
+		args = append(args, "--settings", p)
+	}
 	mode := j.Access.Mode
 	if mode == "" {
 		mode = "acceptEdits"
@@ -208,6 +216,60 @@ func writeClaudeMCPConfig(j Job) (string, error) {
 	p := filepath.Join(j.SessionDir, "mcp.json")
 	// 0600: the servers' environment carries the session's own credentials.
 	return p, os.WriteFile(p, b, 0o600)
+}
+
+// writeClaudeSettings gives the session the job's hook: after every tool, and when it is about to
+// stop. Claude Code adds these settings to the user's own rather than replacing them.
+func writeClaudeSettings(j Job) (string, error) {
+	hook := []any{map[string]any{"type": "command", "command": shellCommand(j.Hook), "timeout": 30}}
+	settings := map[string]any{"hooks": map[string]any{
+		"PostToolUse": []any{map[string]any{"matcher": "*", "hooks": hook}},
+		"Stop":        []any{map[string]any{"hooks": hook}},
+	}}
+	b, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(j.SessionDir, 0o700); err != nil {
+		return "", err
+	}
+	p := filepath.Join(j.SessionDir, "settings.json")
+	return p, os.WriteFile(p, b, 0o600)
+}
+
+// shellCommand is a command line a hook's shell runs as these arguments: each one double-quoted,
+// which bash and cmd both read. Forward slashes on Windows, where a backslash would be an escape to
+// the bash Claude Code runs hooks with.
+func shellCommand(argv []string) string {
+	out := make([]string, len(argv))
+	for i, a := range argv {
+		if runtime.GOOS == "windows" {
+			a = filepath.ToSlash(a)
+		} else {
+			a = strings.NewReplacer(`\`, `\\`, `"`, `\"`, "$", `\$`, "`", "\\`").Replace(a)
+		}
+		out[i] = `"` + a + `"`
+	}
+	return strings.Join(out, " ")
+}
+
+// HookReply is what `dutyboard hook` prints for Claude Code, given the event it was run for (from
+// the JSON on its stdin) and what to tell the session. Nothing to tell prints nothing, which lets
+// the session carry on. After a tool, the text is added to what the model reads next; at a stop, the
+// stop is refused with it, so the session takes it into account before it ends.
+func HookReply(event, text string) []byte {
+	if text == "" {
+		return nil
+	}
+	var v any
+	switch event {
+	case "Stop", "SubagentStop":
+		v = map[string]any{"decision": "block", "reason": text}
+	default:
+		v = map[string]any{"hookSpecificOutput": map[string]any{"hookEventName": event, "additionalContext": text}}
+	}
+	b, _ := json.Marshal(v)
+	return b
 }
 
 // limitText is how a plan limit reads when it arrives as the result rather than as an event.

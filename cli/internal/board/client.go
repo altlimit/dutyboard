@@ -786,6 +786,16 @@ func (c *Client) Quiet(ctx context.Context, board, dutyID, agentID string) error
 	return c.Call(ctx, "/duty/quiet", board, map[string]any{"duty_id": dutyID, "agent_id": agentID}, nil)
 }
 
+// NewNotes is what people have written on a duty agentID holds since its session was last shown
+// them. Asking counts as showing: the same notes are not answered twice.
+func (c *Client) NewNotes(ctx context.Context, board, dutyID, agentID string) ([]Note, error) {
+	var out struct {
+		Notes []Note `json:"notes"`
+	}
+	err := c.Call(ctx, "/duty/notes", board, map[string]any{"duty_id": dutyID, "agent_id": agentID}, &out)
+	return out.Notes, err
+}
+
 // Enqueue files a duty on board.
 func (c *Client) Enqueue(ctx context.Context, board string, body map[string]any) (string, error) {
 	var out struct {

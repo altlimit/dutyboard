@@ -1356,6 +1356,9 @@ export async function checkpointDuty(ctx, body) {
     id: duty.key,
     status: state,
     ...(freed ? { ag: agentEvent(freed, null, now) } : {}),
+    // A person wrote on a duty being worked: the machine holding it passes it to the session now
+    // (see duty/notes), rather than at the end, when the work is done without it.
+    ...(ctx.caller.kind === "human" && kind === "note" && state === "active" ? { pn: 1 } : {}),
   });
   if (setStatus === "needs_decision" && duty.status !== "needs_decision") {
     await notifyNeedsYou(ctx, project, duty, options.length ? `${message} (${options.join(" / ")})` : message);
@@ -1874,18 +1877,9 @@ async function peopleNotes(ctx, dutyKey) {
 async function unreadNotes(ctx, duty, terminal) {
   const verb = { done: "completed", failed: "failed", handoff: "handed on" }[terminal];
   const again = terminal === "handoff" ? "duty_handoff" : `duty_${terminal === "done" ? "complete" : "fail"}`;
-  const { rows } = await ctx.store.query("threads", {
-    where: [
-      { field: "duty_id", op: "=", value: duty.key },
-      { field: "created_at", op: ">", value: duty.notes_seen_at || 0 },
-    ],
-    order: [{ field: "created_at", dir: "asc" }],
-    limit: MAX_THREAD_ENTRIES,
-  });
-  const notes = rows.filter((t) => t.author_type === "human" && t.kind === "note");
+  const notes = await notesSince(ctx, duty);
   if (!notes.length) return;
-  const seen = notes[notes.length - 1].created_at;
-  await ctx.store.transaction([putOp("duties", duty.key, { ...stripMeta(duty), notes_seen_at: seen })]);
+  await markNotesSeen(ctx, duty, notes);
   const listed = notes.map((t) => `- ${t.author_name || "A person"}: ${t.message}`).join("\n");
   throw conflict(
     `not ${verb} yet — a person wrote on this duty while you were working on it:\n` +
@@ -1894,6 +1888,50 @@ async function unreadNotes(ctx, duty, terminal) {
       `duty_integrate, put it in out/, or make it through the board's MCP servers), then call ${again} again — this refusal will not repeat for the same notes.`,
     { notes: notes.length },
   );
+}
+
+/** The notes people have written on a duty since its session was last shown them, oldest first. */
+async function notesSince(ctx, duty) {
+  const { rows } = await ctx.store.query("threads", {
+    where: [
+      { field: "duty_id", op: "=", value: duty.key },
+      { field: "created_at", op: ">", value: duty.notes_seen_at || 0 },
+    ],
+    order: [{ field: "created_at", dir: "asc" }],
+    limit: MAX_THREAD_ENTRIES,
+  });
+  return rows.filter((t) => t.author_type === "human" && t.kind === "note");
+}
+
+/**
+ * Records that the session has been shown these notes. The duty is read again first, so a person
+ * cancelling it in the same moment is not undone by this write.
+ */
+async function markNotesSeen(ctx, duty, notes) {
+  const seen = notes[notes.length - 1].created_at;
+  const current = await ctx.store.get("duties", duty.key);
+  if (!current || current.status !== "active" || current.assigned_agent_id !== duty.assigned_agent_id) return;
+  if ((current.notes_seen_at || 0) >= seen) return;
+  await ctx.store.transaction([putOp("duties", duty.key, { ...stripMeta(current), notes_seen_at: seen })]);
+}
+
+/**
+ * `POST /duty/notes` — `{ duty_id }`. What people have written on a duty since the session working it
+ * was last shown, which counts as showing it: the machine holding the duty hands these to the session
+ * while it works, so "also do X" changes the work in progress instead of waiting for its finish to be
+ * refused. Empty when there is nothing new.
+ */
+export async function newNotes(ctx, body) {
+  requireAgent(ctx.caller);
+  const agentId = agentIdFrom(ctx, body, { required: true });
+  const duty = await loadDuty(ctx, body.duty_id);
+  await projectOfDuty(ctx.caller, duty, ctx.store);
+  if (duty.status !== "active" || duty.assigned_agent_id !== agentId) {
+    throw conflict(`duty '${duty.key}' is not one you are holding`, { status: duty.status });
+  }
+  const notes = await notesSince(ctx, duty);
+  if (notes.length) await markNotesSeen(ctx, duty, notes);
+  return { notes: notes.map((t) => ({ from: t.author_name || "a person", message: t.message, created_at: t.created_at })) };
 }
 
 /**

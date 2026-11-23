@@ -207,3 +207,26 @@ page=await listNotes(ec(human),{project_id:'board'});
 assert.equal(page.notes.length,0);assert.equal(page.review,null);
 await assert.rejects(()=>processNote(ec(human),{project_id:'board'}),/at least one note/);
 console.log('Eligibility passed: only unlinked notes, automatic next reviews, no-proposal retry, per-note clear, preserved history, independent multi-source links, deletion, permissions, and empty boards.');
+
+// A person writing on a duty while it is worked reaches the session then, not only when it finishes.
+const { newNotes } = await import('../functions/src/duties.js');
+const working = testStore();
+const wc = caller => ({ ...ctx(caller), store: working.store });
+await working.store.putOne('projects', 'board', { owner_uid: 'owner', name: 'Live notes' });
+const held = await enqueueDuty(wc(human), { project_id: 'board', title: 'Export', brief: 'Add CSV export.' });
+await claimDuty(wc(worker), { duty_id: held.duty_id });
+assert.deepEqual((await newNotes(wc(worker), { duty_id: held.duty_id })).notes, [], 'the claim already showed what was there');
+await new Promise(done => setTimeout(done, 3)); // a note is new when it is newer than the claim, to the millisecond
+events.length = 0;
+await checkpointDuty(wc(member), { duty_id: held.duty_id, kind: 'note', message: 'Also include the customer email.' });
+assert.equal(events.at(-1)[2].pn, 1, "the machine holding it is told a person wrote");
+await checkpointDuty(wc(worker), { duty_id: held.duty_id, kind: 'checkpoint', message: 'Halfway.' });
+assert.equal(events.at(-1)[2].pn, undefined, "the agent's own entries are not a person's note");
+await assert.rejects(() => newNotes(wc({ kind: 'agent', projectId: 'board', defaultAgentId: 'someone-else' }), { duty_id: held.duty_id }), /not one you are holding/);
+await assert.rejects(() => newNotes(wc(member), { duty_id: held.duty_id }));
+const fresh = await newNotes(wc(worker), { duty_id: held.duty_id });
+assert.deepEqual(fresh.notes.map(n => n.message), ['Also include the customer email.']);
+assert.deepEqual((await newNotes(wc(worker), { duty_id: held.duty_id })).notes, [], 'shown once');
+assert.equal((await completeDuty(wc(worker), { duty_id: held.duty_id, outcome_summary: 'Export with emails.' })).status, 'done', 'a note shown while working does not refuse the finish');
+await assert.rejects(() => newNotes(wc(worker), { duty_id: held.duty_id }), /not one you are holding/);
+console.log('Live notes passed: flagged to the holder, shown once while working, not repeated at the finish, and only to the agent holding the duty.');

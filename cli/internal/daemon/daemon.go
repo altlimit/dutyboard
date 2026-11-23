@@ -426,6 +426,10 @@ func (d *Daemon) onEvent(ev live.Event) {
 			d.log.Printf("%s was moved to %s on the board; stopping its session", id, status)
 			run.cancelByBoard()
 		}
+		// A person wrote on it: the session is shown the note at its next step (see takeNotes).
+		if run != nil && ev.Data["pn"] != nil {
+			run.notesWaiting.Store(true)
+		}
 		if status == "queued" || status == "done" || status == "failed" || status == "deleted" {
 			if run == nil && status != "queued" {
 				// Possibly a duty parked here: its worktree is waiting for it, and now nothing will come.

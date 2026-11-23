@@ -17,6 +17,7 @@ import (
 	"github.com/altlimit/dutyboard/cli/internal/board"
 	"github.com/altlimit/dutyboard/cli/internal/localmcp"
 	"github.com/altlimit/dutyboard/cli/internal/provision"
+	"github.com/altlimit/dutyboard/cli/internal/runner"
 	"github.com/altlimit/dutyboard/cli/internal/service"
 	"github.com/altlimit/dutyboard/cli/internal/state"
 	"github.com/altlimit/dutyboard/cli/internal/ui"
@@ -59,6 +60,13 @@ func Main(args []string) int {
 			fmt.Fprintln(os.Stderr, err)
 			return 1
 		}
+		return 0
+	}
+
+	// `dutyboard hook` is run by Claude Code between the steps of a session: what a person wrote on the
+	// duty since, if anything.
+	if len(args) > 0 && args[0] == "hook" {
+		localmcp.Hook(os.Stdin, os.Stdout, runner.HookReply)
 		return 0
 	}
 

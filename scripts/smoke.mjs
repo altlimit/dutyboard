@@ -1940,6 +1940,7 @@ async function main() {
     "/duty/changes": () => ({ project_id: projectId }),
     "/duty/cancel": (d) => ({ duty_id: d }),
     "/duty/quiet": (d) => ({ duty_id: d, agent_id: "x" }),
+    "/duty/notes": (d) => ({ duty_id: d, agent_id: "x" }),
     "/duty/search": () => ({ project_id: projectId, query: "anything" }),
     "/duty/attach": (d) => ({ duty_id: d, name: "x.png", size: 10, content_type: "image/png" }),
     "/duty/attachments": (d) => ({ duty_id: d }),

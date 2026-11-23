@@ -157,70 +157,85 @@ func (d *Daemon) MCP(ctx context.Context, runToken, cwd string, raw json.RawMess
 		return d.filterTools(reply, s)
 	case "tools/call":
 		var p struct {
-			Name      string         `json:"name"`
-			Arguments map[string]any `json:"arguments"`
+			Name string `json:"name"`
 		}
-		if err := json.Unmarshal(msg.Params, &p); err != nil {
-			return nil, err
+		_ = json.Unmarshal(msg.Params, &p)
+		reply, err := d.callTool(ctx, s, msg)
+		if err != nil || s.run == nil {
+			return reply, err
 		}
-		if p.Arguments == nil {
-			p.Arguments = map[string]any{}
-		}
-		// Stopping takes a moment, and in that moment the session must not land, deploy or file anything.
-		if s.run != nil && s.run.byBoard.Load() {
-			return toolText(msg.ID, "this duty was moved on the board and this session is being stopped: stop now", true), nil
-		}
-		if refusal := guard(s, p.Name, p.Arguments); refusal != "" {
-			return toolText(msg.ID, refusal, true), nil
-		}
-		if reply, handled := d.localTool(ctx, s, msg.ID, p.Name, p.Arguments); handled {
-			return reply, nil
-		}
-		if s.run != nil && s.run.Files && s.run.Kind != "note_review" && p.Name == "duty_complete" {
-			// What the task made goes on the duty before the duty says it is done, so a person told it is
-			// finished finds the files there. A file that cannot be attached stops the completion.
-			names, err := d.attachOutputs(ctx, s.run)
-			if err != nil {
-				return toolText(msg.ID, "the files in out/ could not all be attached, so the duty is not complete yet: "+err.Error(), true), nil
-			}
-			if len(names) > 0 {
-				summary, _ := p.Arguments["outcome_summary"].(string)
-				p.Arguments["outcome_summary"] = strings.TrimSpace(summary + "\n\nAttached: " + strings.Join(names, ", "))
-			}
-		}
-		if takesAgent[p.Name] {
-			p.Arguments["agent_id"] = s.agent
-		}
-		if p.Name == "duty_handoff" && s.run != nil {
-			// What the board takes only from the machine is said by the machine, never passed through.
-			for _, k := range []string{"checks", "sensitive", "worked_with"} {
-				delete(p.Arguments, k)
-			}
-			if refusal := d.beforeHandoff(ctx, s.run, p.Arguments); refusal != "" {
-				return toolText(msg.ID, refusal, true), nil
-			}
-		}
-		if s.run != nil {
-			if p.Name == "board_call" {
-				p.Arguments["source_duty_id"] = s.run.DutyID
-			}
-			if (p.Name == "duty_enqueue" || p.Name == "duty_suggest") && (s.run.Kind == "note_review" || p.Arguments["spawned_by"] == nil) {
-				p.Arguments["spawned_by"] = s.run.DutyID
-			}
-			// A session parking its duty keeps it for this machine, where its worktree is.
-			if p.Name == "duty_checkpoint" {
-				if st, _ := p.Arguments["set_status"].(string); st == "needs_decision" || st == "blocked" {
-					p.Arguments["affinity"] = true
-				}
-			}
-		}
-		params, _ := json.Marshal(p)
-		msg.Params = params
-		forwarded, _ := json.Marshal(msg)
-		return d.api.RawMCP(ctx, s.board, forwarded)
+		// A person who wrote on the duty since the session last looked is heard now, not at the finish.
+		return d.withNotes(ctx, s.run, p.Name, reply), nil
 	default:
 		return d.api.RawMCP(ctx, s.board, raw)
 	}
+}
+
+// callTool answers a tools/call: refused, answered here, or passed to the board with what only the
+// daemon may fill in.
+func (d *Daemon) callTool(ctx context.Context, s *session, msg rpc) (json.RawMessage, error) {
+	var p struct {
+		Name      string         `json:"name"`
+		Arguments map[string]any `json:"arguments"`
+	}
+	if err := json.Unmarshal(msg.Params, &p); err != nil {
+		return nil, err
+	}
+	if p.Arguments == nil {
+		p.Arguments = map[string]any{}
+	}
+	// Stopping takes a moment, and in that moment the session must not land, deploy or file anything.
+	if s.run != nil && s.run.byBoard.Load() {
+		return toolText(msg.ID, "this duty was moved on the board and this session is being stopped: stop now", true), nil
+	}
+	if refusal := guard(s, p.Name, p.Arguments); refusal != "" {
+		return toolText(msg.ID, refusal, true), nil
+	}
+	if reply, handled := d.localTool(ctx, s, msg.ID, p.Name, p.Arguments); handled {
+		return reply, nil
+	}
+	if s.run != nil && s.run.Files && s.run.Kind != "note_review" && p.Name == "duty_complete" {
+		// What the task made goes on the duty before the duty says it is done, so a person told it is
+		// finished finds the files there. A file that cannot be attached stops the completion.
+		names, err := d.attachOutputs(ctx, s.run)
+		if err != nil {
+			return toolText(msg.ID, "the files in out/ could not all be attached, so the duty is not complete yet: "+err.Error(), true), nil
+		}
+		if len(names) > 0 {
+			summary, _ := p.Arguments["outcome_summary"].(string)
+			p.Arguments["outcome_summary"] = strings.TrimSpace(summary + "\n\nAttached: " + strings.Join(names, ", "))
+		}
+	}
+	if takesAgent[p.Name] {
+		p.Arguments["agent_id"] = s.agent
+	}
+	if p.Name == "duty_handoff" && s.run != nil {
+		// What the board takes only from the machine is said by the machine, never passed through.
+		for _, k := range []string{"checks", "sensitive", "worked_with"} {
+			delete(p.Arguments, k)
+		}
+		if refusal := d.beforeHandoff(ctx, s.run, p.Arguments); refusal != "" {
+			return toolText(msg.ID, refusal, true), nil
+		}
+	}
+	if s.run != nil {
+		if p.Name == "board_call" {
+			p.Arguments["source_duty_id"] = s.run.DutyID
+		}
+		if (p.Name == "duty_enqueue" || p.Name == "duty_suggest") && (s.run.Kind == "note_review" || p.Arguments["spawned_by"] == nil) {
+			p.Arguments["spawned_by"] = s.run.DutyID
+		}
+		// A session parking its duty keeps it for this machine, where its worktree is.
+		if p.Name == "duty_checkpoint" {
+			if st, _ := p.Arguments["set_status"].(string); st == "needs_decision" || st == "blocked" {
+				p.Arguments["affinity"] = true
+			}
+		}
+	}
+	params, _ := json.Marshal(p)
+	msg.Params = params
+	forwarded, _ := json.Marshal(msg)
+	return d.api.RawMCP(ctx, s.board, forwarded)
 }
 
 // guard refuses what a headless session may not do. It answers the refusal as the agent will read it.

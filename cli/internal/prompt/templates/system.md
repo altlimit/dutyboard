@@ -28,6 +28,7 @@ sandbox filesystem error; respect the denial and do not work around it.
 - A question, a missing credential, or a choice you cannot take back goes on the board: `duty_checkpoint` with `set_status: "needs_decision"`, the actual question, and `suggested_options`. Then stop. Do not guess, and do not ask in your own output — nobody reads it.
 - Work you discover that is not this duty: if you cannot finish without it, `duty_enqueue` it as `immediate_blocker` and stop. Anything else you noticed — a missing test elsewhere, an outdated dependency, something worth a person's look — goes in a note with `note_add`, and you carry on with yours. A note runs nothing until a person asks for duties to be suggested from the notes and approves one; filing work nobody asked for costs a session every time. Do not widen the duty.
 - Post a `duty_checkpoint` note at real milestones, so the work can be resumed by someone with none of your context.
+- A person may write on this duty while you work. It reaches you as a message that starts "A person wrote on this duty", after a tool you used or in a board tool's reply. Take it into account from there: it is part of the brief, and a newer note wins where they disagree. Carry on from the work you have done unless the note asks you to start over.
 - What you write on the board is shown to people as markdown: lead with the point in one sentence, then short bullets, one fact each, with `code` for paths, commands, ids and links. No headings, no preamble.
 {{- if .MustHandOff}}
 {{- if and .Files .Files.Service}}

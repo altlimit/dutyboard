@@ -53,6 +53,10 @@ type Run struct {
 	opened     []string // the board's other repositories this duty has a worktree of
 	cancel     context.CancelFunc
 	byBoard    atomic.Bool
+	// notesWaiting is a person having written on the duty since the session was last shown its notes
+	// (see takeNotes); notesAsked and notesFailed are when the board was last asked, and last could not answer.
+	notesWaiting            atomic.Bool
+	notesAsked, notesFailed time.Time
 	// missingSince is when the board first answered without this duty among those this machine holds.
 	missingSince time.Time
 }
@@ -125,6 +129,9 @@ func (r *Run) integration() *worktree.Result {
 func (d *Daemon) launch(ctx context.Context, boardID, agent string, duty *board.Duty, resuming bool) {
 	rctx, cancel := context.WithCancel(ctx)
 	run := &Run{Board: boardID, DutyID: duty.ID, Agent: agent, Kind: duty.Kind, Title: duty.Title, Token: randomHex(24), cancel: cancel, team: duty.Team}
+	// A claim hands over the notes so far. A duty resumed after this daemon was stopped may have more,
+	// written while nothing was listening.
+	run.notesWaiting.Store(resuming)
 	d.mu.Lock()
 	d.runs[duty.ID] = run
 	d.tokens[run.Token] = run
@@ -690,7 +697,9 @@ func (d *Daemon) job(run *Run, v board.BoardView, path, system, task string, rec
 	servers, _ := d.boardMCPServers(v)
 	j := runner.Job{
 		Dir: path, Prompt: task, Instructions: system, SessionID: rec.Session, Resume: resume,
-		Mark:       "DUTYBOARD_RUN_TOKEN=" + run.Token,
+		Mark: "DUTYBOARD_RUN_TOKEN=" + run.Token,
+		// Between steps, an agent that runs hooks asks the daemon whether a person wrote on the duty.
+		Hook:       []string{d.exe, "hook"},
 		Name:       clip(run.Title, 80),
 		Timeout:    180 * time.Minute,
 		SessionDir: state.Path("run", "sessions", run.Token),

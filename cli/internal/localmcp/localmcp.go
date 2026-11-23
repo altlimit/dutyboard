@@ -42,6 +42,9 @@ type Handler interface {
 	// Accept is a person at this machine agreeing to a setup the console asked for, on a machine set
 	// to ask first.
 	Accept(requestID string)
+	// Notes is what a person has written on the duty of the session holding runToken since that
+	// session was last shown it, as the session is to read it; "" when there is nothing.
+	Notes(ctx context.Context, runToken string) string
 }
 
 // Endpoint is run/daemon.json.
@@ -135,6 +138,9 @@ func serveConn(ctx context.Context, c net.Conn, h Handler, secret string) {
 		case "accept":
 			h.Accept(req.ID)
 			_ = enc.Encode(response{})
+		case "notes":
+			text, _ := json.Marshal(h.Notes(ctx, req.RunToken))
+			_ = enc.Encode(response{Reply: text})
 		case "ping":
 			_ = enc.Encode(response{})
 		default:
@@ -271,6 +277,37 @@ func Running() bool {
 	defer c.Close()
 	_, err = c.do(request{Op: "ping"})
 	return err == nil
+}
+
+// Hook is `dutyboard hook`, which an agent runs between steps of a session the daemon started: it
+// asks the daemon what a person has written on the duty since the session last looked, and prints
+// it in the agent's terms (reply). With no daemon, no session, or nothing new, it prints nothing — a
+// hook that fails must not stop the work.
+func Hook(in io.Reader, out io.Writer, reply func(event, text string) []byte) {
+	runToken := os.Getenv("DUTYBOARD_RUN_TOKEN")
+	var ev struct {
+		Event string `json:"hook_event_name"`
+	}
+	_ = json.NewDecoder(io.LimitReader(in, 1<<20)).Decode(&ev)
+	if runToken == "" {
+		return
+	}
+	c, err := Dial()
+	if err != nil {
+		return
+	}
+	defer c.Close()
+	res, err := c.do(request{Op: "notes", RunToken: runToken})
+	if err != nil || res.Error != "" {
+		return
+	}
+	var text string
+	if json.Unmarshal(res.Reply, &text) != nil {
+		return
+	}
+	if b := reply(ev.Event, text); len(b) > 0 {
+		_, _ = out.Write(append(b, '\n'))
+	}
 }
 
 // ServeStdio is `dutyboard mcp`: MCP over stdio, one JSON-RPC message per line, each answered by

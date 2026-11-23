@@ -84,7 +84,11 @@ type Job struct {
 	Env      []string
 	// Mark is an entry of Env unique to this session. Stopping the session also stops every process
 	// carrying it, wherever it has got to.
-	Mark    string
+	Mark string
+	// Hook is a command an agent that runs hooks runs after each tool it uses and before it stops, in
+	// the session's environment: what a person has written on the duty since is put before the agent
+	// then (see HookReply). An agent without hooks hears it from the board's tools instead.
+	Hook    []string
 	Log     io.Writer // the agent's raw output, one event per line
 	Timeout time.Duration
 	// OnActivity receives a short line each time the agent starts something: "Editing
